@@ -11,6 +11,7 @@ import {
   sidebarPrFromCache,
   sidebarPrFromRest,
   sidebarPrFromTitle,
+  withMergeQueueMembership,
   type CachedPullRow,
   type RestPull,
   type SidebarPullRequest,
@@ -34,6 +35,8 @@ export interface PrIndexDeps {
   listOpenPulls(repo: GithubRepo): Promise<RestPull[]>;
   listRecentClosedPulls(repo: GithubRepo): Promise<RestPull[]>;
   getPull(repo: GithubRepo, number: number): Promise<RestPull | null>;
+  /** GitHub merge-queue PR numbers for this repo; omit to skip the overlay. */
+  listMergeQueueNumbers?(repo: GithubRepo): Promise<number[]>;
   log: { info(message: string): void; warn(message: string): void };
 }
 
@@ -166,7 +169,15 @@ export async function resolveThreadPullRequests(
       } catch (error) {
         deps.log.warn(`REST closed pulls for ${key} failed: ${String(error)}`);
       }
-      pullsByRepo.set(key, mergeListedPulls(open, closed));
+      let queuedNumbers: number[] = [];
+      if (deps.listMergeQueueNumbers !== undefined) {
+        try {
+          queuedNumbers = await deps.listMergeQueueNumbers(repo);
+        } catch (error) {
+          deps.log.warn(`merge queue for ${key} failed: ${String(error)}`);
+        }
+      }
+      pullsByRepo.set(key, withMergeQueueMembership(mergeListedPulls(open, closed), queuedNumbers));
     }
     deps.log.info(
       `pr-index listed ${pullsByRepo.size} repos for ${pending.length} threads (REST remaining ${deps.restRemaining ?? "unknown"})`,
@@ -180,10 +191,7 @@ export async function resolveThreadPullRequests(
   const pullByNumber = new Map<string, RestPull | null>();
   let numberedLookups = 0;
 
-  const lookupNumbered = async (
-    repo: GithubRepo,
-    number: number,
-  ): Promise<RestPull | null> => {
+  const lookupNumbered = async (repo: GithubRepo, number: number): Promise<RestPull | null> => {
     const key = `${repo.owner}/${repo.repo}#${number}`;
     if (pullByNumber.has(key)) return pullByNumber.get(key) ?? null;
     if (!canSpendRest || numberedLookups >= MAX_PR_LOOKUPS_PER_TICK) return null;
@@ -223,9 +231,7 @@ export async function resolveThreadPullRequests(
       fromLookup = pulled === null ? null : sidebarPrFromRest(pulled);
     }
 
-    const fromTitle = listedThisTick
-      ? null
-      : sidebarPrFromTitle(query.title, hint?.repo ?? repo);
+    const fromTitle = listedThisTick ? null : sidebarPrFromTitle(query.title, hint?.repo ?? repo);
     const fromStale = usableStaleCache(stale, listedThisTick);
     const chosen = fromList ?? fromLookup ?? fromStale ?? fromTitle;
 

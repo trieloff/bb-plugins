@@ -77,10 +77,7 @@ describe("isSessionGatedWebhookOrigin", () => {
     assert.equal(isSessionGatedWebhookOrigin("https://lars.getbb.app"), true);
     assert.equal(isSessionGatedWebhookOrigin("https://lars--5717.getbb.app"), true);
     assert.equal(isSessionGatedWebhookOrigin("https://example.com"), false);
-    assert.equal(
-      isSessionGatedWebhookOrigin("https://random-words.trycloudflare.com"),
-      false,
-    );
+    assert.equal(isSessionGatedWebhookOrigin("https://random-words.trycloudflare.com"), false);
   });
 });
 
@@ -115,6 +112,45 @@ describe("parseWebhookPull", () => {
     assert.equal(parsed?.repo, "slicc");
     assert.equal(parsed?.pull.number, 2423);
     assert.equal(parsed?.pull.mergeableState, "clean");
+    assert.equal(parsed?.pull.inMergeQueue, false);
+  });
+
+  it("marks an enqueued pull as in the merge queue", () => {
+    const parsed = parseWebhookPull({
+      action: "enqueued",
+      repository: { name: "slicc", owner: { login: "ai-ecoverse" } },
+      pull_request: {
+        number: 2590,
+        title: "deps",
+        html_url: "https://github.com/ai-ecoverse/slicc/pull/2590",
+        state: "open",
+        draft: false,
+        merged: false,
+        mergeable_state: "unknown",
+        auto_merge: null,
+        head: { ref: "renovate/patched-deps" },
+      },
+    });
+    assert.equal(parsed?.pull.inMergeQueue, true);
+  });
+
+  it("clears merge-queue membership on dequeue", () => {
+    const parsed = parseWebhookPull({
+      action: "dequeued",
+      repository: { name: "slicc", owner: { login: "ai-ecoverse" } },
+      pull_request: {
+        number: 2590,
+        title: "deps",
+        html_url: "https://github.com/ai-ecoverse/slicc/pull/2590",
+        state: "open",
+        draft: false,
+        merged: false,
+        mergeable_state: "unknown",
+        auto_merge: null,
+        head: { ref: "renovate/patched-deps" },
+      },
+    });
+    assert.equal(parsed?.pull.inMergeQueue, false);
   });
 });
 

@@ -62,10 +62,7 @@ export function resolveWebhookDeliveryUrl(args: {
 }
 
 /** Start a trycloudflare tunnel only when the setting is on and no usable manual origin exists. */
-export function shouldStartCloudflareTunnel(
-  enabled: boolean,
-  configuredOrigin: string,
-): boolean {
+export function shouldStartCloudflareTunnel(enabled: boolean, configuredOrigin: string): boolean {
   if (!enabled) return false;
   const configured = configuredOrigin.trim();
   if (configured.length === 0) return true;
@@ -138,8 +135,15 @@ export function parseWebhookPull(payload: unknown): WebhookPullRef | null {
   const repo = parseRepoFromPayload(payload);
   if (repo === null) return null;
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
-  const pull = parseRestPull((payload as Record<string, unknown>).pull_request);
-  if (pull === null) return null;
+  const parsed = parseRestPull((payload as Record<string, unknown>).pull_request);
+  if (parsed === null) return null;
+  const action = (payload as Record<string, unknown>).action;
+  const pull =
+    action === "enqueued"
+      ? { ...parsed, inMergeQueue: true }
+      : action === "dequeued"
+        ? { ...parsed, inMergeQueue: false }
+        : parsed;
   return { owner: repo.owner, repo: repo.repo, pull };
 }
 

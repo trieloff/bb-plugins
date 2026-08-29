@@ -3,12 +3,15 @@ import { describe, it } from "node:test";
 import {
   isCacheFresh,
   matchPullForBranch,
+  mergeQueueQuery,
   needsMergeStateLookup,
+  parseMergeQueueNumbers,
   parseRestPull,
   parseRestPulls,
   PR_CACHE_FRESH_MS,
   sidebarPrFromRest,
   sidebarPrFromTitle,
+  withMergeQueueMembership,
   type CachedPullRow,
   type RestPull,
 } from "../lib/pr-index.ts";
@@ -23,7 +26,9 @@ const pull = (overrides: Partial<RestPull> = {}): RestPull => ({
   merged: false,
   headRef: "feat/curl-dump-header",
   mergeableState: "unknown",
+  mergeable: null,
   autoMerge: false,
+  inMergeQueue: false,
   ...overrides,
 });
 
@@ -101,7 +106,22 @@ describe("sidebarPrFromRest", () => {
       "checks_failed",
     );
     assert.equal(sidebarPrFromRest(pull({ mergeableState: "blocked" })).attention, "blocked");
+    assert.equal(sidebarPrFromRest(pull({ mergeableState: "behind" })).attention, "blocked");
     assert.equal(sidebarPrFromRest(pull({ autoMerge: true })).attention, "queued");
+    assert.equal(sidebarPrFromRest(pull({ inMergeQueue: true })).attention, "queued");
+    assert.equal(
+      sidebarPrFromRest(pull({ inMergeQueue: true, mergeableState: "unstable" })).attention,
+      "queued",
+    );
+    assert.equal(
+      sidebarPrFromRest(pull({ autoMerge: true, mergeableState: "blocked" })).attention,
+      "blocked",
+    );
+    assert.equal(
+      sidebarPrFromRest(pull({ autoMerge: true, mergeableState: "dirty" })).attention,
+      "conflicts",
+    );
+    assert.equal(sidebarPrFromRest(pull({ mergeable: false })).attention, "conflicts");
   });
 });
 
@@ -152,9 +172,43 @@ describe("needsMergeStateLookup", () => {
     assert.equal(needsMergeStateLookup(pull()), true);
     assert.equal(needsMergeStateLookup(pull({ mergeableState: "clean" })), false);
     assert.equal(needsMergeStateLookup(pull({ draft: true })), false);
-    assert.equal(needsMergeStateLookup(pull({ autoMerge: true })), false);
+    assert.equal(needsMergeStateLookup(pull({ autoMerge: true })), true);
+    assert.equal(needsMergeStateLookup(pull({ inMergeQueue: true })), false);
     assert.equal(needsMergeStateLookup(pull({ state: "closed" })), false);
     assert.equal(needsMergeStateLookup(pull({ merged: true })), false);
+  });
+});
+
+describe("parseMergeQueueNumbers", () => {
+  it("reads PR numbers out of a GraphQL mergeQueue payload", () => {
+    assert.deepEqual(
+      parseMergeQueueNumbers({
+        data: {
+          repository: {
+            mergeQueue: {
+              entries: {
+                nodes: [{ pullRequest: { number: 2590 } }, { pullRequest: { number: 2613 } }],
+              },
+            },
+          },
+        },
+      }),
+      [2590, 2613],
+    );
+    assert.deepEqual(parseMergeQueueNumbers({ data: { repository: { mergeQueue: null } } }), []);
+    assert.equal(mergeQueueQuery("ai-ecoverse", "slicc")?.includes("mergeQueue"), true);
+    assert.equal(mergeQueueQuery("ai-ecoverse", 'slicc"boom'), null);
+  });
+});
+
+describe("withMergeQueueMembership", () => {
+  it("marks listed pulls that GitHub currently holds in the merge queue", () => {
+    const marked = withMergeQueueMembership(
+      [pull({ number: 12 }), pull({ number: 13, headRef: "other" })],
+      [13],
+    );
+    assert.equal(marked[0]?.inMergeQueue, false);
+    assert.equal(marked[1]?.inMergeQueue, true);
   });
 });
 
@@ -259,6 +313,7 @@ describe("resolveThreadPullRequests", () => {
   });
 
   it("spends no lookup on states the list already decides", async () => {
+    const lookedUp: number[] = [];
     const resolved = await resolveThreadPullRequests(
       [query(), query({ threadId: "thr_2", branchName: "feat/queued" })],
       {
@@ -269,17 +324,67 @@ describe("resolveThreadPullRequests", () => {
         getRepo: async () => ({ owner: "acme", repo: "app" }),
         listOpenPulls: async () => [
           pull({ draft: true }),
-          pull({ number: 13, headRef: "feat/queued", autoMerge: true }),
+          pull({ number: 13, headRef: "feat/queued", inMergeQueue: true }),
         ],
-        getPull: async () => {
+        getPull: async (_repo, number) => {
+          lookedUp.push(number);
           throw new Error("should not look up a numbered PR");
         },
         listRecentClosedPulls: async () => [],
         log: { info() {}, warn() {} },
       },
     );
+    assert.deepEqual(lookedUp, []);
     assert.equal(resolved.get("thr_1")?.attention, "draft");
     assert.equal(resolved.get("thr_2")?.attention, "queued");
+  });
+
+  it("looks up auto-merge PRs so a blocked one does not paint as queued", async () => {
+    const lookedUp: number[] = [];
+    const resolved = await resolveThreadPullRequests([query({ branchName: "feat/auto-merge" })], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [
+        pull({ number: 2563, headRef: "feat/auto-merge", autoMerge: true }),
+      ],
+      getPull: async (_repo, number) => {
+        lookedUp.push(number);
+        return pull({
+          number,
+          headRef: "feat/auto-merge",
+          autoMerge: true,
+          mergeableState: "blocked",
+        });
+      },
+      listRecentClosedPulls: async () => [],
+      log: { info() {}, warn() {} },
+    });
+    assert.deepEqual(lookedUp, [2563]);
+    assert.equal(resolved.get("thr_1")?.attention, "blocked");
+  });
+
+  it("overlays merge-queue membership so unknown queue PRs are not green", async () => {
+    const lookedUp: number[] = [];
+    const resolved = await resolveThreadPullRequests([query({ branchName: "feat/queued" })], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [pull({ number: 2590, headRef: "feat/queued" })],
+      getPull: async (_repo, number) => {
+        lookedUp.push(number);
+        return pull({ number, headRef: "feat/queued" });
+      },
+      listRecentClosedPulls: async () => [],
+      listMergeQueueNumbers: async () => [2590],
+      log: { info() {}, warn() {} },
+    });
+    assert.deepEqual(lookedUp, []);
+    assert.equal(resolved.get("thr_1")?.attention, "queued");
   });
 
   it("serves a stale cache when REST is skipped and the title has no number", async () => {

@@ -17,14 +17,54 @@ export function sortByCreatedAtDescending<
 export type ActiveSection = "next-action" | "waiting";
 
 /**
+ * How long background-only work holds a thread in Waiting.
+ *
+ * Waiting answers "the agent has this, leave it alone". A background job that
+ * has run for an hour has stopped answering it: the thread sat in Waiting for
+ * hours on end, out of the list the user actually works from, because some
+ * long-running job never finished. Past this the thread returns to Next Action
+ * and the job keeps running — the section is about whose move it is, not about
+ * whether anything is still executing.
+ */
+export const BACKGROUND_WAIT_MAX_MS = 60 * 60 * 1000;
+
+/**
+ * A live agent turn, the one kind of work that holds Waiting open indefinitely.
+ *
+ * bb reports it as the `runtime` indicator — the spinner, as opposed to the
+ * shine icons it draws for workflows, background agents and commands, plan
+ * mode and goals. While a turn is running the thread genuinely is the agent's,
+ * and interrupting it is the user's business, not the sidebar's.
+ */
+function hasLiveAgentTurn(thread: PluginSidebarThread): boolean {
+  return thread.indicator === "runtime";
+}
+
+/** Whether the only thing keeping this thread busy is background work. */
+export function isBackgroundOnlyWork(thread: PluginSidebarThread): boolean {
+  return !thread.hasPendingInteraction && isThreadWorking(thread) && !hasLiveAgentTurn(thread);
+}
+
+/**
  * The active section whose next move can change the thread.
  *
  * A pending interaction always needs the user, even when background work is
  * still live. Otherwise any foreground or background work means the user is
- * waiting for the agent; a quiet thread is ready for the user's next action.
+ * waiting for the agent; a quiet thread is ready for the user's next action —
+ * except that background-only work times out, see `BACKGROUND_WAIT_MAX_MS`.
+ *
+ * `backgroundSince` is when the current run of background-only work was first
+ * observed; null when it is not background-only or has not been seen yet, in
+ * which case Waiting stands. `reconcileActiveSectionOrder` owns that map.
  */
-export function activeSectionFor(thread: PluginSidebarThread): ActiveSection {
-  return thread.hasPendingInteraction || !isThreadWorking(thread) ? "next-action" : "waiting";
+export function activeSectionFor(
+  thread: PluginSidebarThread,
+  clock?: { now: number; backgroundSince: number | null },
+): ActiveSection {
+  if (thread.hasPendingInteraction || !isThreadWorking(thread)) return "next-action";
+  if (hasLiveAgentTurn(thread)) return "waiting";
+  if (clock === undefined || clock.backgroundSince === null) return "waiting";
+  return clock.now - clock.backgroundSince >= BACKGROUND_WAIT_MAX_MS ? "next-action" : "waiting";
 }
 
 interface ActiveSectionOrderEntry {
@@ -42,6 +82,14 @@ interface ActiveSectionOrderEntry {
 export interface ActiveSectionOrder {
   entries: ReadonlyMap<string, ActiveSectionOrderEntry>;
   nextSequence: number;
+  /**
+   * When each thread's current run of background-only work was first seen.
+   *
+   * Dropped the moment the thread stops being background-only, so finishing a
+   * job — or taking an agent turn — starts the hour over rather than leaving a
+   * thread permanently expired.
+   */
+  backgroundSince: ReadonlyMap<string, number>;
 }
 
 function compareInitialEntrance(left: PluginSidebarThread, right: PluginSidebarThread): number {
@@ -61,13 +109,31 @@ function compareInitialEntrance(left: PluginSidebarThread, right: PluginSidebarT
 export function reconcileActiveSectionOrder(
   current: ActiveSectionOrder | null,
   threads: readonly PluginSidebarThread[],
+  now: number,
 ): ActiveSectionOrder {
   const entries = new Map<string, ActiveSectionOrderEntry>();
+  const backgroundSince = new Map<string, number>();
   const entrants: PluginSidebarThread[] = [];
   let nextSequence = current?.nextSequence ?? 0;
 
+  // Carried forward before any section is decided: the timeout reads this map,
+  // so it has to hold this tick's answer for every thread being placed.
   for (const thread of threads) {
-    const section = activeSectionFor(thread);
+    if (!isBackgroundOnlyWork(thread)) continue;
+    const carried = current?.backgroundSince.get(thread.id);
+    // A remount has no carried value and no way to ask when the job started.
+    // `updatedAt` is the closest durable proxy — for a job that has been quiet
+    // for hours it is hours old, which is exactly the case this expires, and
+    // for one that just started it is ~now. Clamped so a clock skew into the
+    // future cannot park a thread in Waiting forever.
+    backgroundSince.set(thread.id, carried ?? Math.min(now, thread.updatedAt));
+  }
+
+  const sectionFor = (thread: PluginSidebarThread) =>
+    activeSectionFor(thread, { now, backgroundSince: backgroundSince.get(thread.id) ?? null });
+
+  for (const thread of threads) {
+    const section = sectionFor(thread);
     const existing = current?.entries.get(thread.id);
     if (existing?.section === section) entries.set(thread.id, existing);
     else entrants.push(thread);
@@ -76,18 +142,19 @@ export function reconcileActiveSectionOrder(
   entrants.sort(compareInitialEntrance);
   for (const thread of entrants) {
     entries.set(thread.id, {
-      section: activeSectionFor(thread),
+      section: sectionFor(thread),
       sequence: nextSequence++,
     });
   }
 
-  return { entries, nextSequence };
+  return { entries, nextSequence, backgroundSince };
 }
 
 /** Split visible active threads and retain their mounted entrance order. */
 export function partitionActiveSections(
   threads: readonly PluginSidebarThread[],
   order: ActiveSectionOrder,
+  now: number,
 ): {
   nextAction: PluginSidebarThread[];
   waiting: PluginSidebarThread[];
@@ -95,7 +162,13 @@ export function partitionActiveSections(
   const nextAction: PluginSidebarThread[] = [];
   const waiting: PluginSidebarThread[] = [];
   for (const thread of threads) {
-    (activeSectionFor(thread) === "next-action" ? nextAction : waiting).push(thread);
+    // Same clock and same map the order was reconciled against, so a thread
+    // cannot be placed in one section and ordered as if it were in the other.
+    const section = activeSectionFor(thread, {
+      now,
+      backgroundSince: order.backgroundSince.get(thread.id) ?? null,
+    });
+    (section === "next-action" ? nextAction : waiting).push(thread);
   }
   const byEntrance = (left: PluginSidebarThread, right: PluginSidebarThread) =>
     (order.entries.get(left.id)?.sequence ?? Number.MAX_SAFE_INTEGER) -

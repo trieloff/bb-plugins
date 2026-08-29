@@ -18,7 +18,9 @@ import { createGhRunner, githubGraphql, githubRestJson, resolveGhPath } from "./
 import { formatAgentWakeMessage, canonicalPullRequestUrl } from "./lib/pr-watch.ts";
 import { pollSnoozedPullRequests, type StoredPrWatch } from "./lib/pr-watch-run.ts";
 import {
+  mergeQueueQuery,
   needsMergeStateLookup,
+  parseMergeQueueNumbers,
   parseRestPull,
   parseRestPulls,
   parseRestRateLimit,
@@ -292,14 +294,7 @@ export const gtdSidebarRpcContract = defineRpcContract({
     output: z
       .object({
         enabled: z.boolean(),
-        state: z.enum([
-          "off",
-          "checking",
-          "missing-cloudflared",
-          "starting",
-          "live",
-          "error",
-        ]),
+        state: z.enum(["off", "checking", "missing-cloudflared", "starting", "live", "error"]),
         url: z.string().nullable(),
         origin: z.string().nullable(),
         error: z.string().nullable(),
@@ -691,7 +686,9 @@ export default function plugin(bb: BbPluginApi) {
       // next ten-minute reconcile, so buy the real state now.
       if (needsMergeStateLookup(pull)) {
         const detailed = await fetchPullDetail(direct.owner, direct.repo, pull.number);
-        if (detailed !== null) pull = detailed;
+        if (detailed !== null) {
+          pull = { ...detailed, inMergeQueue: pull.inMergeQueue || detailed.inMergeQueue };
+        }
       }
       rows.push(...applyPullToIndex(direct.owner, direct.repo, pull, now));
       if (SNOOZE_WAKE_EVENTS.has(input.event)) {
@@ -917,6 +914,18 @@ export default function plugin(bb: BbPluginApi) {
           }
           return parseRestPulls(listed.raw);
         },
+        listMergeQueueNumbers: async (repo) => {
+          if (gh === null) return [];
+          const query = mergeQueueQuery(repo.owner, repo.repo);
+          if (query === null) return [];
+          const fetched = await githubGraphql(gh, query);
+          if (fetched.exitCode !== 0) {
+            throw new Error(
+              fetched.stderr.trim() || `gh graphql merge queue exited ${fetched.exitCode}`,
+            );
+          }
+          return parseMergeQueueNumbers(fetched.raw);
+        },
         log: bb.log,
       });
 
@@ -1082,9 +1091,7 @@ export default function plugin(bb: BbPluginApi) {
           return { tab: opened };
         } catch (error) {
           const status =
-            typeof error === "object" && error !== null && "status" in error
-              ? error.status
-              : null;
+            typeof error === "object" && error !== null && "status" in error ? error.status : null;
           if (status !== 409 || attempt === 2) throw error;
         }
       }

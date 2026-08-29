@@ -183,6 +183,7 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
   const activeSectionOrder = reconcileActiveSectionOrder(
     activeSectionOrderRef.current,
     activeUnpinned,
+    now,
   );
   activeSectionOrderRef.current = activeSectionOrder;
 
@@ -206,7 +207,7 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
       else active.push(thread);
     }
     const split = partitionPinned(active);
-    const activeSections = partitionActiveSections(split.inbox, activeSectionOrder);
+    const activeSections = partitionActiveSections(split.inbox, activeSectionOrder, now);
     return {
       pinned: sortByCreatedAtDescending(split.pinned),
       ...activeSections,
@@ -216,7 +217,7 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
       ),
       settled: sortByCreatedAtDescending(onSettledShelf),
     };
-  }, [activeSectionOrder, lifecycle, scope, searchQuery, threads]);
+  }, [activeSectionOrder, lifecycle, now, scope, searchQuery, threads]);
 
   // The settled shelf's rows arrive on a second and slower read, while the
   // lifecycle rows naming those same threads are already warm. Counting them is

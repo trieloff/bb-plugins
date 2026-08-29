@@ -36,7 +36,11 @@ export interface RestPull {
   headRef: string;
   /** GitHub `mergeable_state`, or "unknown" when the list omits it. */
   mergeableState: string;
+  /** GitHub `mergeable`; null when the list or a fresh GET has not computed it. */
+  mergeable: boolean | null;
   autoMerge: boolean;
+  /** True when GitHub's merge queue currently holds this pull. */
+  inMergeQueue: boolean;
 }
 
 export interface CachedPullRow {
@@ -108,7 +112,9 @@ export function parseRestPull(raw: unknown): RestPull | null {
     merged: record.merged === true || (record.merged_at != null && record.merged_at !== ""),
     headRef: typeof headRef === "string" ? headRef : "",
     mergeableState: typeof record.mergeable_state === "string" ? record.mergeable_state : "unknown",
+    mergeable: typeof record.mergeable === "boolean" ? record.mergeable : null,
     autoMerge: record.auto_merge != null,
+    inMergeQueue: false,
   };
 }
 
@@ -170,18 +176,23 @@ export function restPullAttention(pull: RestPull): string {
   if (pull.merged) return "merged";
   if (pull.state === "closed") return "closed";
   if (pull.draft || pull.mergeableState === "draft") return "draft";
-  if (pull.autoMerge) return "queued";
+  // Merge-queue membership is not `auto_merge`. Queue entries arrive with
+  // `auto_merge: null` and `mergeable_state: unknown`, which used to paint
+  // green as an ordinary open PR. Auto-merge is only a fallback after the
+  // real mergeable state, so a blocked or dirty PR with auto-merge on does
+  // not look queued.
+  if (pull.inMergeQueue) return "queued";
+  if (pull.mergeable === false || pull.mergeableState === "dirty") return "conflicts";
   switch (pull.mergeableState) {
-    case "dirty":
-      return "conflicts";
     case "unstable":
       return "checks_failed";
     case "blocked":
+    case "behind":
       return "blocked";
     case "clean":
       return "ready_to_merge";
     default:
-      return "none";
+      return pull.autoMerge ? "queued" : "none";
   }
 }
 
@@ -251,11 +262,60 @@ export function parseRestRateLimit(raw: unknown): {
  * serves it from the single-PR route alone. Everything read off the list
  * therefore arrived as "unknown", collapsed to attention "none", and painted
  * green: #377 showed as a healthy open PR while it was blocked with failing
- * checks. Draft, merged, closed and auto-merge are all decidable from the list
- * itself, so they never spend the extra call.
+ * checks. Draft, merged, closed, and merge-queue membership are decidable
+ * from the list (or the queue overlay) and skip the extra call. Auto-merge
+ * is not: the list sets `auto_merge` while still omitting `mergeable_state`,
+ * so skipping the GET left a blocked or conflicting PR looking queued.
  */
 export function needsMergeStateLookup(pull: RestPull): boolean {
   if (pull.merged || pull.state === "closed") return false;
-  if (pull.draft || pull.autoMerge) return false;
+  if (pull.draft || pull.inMergeQueue) return false;
   return pull.mergeableState === "unknown";
+}
+
+const GITHUB_NAME = /^[A-Za-z0-9_.-]+$/u;
+
+export function mergeQueueQuery(owner: string, repo: string): string | null {
+  if (!GITHUB_NAME.test(owner) || !GITHUB_NAME.test(repo)) return null;
+  return `{ repository(owner: "${owner}", name: "${repo}") { mergeQueue { entries(first: 100) { nodes { pullRequest { number } } } } } }`;
+}
+
+export function parseMergeQueueNumbers(raw: unknown): number[] {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
+  const data = (raw as Record<string, unknown>).data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return [];
+  const repository = (data as Record<string, unknown>).repository;
+  if (typeof repository !== "object" || repository === null || Array.isArray(repository)) {
+    return [];
+  }
+  const mergeQueue = (repository as Record<string, unknown>).mergeQueue;
+  if (typeof mergeQueue !== "object" || mergeQueue === null || Array.isArray(mergeQueue)) {
+    return [];
+  }
+  const entries = (mergeQueue as Record<string, unknown>).entries;
+  if (typeof entries !== "object" || entries === null || Array.isArray(entries)) return [];
+  const nodes = (entries as Record<string, unknown>).nodes;
+  if (!Array.isArray(nodes)) return [];
+  const numbers: number[] = [];
+  for (const node of nodes) {
+    if (typeof node !== "object" || node === null || Array.isArray(node)) continue;
+    const pullRequest = (node as Record<string, unknown>).pullRequest;
+    if (typeof pullRequest !== "object" || pullRequest === null || Array.isArray(pullRequest)) {
+      continue;
+    }
+    const number = (pullRequest as Record<string, unknown>).number;
+    if (typeof number === "number" && Number.isInteger(number) && number > 0) {
+      numbers.push(number);
+    }
+  }
+  return numbers;
+}
+
+export function withMergeQueueMembership(
+  pulls: readonly RestPull[],
+  queuedNumbers: readonly number[],
+): RestPull[] {
+  if (queuedNumbers.length === 0) return [...pulls];
+  const queued = new Set(queuedNumbers);
+  return pulls.map((pull) => (queued.has(pull.number) ? { ...pull, inMergeQueue: true } : pull));
 }
