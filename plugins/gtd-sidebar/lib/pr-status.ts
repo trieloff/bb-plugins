@@ -36,7 +36,13 @@ const DANGER = "text-destructive-text";
  */
 const CONFLICTS =
   "text-destructive-text line-through hover:[text-decoration-line:underline_line-through]!";
-const PENDING = "text-[color:var(--warning-text)]";
+/**
+ * CI still running — Schrödinger, not an alarm. `--warning-text` is ochre
+ * (hue 50, merge queue); `--attention` is peach (hue 80). Hue 102 is a real
+ * yellow, keeping the theme's lightness and chroma so it reads on both
+ * surfaces.
+ */
+const PENDING = "text-[color:oklch(from_var(--warning-text)_l_c_102)]";
 const READY = "text-success";
 
 export function prNumberClassName(pr: PrNumberAppearance): string {

@@ -97,8 +97,8 @@ and its age (`now`, `7m`, `3d`) when it needs nothing. Hovering swaps that slot 
 the two park buttons.
 
 The PR number uses the same colours bb uses elsewhere: green for an open
-PR, muted grey for a **draft**, amber for a PR in the **merge queue**, purple
-for merged, red for closed or failing. Badges hydrate with one REST list per
+PR, muted grey for a **draft**, amber for a PR in the **merge queue**, yellow
+for **checks still running**, purple for merged, red for closed or failing. Badges hydrate with one REST list per
 repository when the inbox mounts (not per-card GraphQL). After that, GitHub
 webhooks update the cache and the sidebar over realtime when GitHub can reach
 this machine. Turn on **GitHub webhooks via Cloudflare** (requires
