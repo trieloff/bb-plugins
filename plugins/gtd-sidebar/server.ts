@@ -19,13 +19,17 @@ import { formatAgentWakeMessage, canonicalPullRequestUrl } from "./lib/pr-watch.
 import { pollSnoozedPullRequests, type StoredPrWatch } from "./lib/pr-watch-run.ts";
 import {
   mergeQueueQuery,
+  needsCheckRollupFetch,
   needsMergeStateLookup,
+  parseCombinedStatus,
   parseMergeQueueNumbers,
+  parseOpenPullCheckRollups,
   parseRestPull,
   parseRestPulls,
   parseRestRateLimit,
   sidebarPrFromRest,
   type CachedPullRow,
+  type CheckRollup,
   type RestPull,
 } from "./lib/pr-index.ts";
 import { resolveThreadPullRequests } from "./lib/pr-index-run.ts";
@@ -347,6 +351,10 @@ export default function plugin(bb: BbPluginApi) {
   let resolvedGhPath: string | null | undefined;
   const restPullsInFlight = new Map<string, Promise<ReturnType<typeof parseRestPulls>>>();
   const restPullGetInFlight = new Map<string, Promise<RestPull | null>>();
+  const repoPrOverlayInFlight = new Map<
+    string,
+    Promise<{ queuedNumbers: number[]; checkRollups: Map<number, CheckRollup> }>
+  >();
   const hookEnsuredAt = new Map<string, number>();
   const HOOK_ENSURE_TTL_MS = 60 * 60 * 1000;
   let liveTunnelOrigin: string | null = null;
@@ -382,6 +390,20 @@ export default function plugin(bb: BbPluginApi) {
       )
       .all() as Array<{ owner: string; repo: string }>;
 
+  const attachCombinedStatus = async (
+    gh: ReturnType<typeof createGhRunner>,
+    owner: string,
+    repo: string,
+    pull: RestPull,
+  ): Promise<RestPull> => {
+    if (!needsCheckRollupFetch(pull)) return pull;
+    const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(pull.headSha)}/status`;
+    const fetched = await githubRestJson(gh, path);
+    if (fetched.exitCode !== 0) return pull;
+    const rollup = parseCombinedStatus(fetched.raw);
+    return rollup === null ? pull : { ...pull, checkRollup: rollup };
+  };
+
   /** The numbered GET, the only REST route that carries `mergeable_state`. */
   const fetchPullDetail = async (
     owner: string,
@@ -395,7 +417,10 @@ export default function plugin(bb: BbPluginApi) {
     const gh = createGhRunner(shutdown.signal, resolvedGhPath);
     const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
     const fetched = await githubRestJson(gh, path);
-    return fetched.exitCode === 0 ? parseRestPull(fetched.raw) : null;
+    if (fetched.exitCode !== 0) return null;
+    const pull = parseRestPull(fetched.raw);
+    if (pull === null) return null;
+    return attachCombinedStatus(gh, owner, repo, pull);
   };
 
   const applyPullToIndex = (owner: string, repo: string, pull: RestPull, now: number) => {
@@ -828,6 +853,34 @@ export default function plugin(bb: BbPluginApi) {
         };
       };
 
+      const loadRepoPrOverlay = async (repo: { owner: string; repo: string }) => {
+        if (gh === null)
+          return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
+        const key = `${repo.owner}/${repo.repo}`;
+        const inflight = repoPrOverlayInFlight.get(key);
+        if (inflight !== undefined) return inflight;
+        const query = mergeQueueQuery(repo.owner, repo.repo);
+        if (query === null) {
+          return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
+        }
+        const pending = (async () => {
+          const fetched = await githubGraphql(gh, query);
+          if (fetched.exitCode !== 0) {
+            throw new Error(
+              fetched.stderr.trim() || `gh graphql merge queue exited ${fetched.exitCode}`,
+            );
+          }
+          return {
+            queuedNumbers: parseMergeQueueNumbers(fetched.raw),
+            checkRollups: parseOpenPullCheckRollups(fetched.raw),
+          };
+        })().finally(() => {
+          repoPrOverlayInFlight.delete(key);
+        });
+        repoPrOverlayInFlight.set(key, pending);
+        return pending;
+      };
+
       const resolved = await resolveThreadPullRequests(threads, {
         now: Date.now(),
         restRemaining,
@@ -898,7 +951,9 @@ export default function plugin(bb: BbPluginApi) {
             if (listed.exitCode !== 0) {
               throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
             }
-            return parseRestPull(listed.raw);
+            const pull = parseRestPull(listed.raw);
+            if (pull === null) return null;
+            return attachCombinedStatus(gh, repo.owner, repo.repo, pull);
           })().finally(() => {
             restPullGetInFlight.delete(key);
           });
@@ -914,18 +969,8 @@ export default function plugin(bb: BbPluginApi) {
           }
           return parseRestPulls(listed.raw);
         },
-        listMergeQueueNumbers: async (repo) => {
-          if (gh === null) return [];
-          const query = mergeQueueQuery(repo.owner, repo.repo);
-          if (query === null) return [];
-          const fetched = await githubGraphql(gh, query);
-          if (fetched.exitCode !== 0) {
-            throw new Error(
-              fetched.stderr.trim() || `gh graphql merge queue exited ${fetched.exitCode}`,
-            );
-          }
-          return parseMergeQueueNumbers(fetched.raw);
-        },
+        listMergeQueueNumbers: async (repo) => (await loadRepoPrOverlay(repo)).queuedNumbers,
+        listCheckRollups: async (repo) => (await loadRepoPrOverlay(repo)).checkRollups,
         log: bb.log,
       });
 

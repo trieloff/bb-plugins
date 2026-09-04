@@ -26,6 +26,9 @@ export interface SidebarPullRequest {
   source: "rest" | "cache" | "title";
 }
 
+/** Normalized GitHub check/status rollup. `pending` is CI still running. */
+export type CheckRollup = "pending" | "success" | "failure" | "error";
+
 export interface RestPull {
   number: number;
   title: string;
@@ -34,6 +37,8 @@ export interface RestPull {
   state: "open" | "closed";
   merged: boolean;
   headRef: string;
+  /** Head commit SHA, used to fetch the combined status. */
+  headSha: string;
   /** GitHub `mergeable_state`, or "unknown" when the list omits it. */
   mergeableState: string;
   /** GitHub `mergeable`; null when the list or a fresh GET has not computed it. */
@@ -41,6 +46,12 @@ export interface RestPull {
   autoMerge: boolean;
   /** True when GitHub's merge queue currently holds this pull. */
   inMergeQueue: boolean;
+  /**
+   * Combined checks/statuses for the head commit. Null when we have not
+   * asked — GitHub's `mergeable_state` alone cannot tell pending CI from a
+   * failed run (`blocked` and `unstable` cover both).
+   */
+  checkRollup: CheckRollup | null;
 }
 
 export interface CachedPullRow {
@@ -99,10 +110,12 @@ export function parseRestPull(raw: unknown): RestPull | null {
   if (typeof title !== "string" || typeof url !== "string") return null;
   if (state !== "open" && state !== "closed") return null;
   const head = record.head;
-  const headRef =
+  const headRecord =
     typeof head === "object" && head !== null && !Array.isArray(head)
-      ? (head as Record<string, unknown>).ref
+      ? (head as Record<string, unknown>)
       : null;
+  const headRef = headRecord?.ref;
+  const headSha = headRecord?.sha;
   return {
     number,
     title,
@@ -111,10 +124,12 @@ export function parseRestPull(raw: unknown): RestPull | null {
     state,
     merged: record.merged === true || (record.merged_at != null && record.merged_at !== ""),
     headRef: typeof headRef === "string" ? headRef : "",
+    headSha: typeof headSha === "string" ? headSha : "",
     mergeableState: typeof record.mergeable_state === "string" ? record.mergeable_state : "unknown",
     mergeable: typeof record.mergeable === "boolean" ? record.mergeable : null,
     autoMerge: record.auto_merge != null,
     inMergeQueue: false,
+    checkRollup: null,
   };
 }
 
@@ -172,6 +187,35 @@ export function mergeListedPulls(
   return [...byNumber.values()];
 }
 
+export function parseCheckRollupState(value: unknown): CheckRollup | null {
+  if (typeof value !== "string") return null;
+  switch (value.toUpperCase()) {
+    case "PENDING":
+    case "EXPECTED":
+      return "pending";
+    case "SUCCESS":
+      return "success";
+    case "FAILURE":
+      return "failure";
+    case "ERROR":
+      return "error";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Combined status REST (`/commits/{sha}/status`). `total_count: 0` is "no
+ * CI", which GitHub still reports as `pending` — that is not CI running.
+ */
+export function parseCombinedStatus(raw: unknown): CheckRollup | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const total = record.total_count;
+  if (typeof total === "number" && total <= 0) return null;
+  return parseCheckRollupState(record.state);
+}
+
 export function restPullAttention(pull: RestPull): string {
   if (pull.merged) return "merged";
   if (pull.state === "closed") return "closed";
@@ -183,9 +227,17 @@ export function restPullAttention(pull: RestPull): string {
   // not look queued.
   if (pull.inMergeQueue) return "queued";
   if (pull.mergeable === false || pull.mergeableState === "dirty") return "conflicts";
+  // GitHub's `blocked` and `unstable` both mean "not clean": required or
+  // optional checks may still be running, or they may have failed. The
+  // rollup is what splits Schrödinger (yellow) from a real failure (red).
+  const checks = parseCheckRollupState(pull.checkRollup);
+  if (checks === "pending") return "checks_pending";
+  if (checks === "failure" || checks === "error") return "checks_failed";
   switch (pull.mergeableState) {
     case "unstable":
-      return "checks_failed";
+      // Optional checks. Confirmed success is not an alarm; without a rollup
+      // this state is pending-or-failed, and pending is the honest unread.
+      return checks === "success" ? "none" : "checks_pending";
     case "blocked":
     case "behind":
       return "blocked";
@@ -277,7 +329,7 @@ const GITHUB_NAME = /^[A-Za-z0-9_.-]+$/u;
 
 export function mergeQueueQuery(owner: string, repo: string): string | null {
   if (!GITHUB_NAME.test(owner) || !GITHUB_NAME.test(repo)) return null;
-  return `{ repository(owner: "${owner}", name: "${repo}") { mergeQueue { entries(first: 100) { nodes { pullRequest { number } } } } } }`;
+  return `{ repository(owner: "${owner}", name: "${repo}") { mergeQueue { entries(first: 100) { nodes { pullRequest { number } } } } pullRequests(first: 100, states: OPEN) { nodes { number commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`;
 }
 
 export function parseMergeQueueNumbers(raw: unknown): number[] {
@@ -318,4 +370,67 @@ export function withMergeQueueMembership(
   if (queuedNumbers.length === 0) return [...pulls];
   const queued = new Set(queuedNumbers);
   return pulls.map((pull) => (queued.has(pull.number) ? { ...pull, inMergeQueue: true } : pull));
+}
+
+export function parseOpenPullCheckRollups(raw: unknown): Map<number, CheckRollup> {
+  const result = new Map<number, CheckRollup>();
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return result;
+  const data = (raw as Record<string, unknown>).data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return result;
+  const repository = (data as Record<string, unknown>).repository;
+  if (typeof repository !== "object" || repository === null || Array.isArray(repository)) {
+    return result;
+  }
+  const pullRequests = (repository as Record<string, unknown>).pullRequests;
+  if (typeof pullRequests !== "object" || pullRequests === null || Array.isArray(pullRequests)) {
+    return result;
+  }
+  const nodes = (pullRequests as Record<string, unknown>).nodes;
+  if (!Array.isArray(nodes)) return result;
+  for (const node of nodes) {
+    if (typeof node !== "object" || node === null || Array.isArray(node)) continue;
+    const record = node as Record<string, unknown>;
+    const number = record.number;
+    if (typeof number !== "number" || !Number.isInteger(number) || number < 1) continue;
+    const commits = record.commits;
+    if (typeof commits !== "object" || commits === null || Array.isArray(commits)) continue;
+    const commitNodes = (commits as Record<string, unknown>).nodes;
+    if (!Array.isArray(commitNodes) || commitNodes.length === 0) continue;
+    const wrap = commitNodes[0];
+    if (typeof wrap !== "object" || wrap === null || Array.isArray(wrap)) continue;
+    const commit = (wrap as Record<string, unknown>).commit;
+    if (typeof commit !== "object" || commit === null || Array.isArray(commit)) continue;
+    const rollupRecord = (commit as Record<string, unknown>).statusCheckRollup;
+    const rollupState =
+      typeof rollupRecord === "object" && rollupRecord !== null && !Array.isArray(rollupRecord)
+        ? (rollupRecord as Record<string, unknown>).state
+        : null;
+    const rollup = parseCheckRollupState(rollupState);
+    if (rollup !== null) result.set(number, rollup);
+  }
+  return result;
+}
+
+export function withCheckRollups(
+  pulls: readonly RestPull[],
+  rollups: ReadonlyMap<number, CheckRollup>,
+): RestPull[] {
+  if (rollups.size === 0) return [...pulls];
+  return pulls.map((pull) => {
+    const rollup = rollups.get(pull.number);
+    if (rollup === undefined || pull.checkRollup !== null) return pull;
+    return { ...pull, checkRollup: rollup };
+  });
+}
+
+/** Combined-status REST is only useful when mergeable_state cannot decide. */
+export function needsCheckRollupFetch(pull: RestPull): boolean {
+  if (pull.checkRollup !== null) return false;
+  if (pull.merged || pull.state === "closed" || pull.draft || pull.inMergeQueue) return false;
+  if (pull.headSha.length === 0) return false;
+  return (
+    pull.mergeableState === "blocked" ||
+    pull.mergeableState === "unstable" ||
+    pull.mergeableState === "unknown"
+  );
 }
