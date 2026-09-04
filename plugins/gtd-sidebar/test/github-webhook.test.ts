@@ -10,6 +10,7 @@ import {
   matchingGithubHook,
   matchingManagedGithubHook,
   parseWebhookPull,
+  releasePublished,
   resolveWebhookDeliveryUrl,
   shouldStartCloudflareTunnel,
   verifyGithubSignature,
@@ -203,5 +204,31 @@ describe("matchingGithubHook", () => {
       "https://ours.trycloudflare.com/github-webhook",
     );
     assert.equal(found, null);
+  });
+});
+
+describe("releasePublished", () => {
+  const payload = (release: Record<string, unknown>, action = "published") => ({
+    action,
+    release,
+    repository: { name: "app", owner: { login: "acme" } },
+  });
+
+  it("accepts the one action that ships code", () => {
+    assert.equal(
+      releasePublished("release", payload({ tag_name: "v1.4.0", draft: false, prerelease: false })),
+      true,
+    );
+  });
+
+  it("ignores drafts, prereleases, edits, and every other event", () => {
+    assert.equal(releasePublished("release", payload({ draft: true })), false);
+    assert.equal(releasePublished("release", payload({ prerelease: true })), false);
+    assert.equal(releasePublished("release", payload({}, "edited")), false);
+    // `released` re-fires for an existing release; `published` already covered it.
+    assert.equal(releasePublished("release", payload({}, "released")), false);
+    assert.equal(releasePublished("pull_request", payload({})), false);
+    assert.equal(releasePublished("release", { action: "published" }), false);
+    assert.equal(releasePublished("release", null), false);
   });
 });

@@ -98,7 +98,14 @@ the two park buttons.
 
 The PR number uses the same colours bb uses elsewhere: green for an open
 PR, muted grey for a **draft**, amber for a PR in the **merge queue**, purple
-for merged, red for closed or failing. Badges hydrate with one REST list per
+for merged, red for closed or failing. Merged splits in two: plain purple
+while the work sits on the default branch unreleased, and a deeper purple once
+the repository has published a GitHub release that carries it — the difference
+between "it landed" and "it shipped". A merge into a stacked parent branch is
+never counted as shipped, and a repository that has never cut a release keeps
+every merge in plain purple. In a per-component monorepo the deeper purple
+means "this repo has released since your merge", which may be another
+package's release. Badges hydrate with one REST list per
 repository when the inbox mounts (not per-card GraphQL). After that, GitHub
 webhooks update the cache and the sidebar over realtime when GitHub can reach
 this machine. Turn on **GitHub webhooks via Cloudflare** (requires

@@ -5,6 +5,10 @@
  * ordinary open PR that is not ready, so those two GitHub states were
  * invisible on the card. Attention is the rolled-up signal and wins; state
  * covers the cases attention does not distinguish.
+ *
+ * Merged is not the end of the line: work that is merged but unreleased is
+ * still in flight, so "released" gets its own, deeper purple. State stays
+ * `merged` for both — only attention tells them apart.
  */
 export interface PrNumberAppearance {
   state: string;
@@ -12,6 +16,16 @@ export interface PrNumberAppearance {
 }
 
 const MERGED = "text-[color:var(--pr-merged)]";
+/**
+ * Merged *and* shipped: the same purple, taken a shade deeper.
+ *
+ * `--pr-merged` is bb's own token and moves with the theme (53% lightness in
+ * light, 68% in dark), so this derives from it with relative colour rather
+ * than pinning a second literal that would drift. Down in lightness and up in
+ * chroma is what reads as "deeper" against either background; a fixed hex
+ * would be a hole in one theme or the other.
+ */
+const RELEASED = "text-[color:oklch(from_var(--pr-merged)_calc(l_-_0.13)_calc(c_+_0.04)_h)]";
 /** bb paints open PRs with `text-success`, not the meta line's grey. */
 const OPEN = "text-success";
 /** Draft is muted, matching bb's draft token. */
@@ -41,6 +55,8 @@ const READY = "text-success";
 
 export function prNumberClassName(pr: PrNumberAppearance): string {
   switch (pr.attention) {
+    case "released":
+      return RELEASED;
     case "merged":
       return MERGED;
     case "conflicts":
@@ -77,6 +93,8 @@ export function prNumberClassName(pr: PrNumberAppearance): string {
 
 export function prNumberLabel(pr: PrNumberAppearance): string {
   switch (pr.attention) {
+    case "released":
+      return "Merged and released pull request";
     case "merged":
       return "Merged pull request";
     case "closed":

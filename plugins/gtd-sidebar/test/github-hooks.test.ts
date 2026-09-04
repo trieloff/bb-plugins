@@ -47,6 +47,7 @@ describe("ensureGithubRepoHook", () => {
               "issue_comment",
               "check_suite",
               "deployment_status",
+              "release",
             ],
             config: { url },
           },

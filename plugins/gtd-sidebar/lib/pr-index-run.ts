@@ -12,7 +12,10 @@ import {
   sidebarPrFromRest,
   sidebarPrFromTitle,
   withMergeQueueMembership,
+  withPullRelease,
+  withReleaseState,
   type CachedPullRow,
+  type LatestRelease,
   type RestPull,
   type SidebarPullRequest,
 } from "./pr-index.ts";
@@ -37,6 +40,11 @@ export interface PrIndexDeps {
   getPull(repo: GithubRepo, number: number): Promise<RestPull | null>;
   /** GitHub merge-queue PR numbers for this repo; omit to skip the overlay. */
   listMergeQueueNumbers?(repo: GithubRepo): Promise<number[]>;
+  /**
+   * The repo's newest published release; null when it has never shipped one.
+   * Omit to skip the overlay, and every merged PR stays plain merged.
+   */
+  getLatestRelease?(repo: GithubRepo): Promise<LatestRelease | null>;
   log: { info(message: string): void; warn(message: string): void };
 }
 
@@ -143,6 +151,27 @@ export async function resolveThreadPullRequests(
 
   const canSpendRest = deps.restRemaining === null || deps.restRemaining >= MIN_REST_REMAINING;
   const pullsByRepo = new Map<string, RestPull[]>();
+
+  // One `releases/latest` per repository per tick, memoised for the numbered
+  // lookups that reach repositories the list loop never visited. Capped with
+  // the repo list so a sidebar full of unrelated checkouts cannot turn one
+  // tick into a hundred release calls.
+  const releaseByRepo = new Map<string, LatestRelease | null>();
+  const releaseFor = async (repo: GithubRepo): Promise<LatestRelease | null> => {
+    const key = `${repo.owner}/${repo.repo}`;
+    const memo = releaseByRepo.get(key);
+    if (memo !== undefined) return memo;
+    if (!canSpendRest || deps.getLatestRelease === undefined) return null;
+    if (releaseByRepo.size >= MAX_REPOS_PER_TICK) return null;
+    let release: LatestRelease | null = null;
+    try {
+      release = await deps.getLatestRelease(repo);
+    } catch (error) {
+      deps.log.warn(`latest release for ${key} failed: ${String(error)}`);
+    }
+    releaseByRepo.set(key, release);
+    return release;
+  };
   if (canSpendRest) {
     const repos: GithubRepo[] = [];
     const seen = new Set<string>();
@@ -177,7 +206,14 @@ export async function resolveThreadPullRequests(
           deps.log.warn(`merge queue for ${key} failed: ${String(error)}`);
         }
       }
-      pullsByRepo.set(key, withMergeQueueMembership(mergeListedPulls(open, closed), queuedNumbers));
+      const release = await releaseFor(repo);
+      pullsByRepo.set(
+        key,
+        withReleaseState(
+          withMergeQueueMembership(mergeListedPulls(open, closed), queuedNumbers),
+          release,
+        ),
+      );
     }
     deps.log.info(
       `pr-index listed ${pullsByRepo.size} repos for ${pending.length} threads (REST remaining ${deps.restRemaining ?? "unknown"})`,
@@ -197,7 +233,11 @@ export async function resolveThreadPullRequests(
     if (!canSpendRest || numberedLookups >= MAX_PR_LOOKUPS_PER_TICK) return null;
     numberedLookups += 1;
     try {
-      const pull = await deps.getPull(repo, number);
+      const fetched = await deps.getPull(repo, number);
+      // The numbered GET answers for repositories the list loop skipped, so
+      // it carries the release overlay itself; without it a PR found only by
+      // number would stay plain merged after its release shipped.
+      const pull = fetched === null ? null : withPullRelease(fetched, await releaseFor(repo));
       pullByNumber.set(key, pull);
       return pull;
     } catch (error) {

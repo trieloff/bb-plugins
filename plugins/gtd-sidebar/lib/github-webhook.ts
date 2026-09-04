@@ -18,6 +18,9 @@ export const GITHUB_WEBHOOK_EVENTS = [
   "issue_comment",
   "check_suite",
   "deployment_status",
+  // A release carries no pull, but publishing one turns every merge behind it
+  // from merged into released. `releasePublished` below is how that is read.
+  "release",
 ] as const;
 
 export const SNOOZE_WAKE_EVENTS = new Set<string>([
@@ -145,6 +148,25 @@ export function parseWebhookPull(payload: unknown): WebhookPullRef | null {
         ? { ...parsed, inMergeQueue: false }
         : parsed;
   return { owner: repo.owner, repo: repo.repo, pull };
+}
+
+/**
+ * True for the one release action that ships code: `published`.
+ *
+ * GitHub also fires `created` (for drafts), `edited`, `released`, and
+ * `prereleased`. `released` duplicates `published` for non-prereleases, and a
+ * prerelease is not what the deep purple claims, so only `published` counts —
+ * and only when the payload's release is neither a draft nor a prerelease.
+ */
+export function releasePublished(event: string, payload: unknown): boolean {
+  if (event !== "release") return false;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+  const record = payload as Record<string, unknown>;
+  if (record.action !== "published") return false;
+  const release = record.release;
+  if (typeof release !== "object" || release === null || Array.isArray(release)) return false;
+  const fields = release as Record<string, unknown>;
+  return fields.draft !== true && fields.prerelease !== true;
 }
 
 export function webhookPrNumbers(event: string, payload: unknown): number[] {

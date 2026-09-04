@@ -3,16 +3,21 @@ import { describe, it } from "node:test";
 import {
   isCacheFresh,
   matchPullForBranch,
+  isReleasedPull,
   mergeQueueQuery,
   needsMergeStateLookup,
+  parseLatestRelease,
   parseMergeQueueNumbers,
   parseRestPull,
   parseRestPulls,
   PR_CACHE_FRESH_MS,
+  releaseCoversBranch,
   sidebarPrFromRest,
   sidebarPrFromTitle,
   withMergeQueueMembership,
+  withReleaseState,
   type CachedPullRow,
+  type LatestRelease,
   type RestPull,
 } from "../lib/pr-index.ts";
 import { resolveThreadPullRequests, type ThreadPrQuery } from "../lib/pr-index-run.ts";
@@ -29,6 +34,10 @@ const pull = (overrides: Partial<RestPull> = {}): RestPull => ({
   mergeable: null,
   autoMerge: false,
   inMergeQueue: false,
+  mergedAt: null,
+  baseRef: "main",
+  defaultBranch: "main",
+  released: false,
   ...overrides,
 });
 
@@ -212,6 +221,95 @@ describe("withMergeQueueMembership", () => {
   });
 });
 
+const release = (overrides: Partial<LatestRelease> = {}): LatestRelease => ({
+  publishedAt: "2026-09-04T12:00:00Z",
+  tag: "v1.4.0",
+  target: "main",
+  ...overrides,
+});
+
+const merged = (overrides: Partial<RestPull> = {}): RestPull =>
+  pull({
+    state: "closed",
+    merged: true,
+    mergedAt: "2026-09-04T11:00:00Z",
+    ...overrides,
+  });
+
+describe("parseLatestRelease", () => {
+  it("reads a published release", () => {
+    const parsed = parseLatestRelease({
+      tag_name: "v1.4.0",
+      target_commitish: "main",
+      published_at: "2026-09-04T12:00:00Z",
+      draft: false,
+      prerelease: false,
+    });
+    assert.deepEqual(parsed, {
+      publishedAt: "2026-09-04T12:00:00Z",
+      tag: "v1.4.0",
+      target: "main",
+    });
+  });
+
+  it("refuses drafts, prereleases, and unpublished or unparseable dates", () => {
+    const base = { tag_name: "v1.4.0", published_at: "2026-09-04T12:00:00Z" };
+    assert.equal(parseLatestRelease({ ...base, draft: true }), null);
+    assert.equal(parseLatestRelease({ ...base, prerelease: true }), null);
+    assert.equal(parseLatestRelease({ tag_name: "v1.4.0" }), null);
+    assert.equal(parseLatestRelease({ ...base, published_at: "soon" }), null);
+    // A 404 body from `releases/latest` is a repo that never shipped.
+    assert.equal(parseLatestRelease({ message: "Not Found" }), null);
+  });
+});
+
+describe("releaseCoversBranch", () => {
+  it("matches the release branch, and gives up on a sha target", () => {
+    assert.equal(releaseCoversBranch("main", "main"), true);
+    assert.equal(releaseCoversBranch("main", "feat/parent"), false);
+    assert.equal(releaseCoversBranch("9f1c0de4a2b3c4d5e6f708192a3b4c5d6e7f8091", "main"), true);
+    assert.equal(releaseCoversBranch("", "main"), true);
+    assert.equal(releaseCoversBranch("main", ""), true);
+  });
+});
+
+describe("isReleasedPull", () => {
+  it("counts a merge that a later release shipped", () => {
+    assert.equal(isReleasedPull(merged(), release()), true);
+  });
+
+  it("leaves a merge the newest release predates alone", () => {
+    assert.equal(
+      isReleasedPull(merged({ mergedAt: "2026-09-04T13:00:00Z" }), release()),
+      false,
+    );
+  });
+
+  it("says no for an unmerged pull, and for a repo with no release", () => {
+    assert.equal(isReleasedPull(pull(), release()), false);
+    assert.equal(isReleasedPull(merged(), null), false);
+  });
+
+  it("does not ship a stacked PR merged into its parent branch", () => {
+    const stacked = merged({ baseRef: "feat/parent", defaultBranch: "main" });
+    assert.equal(isReleasedPull(stacked, release()), false);
+  });
+});
+
+describe("withReleaseState", () => {
+  it("turns merged into released, and leaves open pulls untouched", () => {
+    const overlaid = withReleaseState([merged({ number: 12 }), pull({ number: 13 })], release());
+    assert.equal(sidebarPrFromRest(overlaid[0] as RestPull).attention, "released");
+    assert.equal(sidebarPrFromRest(overlaid[0] as RestPull).state, "merged");
+    assert.equal(overlaid[1]?.released, false);
+  });
+
+  it("is a no-op for a repository that has never released", () => {
+    const overlaid = withReleaseState([merged()], null);
+    assert.equal(sidebarPrFromRest(overlaid[0] as RestPull).attention, "merged");
+  });
+});
+
 describe("resolveThreadPullRequests", () => {
   const query = (overrides: Partial<ThreadPrQuery> = {}): ThreadPrQuery => ({
     threadId: "thr_1",
@@ -385,6 +483,84 @@ describe("resolveThreadPullRequests", () => {
     });
     assert.deepEqual(lookedUp, []);
     assert.equal(resolved.get("thr_1")?.attention, "queued");
+  });
+
+  it("deepens a merged badge to released once the repo has shipped", async () => {
+    let releaseCalls = 0;
+    const resolved = await resolveThreadPullRequests(
+      [query({ branchName: "feat/shipped" }), query({ threadId: "thr_2", environmentId: "env_2" })],
+      {
+        now: 5_000,
+        restRemaining: 4_000,
+        getCache: () => undefined,
+        putCache: () => {},
+        getRepo: async () => ({ owner: "acme", repo: "app" }),
+        listOpenPulls: async () => [],
+        listRecentClosedPulls: async () => [merged({ number: 2601, headRef: "feat/shipped" })],
+        getPull: async () => null,
+        getLatestRelease: async () => {
+          releaseCalls += 1;
+          return release();
+        },
+        log: { info() {}, warn() {} },
+      },
+    );
+    assert.equal(resolved.get("thr_1")?.attention, "released");
+    // One `releases/latest` for the repository, not one per thread.
+    assert.equal(releaseCalls, 1);
+  });
+
+  it("keeps a merged badge plain when the repo has no release yet", async () => {
+    const resolved = await resolveThreadPullRequests([query({ branchName: "feat/shipped" })], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [],
+      listRecentClosedPulls: async () => [merged({ number: 2601, headRef: "feat/shipped" })],
+      getPull: async () => null,
+      getLatestRelease: async () => null,
+      log: { info() {}, warn() {} },
+    });
+    assert.equal(resolved.get("thr_1")?.attention, "merged");
+  });
+
+  it("overlays the release onto a pull found only by number", async () => {
+    const resolved = await resolveThreadPullRequests(
+      [query({ environmentId: null, branchName: null, title: "acme/app#2601 shipped" })],
+      {
+        now: 5_000,
+        restRemaining: 4_000,
+        getCache: () => undefined,
+        putCache: () => {},
+        getRepo: async () => null,
+        listOpenPulls: async () => [],
+        listRecentClosedPulls: async () => [],
+        getPull: async (_repo, number) => merged({ number, headRef: "feat/shipped" }),
+        getLatestRelease: async () => release(),
+        log: { info() {}, warn() {} },
+      },
+    );
+    assert.equal(resolved.get("thr_1")?.attention, "released");
+  });
+
+  it("still resolves when the release lookup throws", async () => {
+    const resolved = await resolveThreadPullRequests([query({ branchName: "feat/shipped" })], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [],
+      listRecentClosedPulls: async () => [merged({ number: 2601, headRef: "feat/shipped" })],
+      getPull: async () => null,
+      getLatestRelease: async () => {
+        throw new Error("rate limited");
+      },
+      log: { info() {}, warn() {} },
+    });
+    assert.equal(resolved.get("thr_1")?.attention, "merged");
   });
 
   it("serves a stale cache when REST is skipped and the title has no number", async () => {

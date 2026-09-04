@@ -21,11 +21,13 @@ import {
   mergeQueueQuery,
   needsMergeStateLookup,
   parseMergeQueueNumbers,
+  parseLatestRelease,
   parseRestPull,
   parseRestPulls,
   parseRestRateLimit,
   sidebarPrFromRest,
   type CachedPullRow,
+  type LatestRelease,
   type RestPull,
 } from "./lib/pr-index.ts";
 import { resolveThreadPullRequests } from "./lib/pr-index-run.ts";
@@ -35,6 +37,7 @@ import { ensureGithubRepoHook } from "./lib/github-hooks.ts";
 import {
   parseRepoFromPayload,
   parseWebhookPull,
+  releasePublished,
   resolveWebhookDeliveryUrl,
   SNOOZE_WAKE_EVENTS,
   verifyGithubSignature,
@@ -304,6 +307,8 @@ export const gtdSidebarRpcContract = defineRpcContract({
 });
 
 export { LIFECYCLE_CHANNEL, PR_INDEX_CHANNEL, WEBHOOK_TUNNEL_CHANNEL } from "./lib/channels.ts";
+/** Releases are hourly news at best; the reconcile runs every ten minutes. */
+const LATEST_RELEASE_CACHE_MS = 30 * 60 * 1000;
 const WEBHOOK_SECRET_KEY = "github-webhook-secret";
 const WEBHOOK_LAST_URL_KEY = "github-webhook-last-url";
 
@@ -347,6 +352,10 @@ export default function plugin(bb: BbPluginApi) {
   let resolvedGhPath: string | null | undefined;
   const restPullsInFlight = new Map<string, Promise<ReturnType<typeof parseRestPulls>>>();
   const restPullGetInFlight = new Map<string, Promise<RestPull | null>>();
+  // Releases move on the order of hours, not the ten-minute reconcile, so the
+  // answer is held between ticks. A `release` webhook clears the entry, which
+  // is what makes the badge deepen the moment a release actually ships.
+  const latestReleaseCache = new Map<string, { at: number; release: LatestRelease | null }>();
   const hookEnsuredAt = new Map<string, number>();
   const HOOK_ENSURE_TTL_MS = 60 * 60 * 1000;
   let liveTunnelOrigin: string | null = null;
@@ -396,6 +405,27 @@ export default function plugin(bb: BbPluginApi) {
     const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
     const fetched = await githubRestJson(gh, path);
     return fetched.exitCode === 0 ? parseRestPull(fetched.raw) : null;
+  };
+
+  /**
+   * Stale-mark a repo's merged rows after it publishes a release.
+   *
+   * Which merges the release actually covers is the resolve pass's question —
+   * it holds the base branch and the merge time this table does not keep. So
+   * the event only drops the freshness that would otherwise hold the badge at
+   * plain merged for another fifteen minutes, and lets the reconcile that the
+   * `refresh` below triggers decide the colour.
+   */
+  const expireMergedIndexRows = (owner: string, repo: string): number => {
+    latestReleaseCache.delete(`${owner}/${repo}`);
+    const result = db
+      .prepare(
+        `UPDATE thread_pr_index
+            SET fetched_at = 0
+          WHERE owner = ? AND repo = ? AND state = 'merged' AND attention <> 'released'`,
+      )
+      .run(owner, repo);
+    return result.changes;
   };
 
   const applyPullToIndex = (owner: string, repo: string, pull: RestPull, now: number) => {
@@ -705,6 +735,10 @@ export default function plugin(bb: BbPluginApi) {
         }
       }
     }
+    let expired = 0;
+    if (repo !== null && releasePublished(input.event, payload)) {
+      expired = expireMergedIndexRows(repo.owner, repo.repo);
+    }
     if (rows.length === 0) {
       bb.realtime.publish(PR_INDEX_CHANNEL, { refresh: true });
     } else {
@@ -716,8 +750,9 @@ export default function plugin(bb: BbPluginApi) {
         : repo !== null
           ? ` ${repo.owner}/${repo.repo}`
           : "";
-    bb.log.info(`github webhook ${input.event}${target} updated ${rows.length}`);
-    return { status: 200, body: { ok: true, updated: rows.length } };
+    const expiredNote = expired > 0 ? ` expired ${expired}` : "";
+    bb.log.info(`github webhook ${input.event}${target} updated ${rows.length}${expiredNote}`);
+    return { status: 200, body: { ok: true, updated: rows.length, expired } };
   };
 
   bb.http.route(
@@ -925,6 +960,22 @@ export default function plugin(bb: BbPluginApi) {
             );
           }
           return parseMergeQueueNumbers(fetched.raw);
+        },
+        getLatestRelease: async (repo) => {
+          if (gh === null) return null;
+          const key = `${repo.owner}/${repo.repo}`;
+          const cached = latestReleaseCache.get(key);
+          if (cached !== undefined && Date.now() - cached.at < LATEST_RELEASE_CACHE_MS) {
+            return cached.release;
+          }
+          const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/releases/latest`;
+          const fetched = await githubRestJson(gh, path);
+          // 404 is the ordinary answer for a repo that has never shipped a
+          // release, not a failure. Everything else is cached as "no release"
+          // too, so one bad response cannot make the whole tick retry it.
+          const release = fetched.exitCode === 0 ? parseLatestRelease(fetched.raw) : null;
+          latestReleaseCache.set(key, { at: Date.now(), release });
+          return release;
         },
         log: bb.log,
       });

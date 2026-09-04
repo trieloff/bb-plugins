@@ -41,6 +41,14 @@ export interface RestPull {
   autoMerge: boolean;
   /** True when GitHub's merge queue currently holds this pull. */
   inMergeQueue: boolean;
+  /** ISO 8601 merge timestamp; null while the pull is unmerged. */
+  mergedAt: string | null;
+  /** Branch this pull merges into, or "" when the payload omits it. */
+  baseRef: string;
+  /** The base repository's default branch, or "" when the payload omits it. */
+  defaultBranch: string;
+  /** True when a published release already ships this merge. */
+  released: boolean;
 }
 
 export interface CachedPullRow {
@@ -103,6 +111,17 @@ export function parseRestPull(raw: unknown): RestPull | null {
     typeof head === "object" && head !== null && !Array.isArray(head)
       ? (head as Record<string, unknown>).ref
       : null;
+  const base =
+    typeof record.base === "object" && record.base !== null && !Array.isArray(record.base)
+      ? (record.base as Record<string, unknown>)
+      : null;
+  const baseRef = base === null ? null : base.ref;
+  const baseRepo =
+    base !== null && typeof base.repo === "object" && base.repo !== null && !Array.isArray(base.repo)
+      ? (base.repo as Record<string, unknown>)
+      : null;
+  const defaultBranch = baseRepo === null ? null : baseRepo.default_branch;
+  const mergedAt = record.merged_at;
   return {
     number,
     title,
@@ -115,6 +134,10 @@ export function parseRestPull(raw: unknown): RestPull | null {
     mergeable: typeof record.mergeable === "boolean" ? record.mergeable : null,
     autoMerge: record.auto_merge != null,
     inMergeQueue: false,
+    mergedAt: typeof mergedAt === "string" && mergedAt.length > 0 ? mergedAt : null,
+    baseRef: typeof baseRef === "string" ? baseRef : "",
+    defaultBranch: typeof defaultBranch === "string" ? defaultBranch : "",
+    released: false,
   };
 }
 
@@ -173,7 +196,7 @@ export function mergeListedPulls(
 }
 
 export function restPullAttention(pull: RestPull): string {
-  if (pull.merged) return "merged";
+  if (pull.merged) return pull.released ? "released" : "merged";
   if (pull.state === "closed") return "closed";
   if (pull.draft || pull.mergeableState === "draft") return "draft";
   // Merge-queue membership is not `auto_merge`. Queue entries arrive with
@@ -318,4 +341,94 @@ export function withMergeQueueMembership(
   if (queuedNumbers.length === 0) return [...pulls];
   const queued = new Set(queuedNumbers);
   return pulls.map((pull) => (queued.has(pull.number) ? { ...pull, inMergeQueue: true } : pull));
+}
+
+/**
+ * The newest published release of a repository, as `releases/latest` reports
+ * it. Drafts and prereleases are not "shipped" and never reach here.
+ */
+export interface LatestRelease {
+  /** ISO 8601 publish timestamp. */
+  publishedAt: string;
+  /** GitHub `tag_name`, kept for logging and debugging. */
+  tag: string;
+  /**
+   * GitHub `target_commitish`. semantic-release and release-please both set
+   * the release branch here; other tooling sets a commit sha instead.
+   */
+  target: string;
+}
+
+export function parseLatestRelease(raw: unknown): LatestRelease | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (record.draft === true || record.prerelease === true) return null;
+  const publishedAt = record.published_at;
+  if (typeof publishedAt !== "string" || publishedAt.length === 0) return null;
+  if (Number.isNaN(Date.parse(publishedAt))) return null;
+  return {
+    publishedAt,
+    tag: typeof record.tag_name === "string" ? record.tag_name : "",
+    target: typeof record.target_commitish === "string" ? record.target_commitish : "",
+  };
+}
+
+const COMMIT_SHA = /^[0-9a-f]{7,40}$/u;
+
+/**
+ * True when a release cut from `target` can carry a merge into `baseRef`.
+ *
+ * `target_commitish` is a branch for the release tooling we care about, so a
+ * PR merged into a stacked parent branch is not covered by a release cut from
+ * main. When GitHub reports a sha instead there is no branch to compare, and
+ * the timestamp rule below is left to decide alone.
+ */
+export function releaseCoversBranch(target: string, baseRef: string): boolean {
+  if (target.length === 0 || baseRef.length === 0) return true;
+  if (COMMIT_SHA.test(target)) return true;
+  return target === baseRef;
+}
+
+/**
+ * True when a published release already ships this merge.
+ *
+ * The exact question — is the merge commit an ancestor of the release tag? —
+ * costs a `compare` call per pull, which this path cannot afford (see the file
+ * header). Time plus branch is the affordable stand-in: a release published
+ * after the merge, cut from the branch the pull merged into, contains it.
+ *
+ * The known imprecision is the per-component monorepo. release-please tags
+ * each package separately, and `releases/latest` reports whichever component
+ * shipped last, so a merge to one package can be lit by another package's
+ * release. The claim the colour makes is therefore "merged, and this repo has
+ * shipped since" — true in both cases, exact for single-package repositories
+ * like a semantic-release setup.
+ */
+export function isReleasedPull(pull: RestPull, release: LatestRelease | null): boolean {
+  if (release === null) return false;
+  if (!pull.merged || pull.mergedAt === null) return false;
+  // A pull merged into a stacked parent is not on the release branch, and its
+  // own merge into the default branch is a different pull with its own badge.
+  if (pull.defaultBranch.length > 0 && pull.baseRef.length > 0) {
+    if (pull.baseRef !== pull.defaultBranch) return false;
+  }
+  if (!releaseCoversBranch(release.target, pull.baseRef)) return false;
+  const mergedAt = Date.parse(pull.mergedAt);
+  if (Number.isNaN(mergedAt)) return false;
+  return mergedAt <= Date.parse(release.publishedAt);
+}
+
+/** Overlay one pull with the repository's release state. */
+export function withPullRelease(pull: RestPull, release: LatestRelease | null): RestPull {
+  const released = isReleasedPull(pull, release);
+  return released === pull.released ? pull : { ...pull, released };
+}
+
+/** Overlay a listed repository, the way `withMergeQueueMembership` does. */
+export function withReleaseState(
+  pulls: readonly RestPull[],
+  release: LatestRelease | null,
+): RestPull[] {
+  if (release === null) return [...pulls];
+  return pulls.map((pull) => withPullRelease(pull, release));
 }

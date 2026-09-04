@@ -20,6 +20,15 @@ describe("prNumberClassName", () => {
   });
 
   it("keeps merged purple and failures red", () => {
+    assert.match(
+      prNumberClassName({ state: "merged", attention: "released" }),
+      /^text-\[color:oklch\(from_var\(--pr-merged\)/u,
+    );
+    // Released outranks the plain merged state behind it.
+    assert.notEqual(
+      prNumberClassName({ state: "merged", attention: "released" }),
+      prNumberClassName({ state: "merged", attention: "merged" }),
+    );
     assert.equal(
       prNumberClassName({ state: "merged", attention: "merged" }),
       "text-[color:var(--pr-merged)]",
@@ -46,6 +55,14 @@ describe("prNumberClassName", () => {
 });
 
 describe("prNumberLabel", () => {
+  it("separates a released pull request from a merged one", () => {
+    assert.equal(
+      prNumberLabel({ state: "merged", attention: "released" }),
+      "Merged and released pull request",
+    );
+    assert.equal(prNumberLabel({ state: "merged", attention: "merged" }), "Merged pull request");
+  });
+
   it("names draft and merge-queue for the title", () => {
     assert.equal(prNumberLabel({ state: "draft", attention: "draft" }), "Draft pull request");
     assert.equal(
