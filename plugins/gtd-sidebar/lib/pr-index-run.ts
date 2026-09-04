@@ -11,10 +11,12 @@ import {
   sidebarPrFromCache,
   sidebarPrFromRest,
   sidebarPrFromTitle,
+  withCheckRollups,
   withMergeQueueMembership,
   withPullRelease,
   withReleaseState,
   type CachedPullRow,
+  type CheckRollup,
   type LatestRelease,
   type RestPull,
   type SidebarPullRequest,
@@ -45,6 +47,8 @@ export interface PrIndexDeps {
    * Omit to skip the overlay, and every merged PR stays plain merged.
    */
   getLatestRelease?(repo: GithubRepo): Promise<LatestRelease | null>;
+  /** Head-commit check rollups for open PRs; omit to skip the overlay. */
+  listCheckRollups?(repo: GithubRepo): Promise<ReadonlyMap<number, CheckRollup>>;
   log: { info(message: string): void; warn(message: string): void };
 }
 
@@ -206,11 +210,25 @@ export async function resolveThreadPullRequests(
           deps.log.warn(`merge queue for ${key} failed: ${String(error)}`);
         }
       }
+      let checkRollups: ReadonlyMap<number, CheckRollup> = new Map();
+      if (deps.listCheckRollups !== undefined) {
+        try {
+          checkRollups = await deps.listCheckRollups(repo);
+        } catch (error) {
+          deps.log.warn(`check rollups for ${key} failed: ${String(error)}`);
+        }
+      }
       const release = await releaseFor(repo);
+      // Queue membership, then the check rollup, then the release: each
+      // overlay only reads what the list left out, and none reads another's
+      // field, so the order is for reading, not for correctness.
       pullsByRepo.set(
         key,
         withReleaseState(
-          withMergeQueueMembership(mergeListedPulls(open, closed), queuedNumbers),
+          withCheckRollups(
+            withMergeQueueMembership(mergeListedPulls(open, closed), queuedNumbers),
+            checkRollups,
+          ),
           release,
         ),
       );
@@ -260,7 +278,13 @@ export async function resolveThreadPullRequests(
     // GET; the lookup cache and per-tick cap keep the cost bounded.
     if (listed !== null && repo !== null && needsMergeStateLookup(listed)) {
       const detailed = await lookupNumbered(repo, listed.number);
-      if (detailed !== null) listed = detailed;
+      if (detailed !== null) {
+        listed = {
+          ...detailed,
+          inMergeQueue: listed.inMergeQueue || detailed.inMergeQueue,
+          checkRollup: detailed.checkRollup ?? listed.checkRollup,
+        };
+      }
     }
     const fromList = listed === null ? null : sidebarPrFromRest(listed);
     const hint = numberedHint(query, repo, stale);

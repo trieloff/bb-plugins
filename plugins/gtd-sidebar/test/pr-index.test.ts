@@ -5,15 +5,20 @@ import {
   matchPullForBranch,
   isReleasedPull,
   mergeQueueQuery,
+  needsCheckRollupFetch,
   needsMergeStateLookup,
+  parseCheckRollupState,
+  parseCombinedStatus,
   parseLatestRelease,
   parseMergeQueueNumbers,
+  parseOpenPullCheckRollups,
   parseRestPull,
   parseRestPulls,
   PR_CACHE_FRESH_MS,
   releaseCoversBranch,
   sidebarPrFromRest,
   sidebarPrFromTitle,
+  withCheckRollups,
   withMergeQueueMembership,
   withReleaseState,
   type CachedPullRow,
@@ -30,6 +35,7 @@ const pull = (overrides: Partial<RestPull> = {}): RestPull => ({
   state: "open",
   merged: false,
   headRef: "feat/curl-dump-header",
+  headSha: "abc123",
   mergeableState: "unknown",
   mergeable: null,
   autoMerge: false,
@@ -38,6 +44,7 @@ const pull = (overrides: Partial<RestPull> = {}): RestPull => ({
   baseRef: "main",
   defaultBranch: "main",
   released: false,
+  checkRollup: null,
   ...overrides,
 });
 
@@ -112,9 +119,33 @@ describe("sidebarPrFromRest", () => {
     assert.equal(sidebarPrFromRest(pull({ mergeableState: "dirty" })).attention, "conflicts");
     assert.equal(
       sidebarPrFromRest(pull({ mergeableState: "unstable" })).attention,
+      "checks_pending",
+    );
+    assert.equal(
+      sidebarPrFromRest(pull({ mergeableState: "unstable", checkRollup: "failure" })).attention,
       "checks_failed",
     );
+    assert.equal(
+      sidebarPrFromRest(pull({ mergeableState: "unstable", checkRollup: "pending" })).attention,
+      "checks_pending",
+    );
+    assert.equal(
+      sidebarPrFromRest(pull({ mergeableState: "unstable", checkRollup: "success" })).attention,
+      "none",
+    );
     assert.equal(sidebarPrFromRest(pull({ mergeableState: "blocked" })).attention, "blocked");
+    assert.equal(
+      sidebarPrFromRest(pull({ mergeableState: "blocked", checkRollup: "pending" })).attention,
+      "checks_pending",
+    );
+    assert.equal(
+      sidebarPrFromRest(pull({ mergeableState: "blocked", checkRollup: "failure" })).attention,
+      "checks_failed",
+    );
+    assert.equal(
+      sidebarPrFromRest(pull({ mergeableState: "blocked", checkRollup: "success" })).attention,
+      "blocked",
+    );
     assert.equal(sidebarPrFromRest(pull({ mergeableState: "behind" })).attention, "blocked");
     assert.equal(sidebarPrFromRest(pull({ autoMerge: true })).attention, "queued");
     assert.equal(sidebarPrFromRest(pull({ inMergeQueue: true })).attention, "queued");
@@ -206,6 +237,7 @@ describe("parseMergeQueueNumbers", () => {
     );
     assert.deepEqual(parseMergeQueueNumbers({ data: { repository: { mergeQueue: null } } }), []);
     assert.equal(mergeQueueQuery("ai-ecoverse", "slicc")?.includes("mergeQueue"), true);
+    assert.equal(mergeQueueQuery("ai-ecoverse", "slicc")?.includes("statusCheckRollup"), true);
     assert.equal(mergeQueueQuery("ai-ecoverse", 'slicc"boom'), null);
   });
 });
@@ -307,6 +339,79 @@ describe("withReleaseState", () => {
   it("is a no-op for a repository that has never released", () => {
     const overlaid = withReleaseState([merged()], null);
     assert.equal(sidebarPrFromRest(overlaid[0] as RestPull).attention, "merged");
+  });
+});
+
+describe("parseCheckRollupState", () => {
+  it("normalizes GraphQL and REST names, treating EXPECTED as pending", () => {
+    assert.equal(parseCheckRollupState("PENDING"), "pending");
+    assert.equal(parseCheckRollupState("expected"), "pending");
+    assert.equal(parseCheckRollupState("SUCCESS"), "success");
+    assert.equal(parseCheckRollupState("FAILURE"), "failure");
+    assert.equal(parseCheckRollupState("ERROR"), "error");
+    assert.equal(parseCheckRollupState("nope"), null);
+  });
+});
+
+describe("parseCombinedStatus", () => {
+  it("ignores GitHub's pending-with-zero-contexts (no CI at all)", () => {
+    assert.equal(parseCombinedStatus({ state: "pending", total_count: 0 }), null);
+    assert.equal(parseCombinedStatus({ state: "pending", total_count: 2 }), "pending");
+    assert.equal(parseCombinedStatus({ state: "failure", total_count: 1 }), "failure");
+  });
+});
+
+describe("parseOpenPullCheckRollups", () => {
+  it("reads rollup state per open PR number", () => {
+    const rollups = parseOpenPullCheckRollups({
+      data: {
+        repository: {
+          pullRequests: {
+            nodes: [
+              {
+                number: 12,
+                commits: { nodes: [{ commit: { statusCheckRollup: { state: "PENDING" } } }] },
+              },
+              {
+                number: 13,
+                commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+              },
+              { number: 14, commits: { nodes: [{ commit: { statusCheckRollup: null } }] } },
+            ],
+          },
+        },
+      },
+    });
+    assert.equal(rollups.get(12), "pending");
+    assert.equal(rollups.get(13), "failure");
+    assert.equal(rollups.has(14), false);
+  });
+});
+
+describe("withCheckRollups", () => {
+  it("fills a missing rollup and leaves an existing one alone", () => {
+    const marked = withCheckRollups(
+      [pull({ number: 12 }), pull({ number: 13, checkRollup: "failure" })],
+      new Map([
+        [12, "pending"],
+        [13, "pending"],
+      ]),
+    );
+    assert.equal(marked[0]?.checkRollup, "pending");
+    assert.equal(marked[1]?.checkRollup, "failure");
+  });
+});
+
+describe("needsCheckRollupFetch", () => {
+  it("asks for combined status only when mergeable_state cannot decide", () => {
+    assert.equal(needsCheckRollupFetch(pull({ mergeableState: "blocked" })), true);
+    assert.equal(needsCheckRollupFetch(pull({ mergeableState: "unstable" })), true);
+    assert.equal(needsCheckRollupFetch(pull({ mergeableState: "clean" })), false);
+    assert.equal(
+      needsCheckRollupFetch(pull({ mergeableState: "blocked", checkRollup: "pending" })),
+      false,
+    );
+    assert.equal(needsCheckRollupFetch(pull({ mergeableState: "blocked", headSha: "" })), false);
   });
 });
 
@@ -561,6 +666,44 @@ describe("resolveThreadPullRequests", () => {
       log: { info() {}, warn() {} },
     });
     assert.equal(resolved.get("thr_1")?.attention, "merged");
+  });
+
+  it("overlays pending checks so a blocked PR does not paint as failed", async () => {
+    const lookedUp: number[] = [];
+    const resolved = await resolveThreadPullRequests([query()], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [pull({ mergeableState: "unknown" })],
+      getPull: async (_repo, number) => {
+        lookedUp.push(number);
+        return pull({ number, mergeableState: "blocked" });
+      },
+      listRecentClosedPulls: async () => [],
+      listCheckRollups: async () => new Map([[12, "pending"]]),
+      log: { info() {}, warn() {} },
+    });
+    assert.deepEqual(lookedUp, [12]);
+    assert.equal(resolved.get("thr_1")?.attention, "checks_pending");
+  });
+
+  it("lets a numbered GET's failed rollup outrank a stale pending overlay", async () => {
+    const resolved = await resolveThreadPullRequests([query()], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [pull({ mergeableState: "unknown" })],
+      getPull: async (_repo, number) =>
+        pull({ number, mergeableState: "blocked", checkRollup: "failure" }),
+      listRecentClosedPulls: async () => [],
+      listCheckRollups: async () => new Map([[12, "pending"]]),
+      log: { info() {}, warn() {} },
+    });
+    assert.equal(resolved.get("thr_1")?.attention, "checks_failed");
   });
 
   it("serves a stale cache when REST is skipped and the title has no number", async () => {
