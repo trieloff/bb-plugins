@@ -39,6 +39,21 @@ describe("prNumberClassName", () => {
     );
   });
 
+  it("paints pending checks yellow, distinct from queue ochre and failure red", () => {
+    assert.equal(
+      prNumberClassName({ state: "open", attention: "checks_pending" }),
+      "text-[color:oklch(from_var(--warning-text)_l_c_102)]",
+    );
+    assert.notEqual(
+      prNumberClassName({ state: "open", attention: "checks_pending" }),
+      prNumberClassName({ state: "open", attention: "queued" }),
+    );
+    assert.notEqual(
+      prNumberClassName({ state: "open", attention: "checks_pending" }),
+      prNumberClassName({ state: "open", attention: "checks_failed" }),
+    );
+  });
+
   it("strikes a conflicting PR through so it reads apart from the other reds", () => {
     assert.equal(
       prNumberClassName({ state: "open", attention: "conflicts" }),

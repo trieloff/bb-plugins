@@ -97,9 +97,10 @@ and its age (`now`, `7m`, `3d`) when it needs nothing. Hovering swaps that slot 
 the two park buttons.
 
 The PR number uses the same colours bb uses elsewhere: green for an open
-PR, muted grey for a **draft**, amber for a PR in the **merge queue**, purple
-for merged, red for closed or failing. Merged splits in two: plain purple
-while the work sits on the default branch unreleased, and a deeper purple once
+PR, muted grey for a **draft**, amber for a PR in the **merge queue**, yellow
+for **checks still running**, purple for merged, red for closed or failing.
+Merged splits in two: plain purple while
+the work sits on the default branch unreleased, and a deeper purple once
 the repository has published a GitHub release that carries it — the difference
 between "it landed" and "it shipped". A merge into a stacked parent branch is
 never counted as shipped, and a repository that has never cut a release keeps
