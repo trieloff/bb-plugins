@@ -162,7 +162,16 @@ comments does not wake the moment you snooze it.
 
 The watch uses the GitHub CLI (`gh auth login`) on the bb server. It skips the
 hour when GitHub's GraphQL budget is too low and waits for GitHub's own reset
-instead of retrying. Threads snoozed without a known PR are resolved a few at a
+instead of retrying.
+
+If GitHub starts refusing requests for going too fast, the PR index stops
+spending REST for a minute, then five, fifteen, and thirty if it keeps
+happening, and falls back to cached badges and titles meanwhile. This is a
+different limit from the budget above and cannot be read from it: GitHub's
+secondary limit caps request *rate*, so it answers 403 while `rate_limit` still
+reports a full 5,000 remaining. Reading only the budget meant concluding there
+was plenty left and retrying into the wall, where each refusal sustained the
+limit it tripped over. Threads snoozed without a known PR are resolved a few at a
 time so a cold shelf cannot burst the REST rate limit.
 
 ### Child threads

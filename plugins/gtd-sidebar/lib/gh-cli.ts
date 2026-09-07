@@ -29,6 +29,31 @@ export interface GhCommandResult {
  * missing repository from a forbidden one from a rate limit. This is the only
  * place the status survives.
  */
+/**
+ * Whether GitHub is rate limiting us, as opposed to refusing for some other
+ * reason.
+ *
+ * This is the failure `rate_limit` cannot see. GitHub's secondary limit is a
+ * cap on request *rate*, not on volume, so it answers 403 while the primary
+ * budget still reads 5000 of 5000 remaining — which is exactly what happened
+ * here: a guard that only consults `rate_limit` concluded there was plenty of
+ * budget and kept firing, and every rejected call sustained the very limit it
+ * was tripping over. 1,849 of those in three days.
+ *
+ * The status alone is not enough to act on: a 403 is also what a repository
+ * you cannot read returns, and pausing everything for that would be wrong. The
+ * message has to agree.
+ */
+export function isRateLimited(result: { stderr: string }): boolean {
+  const status = githubHttpStatus(result.stderr);
+  // 429 says only one thing, so it needs no corroboration. 403 says several,
+  // and pausing every repository because one of them is private would be a
+  // worse bug than the one this fixes — so that one has to be spelled out.
+  if (status === 429) return true;
+  if (status !== 403) return false;
+  return /rate limit|secondary rate|abuse detection/i.test(result.stderr);
+}
+
 export function githubHttpStatus(stderr: string): number | null {
   const match = /\(HTTP (\d{3})\)/.exec(stderr);
   return match === null ? null : Number(match[1]);

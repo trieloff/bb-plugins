@@ -13,11 +13,25 @@ import { z } from "zod";
 import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
 import { classifyProjectRhythm } from "./lib/work-rhythm.ts";
 import { isReloadCancellation } from "./lib/shutdown.ts";
+import {
+  afterRefusal,
+  afterSuccess,
+  FRESH_REST_BUDGET,
+  isPaused,
+  parseRestBudget,
+  type RestBudgetState,
+} from "./lib/rest-budget.ts";
 import { planQuickSnooze } from "./lib/snooze-plan.ts";
 import { isWithinSettledWindow } from "./lib/settled-threads.ts";
 import { gitButlerHostContract } from "./lib/gitbutler.ts";
 import { randomBytes } from "node:crypto";
-import { createGhRunner, githubGraphql, githubRestJson, resolveGhPath } from "./lib/gh-cli.ts";
+import {
+  createGhRunner,
+  githubGraphql,
+  githubRestJson,
+  isRateLimited,
+  resolveGhPath,
+} from "./lib/gh-cli.ts";
 import { formatAgentWakeMessage, canonicalPullRequestUrl } from "./lib/pr-watch.ts";
 import { pollSnoozedPullRequests, type StoredPrWatch } from "./lib/pr-watch-run.ts";
 import {
@@ -124,6 +138,8 @@ const migrations = [
    )`,
 ];
 const PR_WATCH_RATE_LIMIT_KEY = "pr-watch:rate-limit";
+/** The index's own pause, separate from the watch's GraphQL budget. */
+const PR_INDEX_REST_BUDGET_KEY = "pr-index:rest-budget";
 
 export interface StoredLifecycleRow {
   threadId: string;
@@ -426,6 +442,50 @@ export default function plugin(bb: BbPluginApi) {
   const shutdown = new AbortController();
   bb.onDispose(() => shutdown.abort());
   let resolvedGhPath: string | null | undefined;
+
+  /**
+   * GitHub's opinion of our request rate, shared by everything that spends
+   * REST here.
+   *
+   * Plugin-scoped rather than per-request because the limit belongs to the
+   * account, not to one RPC call: a refusal seen while resolving one thread's
+   * pull request is a refusal for the release lookup happening beside it, and
+   * discovering that separately costs another rejected request each time.
+   * Persisted so a reload does not walk straight back into the limit.
+   */
+  let restBudget: RestBudgetState = FRESH_REST_BUDGET;
+  void (async () => {
+    try {
+      restBudget = parseRestBudget(await bb.storage.kv.get(PR_INDEX_REST_BUDGET_KEY));
+    } catch {
+      // A pause we cannot read is a pause we do not have. Starting clean risks
+      // one refused request, which immediately re-arms it.
+    }
+  })();
+
+  const noteRestOutcome = <T extends { stderr: string; exitCode: number; aborted: boolean }>(
+    result: T,
+  ): T => {
+    if (result.aborted) return result;
+    const next =
+      result.exitCode === 0
+        ? afterSuccess(restBudget)
+        : isRateLimited(result)
+          ? afterRefusal(restBudget, Date.now())
+          : restBudget;
+    if (next !== restBudget) {
+      const climbed = next.strikes > restBudget.strikes;
+      restBudget = next;
+      void bb.storage.kv.set(PR_INDEX_REST_BUDGET_KEY, next).catch(() => undefined);
+      if (climbed && next.skipUntilMs !== null) {
+        bb.log.warn(
+          "pr-index: GitHub is rate limiting; pausing REST for " +
+            `${Math.round((next.skipUntilMs - Date.now()) / 1000)}s (strike ${next.strikes})`,
+        );
+      }
+    }
+    return result;
+  };
   const restPullsInFlight = new Map<string, Promise<ReturnType<typeof parseRestPulls>>>();
   const restPullGetInFlight = new Map<string, Promise<RestPull | null>>();
   // Releases move on the order of hours, not the ten-minute reconcile, so the
@@ -489,7 +549,7 @@ export default function plugin(bb: BbPluginApi) {
   ): Promise<RestPull> => {
     if (!needsCheckRollupFetch(pull)) return pull;
     const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(pull.headSha)}/status`;
-    const fetched = await githubRestJson(gh, path);
+    const fetched = noteRestOutcome(await githubRestJson(gh, path));
     if (fetched.exitCode !== 0) return pull;
     const rollup = parseCombinedStatus(fetched.raw);
     return rollup === null ? pull : { ...pull, checkRollup: rollup };
@@ -507,7 +567,7 @@ export default function plugin(bb: BbPluginApi) {
     if (resolvedGhPath === null) return null;
     const gh = createGhRunner(shutdown.signal, resolvedGhPath);
     const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
-    const fetched = await githubRestJson(gh, path);
+    const fetched = noteRestOutcome(await githubRestJson(gh, path));
     if (fetched.exitCode !== 0) return null;
     const pull = parseRestPull(fetched.raw);
     if (pull === null) return null;
@@ -1141,9 +1201,14 @@ export default function plugin(bb: BbPluginApi) {
         resolvedGhPath = await resolveGhPath(shutdown.signal);
       }
       const gh = resolvedGhPath === null ? null : createGhRunner(shutdown.signal, resolvedGhPath);
+
+      const skipRest = isPaused(restBudget, Date.now());
+
       let restRemaining: number | null = null;
-      if (gh !== null) {
-        const limit = await githubRestJson(gh, "rate_limit", 8_000);
+      // Asking for the budget is itself a request, and one we should not make
+      // while we are being told to slow down.
+      if (gh !== null && !skipRest) {
+        const limit = noteRestOutcome(await githubRestJson(gh, "rate_limit", 8_000));
         restRemaining = parseRestRateLimit(limit.raw)?.restRemaining ?? null;
       }
 
@@ -1192,7 +1257,7 @@ export default function plugin(bb: BbPluginApi) {
           return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
         }
         const pending = (async () => {
-          const fetched = await githubGraphql(gh, query);
+          const fetched = noteRestOutcome(await githubGraphql(gh, query));
           if (fetched.aborted) {
             return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
           }
@@ -1215,6 +1280,7 @@ export default function plugin(bb: BbPluginApi) {
       const resolved = await resolveThreadPullRequests(threads, {
         now: Date.now(),
         restRemaining,
+        skipRest,
         getCache: readPrCache,
         putCache: (row) => {
           db.prepare(
@@ -1260,7 +1326,7 @@ export default function plugin(bb: BbPluginApi) {
           if (inflight !== undefined) return inflight;
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls?state=open&per_page=100`;
           const pending = (async () => {
-            const listed = await githubRestJson(gh, path);
+            const listed = noteRestOutcome(await githubRestJson(gh, path));
             // A reload aborts every in-flight `gh`. That is not a failure and
             // must not be reported as one: the tick is over, and the next one
             // asks again from a clean cache.
@@ -1282,7 +1348,7 @@ export default function plugin(bb: BbPluginApi) {
           if (inflight !== undefined) return inflight;
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls/${number}`;
           const pending = (async () => {
-            const listed = await githubRestJson(gh, path);
+            const listed = noteRestOutcome(await githubRestJson(gh, path));
             if (listed.aborted) return null;
             if (listed.exitCode !== 0) {
               throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
@@ -1299,7 +1365,7 @@ export default function plugin(bb: BbPluginApi) {
         listRecentClosedPulls: async (repo) => {
           if (gh === null) return [];
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
-          const listed = await githubRestJson(gh, path);
+          const listed = noteRestOutcome(await githubRestJson(gh, path));
           if (listed.aborted) return [];
           if (listed.exitCode !== 0) {
             throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
@@ -1316,7 +1382,7 @@ export default function plugin(bb: BbPluginApi) {
             return cached.release;
           }
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/releases/latest`;
-          const fetched = await githubRestJson(gh, path);
+          const fetched = noteRestOutcome(await githubRestJson(gh, path));
           // 404 is the ordinary answer for a repo that has never shipped a
           // release, not a failure. Everything else is cached as "no release"
           // too, so one bad response cannot make the whole tick retry it.

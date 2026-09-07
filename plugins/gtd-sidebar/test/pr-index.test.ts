@@ -474,6 +474,68 @@ describe("resolveThreadPullRequests", () => {
     assert.equal(resolved.get("thr_1")?.number, 12);
   });
 
+  // The pause that breaks the rate-limit feedback loop. `restRemaining` is
+  // deliberately full here: that is the whole point, because a secondary rate
+  // limit leaves the primary budget untouched, so the old guard saw 5000 of
+  // 5000 and kept spending into a wall.
+  it("spends nothing while GitHub is rate limiting, even on a full budget", async () => {
+    let restCalls = 0;
+    const resolved = await resolveThreadPullRequests(
+      [query({ title: "acme/app#12 Dump curl headers" })],
+      {
+        now: 5_000,
+        restRemaining: 5_000,
+        skipRest: true,
+        getCache: () => undefined,
+        putCache: () => {},
+        getRepo: async () => ({ owner: "acme", repo: "app" }),
+        listOpenPulls: async () => {
+          restCalls += 1;
+          throw new Error("should not hit REST while paused");
+        },
+        getPull: async () => {
+          restCalls += 1;
+          throw new Error("should not look up a numbered PR while paused");
+        },
+        listRecentClosedPulls: async () => [],
+        log: { info() {}, warn() {} },
+      },
+    );
+    assert.equal(restCalls, 0);
+    // Still useful: the title carries the number even with REST shut off.
+    assert.equal(resolved.get("thr_1")?.source, "title");
+    assert.equal(resolved.get("thr_1")?.number, 12);
+  });
+
+  it("spends again once the pause is over", async () => {
+    let restCalls = 0;
+    const resolved = await resolveThreadPullRequests(
+      [query({ title: "acme/app#12 Dump curl headers" })],
+      {
+        now: 5_000,
+        restRemaining: 5_000,
+        skipRest: false,
+        getCache: () => undefined,
+        putCache: () => {},
+        getRepo: async () => ({ owner: "acme", repo: "app" }),
+        listOpenPulls: async () => {
+          restCalls += 1;
+          return [];
+        },
+        getPull: async () => null,
+        listRecentClosedPulls: async () => [],
+        log: { info() {}, warn() {} },
+      },
+    );
+    // The contrast with the test above, and the only thing this one asserts:
+    // the pause is what withheld the spend, not anything else in the query.
+    // (With REST actually listed and the PR absent from it, the title number
+    // is deliberately NOT trusted — see the "does not treat a title #number
+    // as an open PR after REST listed the repo" case below.)
+    assert.ok(restCalls > 0);
+    assert.equal(resolved.get("thr_1")?.source, undefined);
+  });
+
   it("buys the merge state the open list omits, so a blocked PR is not green", async () => {
     // `/repos/.../pulls` has no `mergeable_state`, so every listed open PR
     // arrived as "unknown" -> attention "none" -> the open-PR green. #377 was

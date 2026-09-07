@@ -35,6 +35,15 @@ export interface ThreadPrQuery {
 export interface PrIndexDeps {
   now: number;
   restRemaining: number | null;
+  /**
+   * True when GitHub has told us to slow down and the pause is still running.
+   *
+   * Separate from `restRemaining` because it answers a different question.
+   * `restRemaining` is the primary budget, which a secondary rate limit does
+   * not touch — it read 5000 of 5000 throughout the incident this exists for.
+   * Folding one into the other would have hidden that, again.
+   */
+  skipRest?: boolean;
   getCache(environmentId: string): CachedPullRow | undefined;
   putCache(row: CachedPullRow): void;
   getRepo(environmentId: string): Promise<GithubRepo | null>;
@@ -166,7 +175,9 @@ export async function resolveThreadPullRequests(
     }),
   );
 
-  const canSpendRest = deps.restRemaining === null || deps.restRemaining >= MIN_REST_REMAINING;
+  const canSpendRest =
+    deps.skipRest !== true &&
+    (deps.restRemaining === null || deps.restRemaining >= MIN_REST_REMAINING);
   const pullsByRepo = new Map<string, RestPull[]>();
 
   // One `releases/latest` per repository per tick, memoised for the numbered
@@ -251,7 +262,9 @@ export async function resolveThreadPullRequests(
     );
   } else {
     deps.log.info(
-      `pr-index skipping REST (${deps.restRemaining} remaining); cache and titles only`,
+      deps.skipRest === true
+        ? "pr-index skipping REST (GitHub is rate limiting); cache and titles only"
+        : `pr-index skipping REST (${deps.restRemaining} remaining); cache and titles only`,
     );
   }
 
