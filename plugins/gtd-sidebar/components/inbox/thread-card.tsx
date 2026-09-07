@@ -10,7 +10,6 @@ import { RowContextMenu } from "@/components/inbox/row-context-menu";
 import { ProviderGlyph, type ProviderGlyphInfo } from "@/components/inbox/provider-glyph";
 import { STATUS_SLOT_CLASS, StatusOrTime } from "@/components/inbox/status-slot";
 import { threadDisplayTitle } from "@/lib/inbox";
-import { resolveSnoozePresets } from "@/lib/lifecycle";
 import {
   createInAppBrowserTab,
   isDesktopInAppBrowserAvailable,
@@ -40,7 +39,8 @@ export function ThreadCard({
   showProviderIcon,
   onNavigate,
   onSettle,
-  onSnooze,
+  onQuickSnooze,
+  quickSnoozeLabel,
   now,
   debugPullRequests,
   pullRequest,
@@ -57,7 +57,9 @@ export function ThreadCard({
   showProviderIcon: boolean;
   onNavigate: () => void;
   onSettle: () => void;
-  onSnooze: (snoozedUntil: number, pullRequestUrl: string | null) => void;
+  onQuickSnooze: (pullRequestUrl: string | null) => void;
+  /** What that snooze will actually do, e.g. "Snooze until Monday". */
+  quickSnoozeLabel: string;
   /** Quantized clock, so every card in one render agrees on "now". */
   now: number;
   debugPullRequests: boolean;
@@ -116,17 +118,14 @@ export function ThreadCard({
                 so the title never shifts. */}
             {canPark ? (
               <span className="pointer-events-auto hidden items-center gap-0.5 group-hover/card:flex">
+                {/* The label is the promise and the server keeps it: both
+                    sides run the same `planQuickSnooze`, so a button reading
+                    "Snooze until Monday" is the weekend rule announcing
+                    itself rather than a second guess about what will happen. */}
                 <ParkButton
-                  label="Snooze until tomorrow"
+                  label={quickSnoozeLabel}
                   icon="Clock"
-                  onActivate={() => {
-                    // By id, never by index: "This evening" drops out of the
-                    // list once 18:00 is under an hour away, so a positional
-                    // pick silently becomes "Next week" every afternoon.
-                    const presets = resolveSnoozePresets(new Date());
-                    const tomorrow = presets.find((p) => p.id === "tomorrow");
-                    if (tomorrow) onSnooze(tomorrow.snoozedUntil, pullRequest?.url ?? null);
-                  }}
+                  onActivate={() => onQuickSnooze(pullRequest?.url ?? null)}
                 />
                 <ParkButton label="Settle thread" icon="Check" onActivate={onSettle} />
               </span>

@@ -350,9 +350,10 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
                     canPark={lifecycle.canPark(thread)}
                     onNavigate={onNavigate}
                     onSettle={() => lifecycle.settle(thread.id)}
-                    onSnooze={(until, pullRequestUrl) =>
-                      lifecycle.snooze(thread.id, until, pullRequestUrl)
+                    onQuickSnooze={(pullRequestUrl) =>
+                      lifecycle.quickSnooze(thread, pullRequestUrl)
                     }
+                    quickSnoozeLabel={lifecycle.quickSnoozeLabel(thread)}
                     now={now}
                   />
                 ))}
@@ -378,9 +379,10 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
                     canPark={lifecycle.canPark(thread)}
                     onNavigate={onNavigate}
                     onSettle={() => lifecycle.settle(thread.id)}
-                    onSnooze={(until, pullRequestUrl) =>
-                      lifecycle.snooze(thread.id, until, pullRequestUrl)
+                    onQuickSnooze={(pullRequestUrl) =>
+                      lifecycle.quickSnooze(thread, pullRequestUrl)
                     }
+                    quickSnoozeLabel={lifecycle.quickSnoozeLabel(thread)}
                     now={now}
                   />
                 ))}
@@ -406,9 +408,10 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
                     canPark={lifecycle.canPark(thread)}
                     onNavigate={onNavigate}
                     onSettle={() => lifecycle.settle(thread.id)}
-                    onSnooze={(until, pullRequestUrl) =>
-                      lifecycle.snooze(thread.id, until, pullRequestUrl)
+                    onQuickSnooze={(pullRequestUrl) =>
+                      lifecycle.quickSnooze(thread, pullRequestUrl)
                     }
+                    quickSnoozeLabel={lifecycle.quickSnoozeLabel(thread)}
                     now={now}
                   />
                 ))}

@@ -190,14 +190,17 @@ export interface SnoozePreset {
 }
 
 const EVENING_HOUR = 18;
-const MORNING_HOUR = 9;
+export const MORNING_HOUR = 9;
 
 /**
  * Calendar-day arithmetic, not fixed millisecond offsets: adding 24 hours
  * lands on the wrong local day across a daylight-saving change, because a
  * spring-forward day is 23 hours long.
+ *
+ * Exported for `lib/snooze-plan.ts`, which walks a wake time forward off a
+ * weekend and must land on the same 09:00 the presets promise.
  */
-function atHour(base: Date, hour: number, addDays = 0): Date {
+export function atHour(base: Date, hour: number, addDays = 0): Date {
   const next = new Date(base);
   next.setDate(next.getDate() + addDays);
   next.setHours(hour, 0, 0, 0);

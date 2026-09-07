@@ -11,6 +11,8 @@ import { z } from "zod";
 // Relative, not the `@/` alias the frontend uses: bb loads this file directly
 // as a path source, so nothing rewrites tsconfig paths for it.
 import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
+import { classifyProjectRhythm } from "./lib/work-rhythm.ts";
+import { planQuickSnooze } from "./lib/snooze-plan.ts";
 import { isWithinSettledWindow } from "./lib/settled-threads.ts";
 import { gitButlerHostContract } from "./lib/gitbutler.ts";
 import { randomBytes } from "node:crypto";
@@ -80,6 +82,44 @@ const migrations = [
      state           TEXT,
      attention       TEXT,
      fetched_at      INTEGER NOT NULL
+   )`,
+  // Every snooze, kept. The lifecycle row holds one `snoozed_at` and
+  // overwrites it, so before this table nothing could answer how often a
+  // thread had been put off — which is exactly the question the backoff
+  // ladder is an answer to. Rows outlive `clear()` on purpose: a thread that
+  // wakes, gets snoozed again, and wakes again is one story, and deleting the
+  // middle of it is what made the treadmill invisible in the first place.
+  `CREATE TABLE IF NOT EXISTS snooze_history (
+     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+     thread_id      TEXT NOT NULL,
+     snoozed_at     INTEGER NOT NULL,
+     snoozed_until  INTEGER NOT NULL,
+     ladder_step    INTEGER NOT NULL,
+     kind           TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS snooze_history_thread
+     ON snooze_history (thread_id, snoozed_at)`,
+  // The ladder position, in its own table rather than a `thread_lifecycle`
+  // column, because `clear()` deletes that row on every wake — including the
+  // ordinary timer wake that the ladder exists to count. Resets are explicit
+  // below instead, so what clears the ladder is a decision rather than a
+  // side effect of where the state happened to live.
+  `CREATE TABLE IF NOT EXISTS thread_snooze_backoff (
+     thread_id    TEXT PRIMARY KEY,
+     ladder_step  INTEGER NOT NULL,
+     snoozed_at   INTEGER NOT NULL
+   )`,
+  // Which projects the weekend shift applies to, recomputed on a schedule.
+  // Cached rather than derived per click: the verdict reads six weeks of
+  // prompt history per project, and a hover button cannot wait for that.
+  `CREATE TABLE IF NOT EXISTS project_rhythm (
+     project_id      TEXT PRIMARY KEY,
+     weekday_only    INTEGER NOT NULL,
+     weekend_ratio   REAL,
+     weekend_turns INTEGER NOT NULL,
+     weekday_turns INTEGER NOT NULL,
+     observed_days   INTEGER NOT NULL,
+     computed_at     INTEGER NOT NULL
    )`,
 ];
 const PR_WATCH_RATE_LIMIT_KEY = "pr-watch:rate-limit";
@@ -163,6 +203,20 @@ export const gtdSidebarRpcContract = defineRpcContract({
           snoozedAt: z.number().nullable(),
         }),
       ),
+      // What the one-click snooze would do, sent alongside the rows so a card
+      // can label its own button without a round trip per hover. The button
+      // still asks the server to decide when clicked — this is the same
+      // `planQuickSnooze` run on the same inputs, so the label and the act
+      // agree, and a stale copy costs a wrong word rather than a wrong wake.
+      backoff: z.array(
+        z.object({
+          threadId: z.string(),
+          ladderStep: z.number(),
+          snoozedAt: z.number(),
+        }),
+      ),
+      /** Project ids the weekend shift applies to. */
+      weekdayOnlyProjectIds: z.array(z.string()),
     }),
   },
   // The settled shelf's own rows. bb's sidebar view is built from queries
@@ -219,6 +273,23 @@ export const gtdSidebarRpcContract = defineRpcContract({
     output: z.object({ ok: z.boolean() }),
   },
   unsnooze: { input: threadIdSchema, output: z.object({ ok: z.boolean() }) },
+  // The one-click snooze. Unlike `snooze` it carries no wake time: the whole
+  // point is that the server picks one, from this thread's ladder position and
+  // its project's working rhythm. The preset menu keeps using `snooze`, which
+  // stays literal.
+  quickSnooze: {
+    input: z.object({
+      threadId: z.string().trim().min(1),
+      projectId: z.string().trim().min(1),
+      pullRequestUrl: z.string().url().optional(),
+    }),
+    output: z.object({
+      snoozedUntil: z.number(),
+      ladderStep: z.number(),
+      ladderDays: z.number(),
+      shiftedOffWeekend: z.boolean(),
+    }),
+  },
   listThreadPullRequests: {
     input: z
       .object({
@@ -602,6 +673,197 @@ export default function plugin(bb: BbPluginApi) {
     bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId });
   };
 
+  interface BackoffRow {
+    ladderStep: number;
+    snoozedAt: number;
+  }
+
+  const readBackoff = (threadId: string): BackoffRow | undefined => {
+    const row = db
+      .prepare(`SELECT ladder_step, snoozed_at FROM thread_snooze_backoff WHERE thread_id = ?`)
+      .get(threadId) as { ladder_step: number; snoozed_at: number } | undefined;
+    return row === undefined
+      ? undefined
+      : { ladderStep: row.ladder_step, snoozedAt: row.snoozed_at };
+  };
+
+  const readAllBackoff = (): Array<BackoffRow & { threadId: string }> =>
+    (
+      db
+        .prepare(`SELECT thread_id, ladder_step, snoozed_at FROM thread_snooze_backoff`)
+        .all() as Array<{ thread_id: string; ladder_step: number; snoozed_at: number }>
+    ).map((row) => ({
+      threadId: row.thread_id,
+      ladderStep: row.ladder_step,
+      snoozedAt: row.snoozed_at,
+    }));
+
+  const writeBackoff = (threadId: string, ladderStep: number, snoozedAt: number): void => {
+    db.prepare(
+      `INSERT INTO thread_snooze_backoff (thread_id, ladder_step, snoozed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(thread_id) DO UPDATE SET
+         ladder_step = excluded.ladder_step,
+         snoozed_at = excluded.snoozed_at`,
+    ).run(threadId, ladderStep, snoozedAt);
+  };
+
+  /**
+   * Put a thread back at the bottom of the ladder.
+   *
+   * Called where a pull request moved under a snoozed thread, which is the
+   * half of the reset rule that cannot be read off `latestAttentionAt`: by the
+   * time the wake lands the thread has an agent turn on it, so its attention
+   * timestamp would climb anyway — but it climbs for every wake, including the
+   * plain timer wake the ladder is counting. Only GitHub movement resets here,
+   * and the publish keeps the button's label honest without a refetch.
+   */
+  const resetBackoff = (threadId: string): void => {
+    const changes = db
+      .prepare(`DELETE FROM thread_snooze_backoff WHERE thread_id = ?`)
+      .run(threadId).changes;
+    if (changes > 0) bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId });
+  };
+
+  const recordSnoozeHistory = (entry: {
+    threadId: string;
+    snoozedAt: number;
+    snoozedUntil: number;
+    ladderStep: number;
+    kind: "quick" | "preset";
+  }): void => {
+    db.prepare(
+      `INSERT INTO snooze_history (thread_id, snoozed_at, snoozed_until, ladder_step, kind)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      entry.threadId,
+      entry.snoozedAt,
+      entry.snoozedUntil,
+      entry.ladderStep,
+      entry.kind,
+    );
+  };
+
+  const readWeekdayOnlyProjectIds = (): string[] =>
+    (
+      db
+        .prepare(`SELECT project_id FROM project_rhythm WHERE weekday_only = 1`)
+        .all() as Array<{ project_id: string }>
+    ).map((row) => row.project_id);
+
+  const isWeekdayOnlyProject = (projectId: string): boolean => {
+    const row = db
+      .prepare(`SELECT weekday_only FROM project_rhythm WHERE project_id = ?`)
+      .get(projectId) as { weekday_only: number } | undefined;
+    // Unknown means unclassified, and unclassified means literal. A project
+    // nobody has measured yet must not have its weekends taken away.
+    return row?.weekday_only === 1;
+  };
+
+  /**
+   * How many threads one refresh will read events for.
+   *
+   * The read is one call per thread, so this is the only thing standing
+   * between a nightly job and an installation with ten thousand threads. The
+   * newest threads are read first, which is also where the rhythm that
+   * matters lives.
+   */
+  const RHYTHM_THREAD_BUDGET = 900;
+  const RHYTHM_WINDOW_MS = 42 * 24 * 60 * 60 * 1000;
+
+  /**
+   * Re-measure every project's working rhythm from when you actually type.
+   *
+   * The signal is `client/turn/requested` — you, sending a turn. Nothing else
+   * available here means the same thing. Thread timestamps move when an agent
+   * finishes work at 3am, which says nothing about when you are willing to
+   * look at it; thread creation says when you START work on a project, which
+   * is a weekday-shaped act even for projects you happily continue at
+   * weekends. And `projects.promptHistory` is a composer recall list, capped
+   * server-side at its most recent entries: on a busy project that is the last
+   * few days, which makes the window shrink exactly where there is most to
+   * measure, and quietly misreads a project as weekday-only on a sample that
+   * never contained a weekend.
+   *
+   * One thread's failure is not the others'. A project whose threads cannot be
+   * read keeps whatever verdict it already had, including none.
+   */
+  const refreshProjectRhythms = async (): Promise<void> => {
+    const now = Date.now();
+    const windowStart = now - RHYTHM_WINDOW_MS;
+
+    let threads: Array<{ id: string; projectId: string; updatedAt: number }>;
+    try {
+      // Archived threads count: settling a thread archives it, and work you
+      // settled on a Sunday is still work you did on a Sunday.
+      threads = await bb.sdk.threads.list({ limit: 5_000 });
+    } catch (error) {
+      bb.log.warn(`project rhythm refresh could not list threads: ${String(error)}`);
+      return;
+    }
+
+    const recent = threads
+      .filter((thread) => thread.updatedAt > windowStart)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, RHYTHM_THREAD_BUDGET);
+
+    const turnsByProject = new Map<string, number[]>();
+    let unreadable = 0;
+    for (const thread of recent) {
+      if (shutdown.signal.aborted) return;
+      try {
+        const events = await bb.sdk.threads.events.list({
+          threadId: thread.id,
+          types: ["client/turn/requested"],
+          limit: "500",
+          signal: shutdown.signal,
+        });
+        const stamps = turnsByProject.get(thread.projectId) ?? [];
+        for (const event of events) {
+          if (event.createdAt > windowStart) stamps.push(event.createdAt);
+        }
+        turnsByProject.set(thread.projectId, stamps);
+      } catch {
+        unreadable += 1;
+      }
+    }
+
+    let weekdayOnly = 0;
+    for (const [projectId, stamps] of turnsByProject) {
+      const rhythm = classifyProjectRhythm(stamps, now);
+      if (rhythm.weekdayOnly) weekdayOnly += 1;
+      db.prepare(
+        `INSERT INTO project_rhythm
+           (project_id, weekday_only, weekend_ratio, weekend_turns,
+            weekday_turns, observed_days, computed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+           weekday_only = excluded.weekday_only,
+           weekend_ratio = excluded.weekend_ratio,
+           weekend_turns = excluded.weekend_turns,
+           weekday_turns = excluded.weekday_turns,
+           observed_days = excluded.observed_days,
+           computed_at = excluded.computed_at`,
+      ).run(
+        projectId,
+        rhythm.weekdayOnly ? 1 : 0,
+        Number.isFinite(rhythm.weekendRatio) ? rhythm.weekendRatio : null,
+        rhythm.weekendTurns,
+        rhythm.weekdayTurns,
+        rhythm.observedDays,
+        now,
+      );
+    }
+
+    bb.log.info(
+      `project rhythm refreshed: ${weekdayOnly}/${turnsByProject.size} projects are ` +
+        `weekday-only, from ${recent.length} threads` +
+        `${unreadable > 0 ? ` (${unreadable} unreadable)` : ""}`,
+    );
+    // The verdict changes what the snooze buttons promise, so say so.
+    bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId: null });
+  };
+
   const rememberPullRequestUrl = (threadId: string, url: string | undefined): void => {
     const canonical = url === undefined ? null : canonicalPullRequestUrl(url);
     if (canonical === null) return;
@@ -698,6 +960,8 @@ export default function plugin(bb: BbPluginApi) {
       const row = readOne(threadId);
       if (row === undefined || row.snoozedUntil === null || row.snoozedUntil <= now) continue;
       clear(threadId);
+      // The pull request moved, so the next snooze is a fresh decision.
+      resetBackoff(threadId);
       try {
         await bb.sdk.threads.send({
           threadId,
@@ -841,7 +1105,11 @@ export default function plugin(bb: BbPluginApi) {
       };
     },
     async listLifecycle() {
-      return { rows: readAll() };
+      return {
+        rows: readAll(),
+        backoff: readAllBackoff(),
+        weekdayOnlyProjectIds: readWeekdayOnlyProjectIds(),
+      };
     },
     async listThreadPullRequests({ threads }) {
       if (resolvedGhPath === undefined) {
@@ -1145,7 +1413,69 @@ export default function plugin(bb: BbPluginApi) {
         archivedThreadIds: [],
       });
       rememberPullRequestUrl(threadId, pullRequestUrl);
+      // Recorded, but it does not move the ladder. A preset is a wake time you
+      // chose deliberately, so it is evidence about this thread rather than
+      // evidence that the button's guess keeps missing.
+      recordSnoozeHistory({
+        threadId,
+        snoozedAt: now,
+        snoozedUntil,
+        ladderStep: -1,
+        kind: "preset",
+      });
       return { ok: true };
+    },
+    async quickSnooze({ threadId, projectId, pullRequestUrl }) {
+      const now = Date.now();
+      const previous = readBackoff(threadId);
+      // Read the thread rather than trust the caller: the ladder turns on
+      // whether anything happened while the thread was away, and a frontend
+      // that has been open since before the last wake would answer with a
+      // timestamp older than the one bb holds.
+      let latestAttentionAt = 0;
+      try {
+        latestAttentionAt = (await bb.sdk.threads.get({ threadId })).latestAttentionAt;
+      } catch (error) {
+        // A thread bb cannot describe still deserves a snooze; it just gets
+        // the conservative one, at the bottom of the ladder.
+        bb.log.warn(`quick snooze attention lookup ${threadId} failed: ${String(error)}`);
+      }
+
+      const plan = planQuickSnooze({
+        now,
+        previousStep: previous?.ladderStep ?? null,
+        lastSnoozedAt: previous?.snoozedAt ?? null,
+        latestAttentionAt,
+        weekdayOnlyProject: isWeekdayOnlyProject(projectId),
+      });
+
+      await unarchiveThreads(archivedIdsFor(threadId));
+      write({
+        threadId,
+        settledAt: null,
+        snoozedUntil: plan.snoozedUntil,
+        snoozedAt: now,
+        archivedThreadIds: [],
+      });
+      rememberPullRequestUrl(threadId, pullRequestUrl);
+      writeBackoff(threadId, plan.step, now);
+      recordSnoozeHistory({
+        threadId,
+        snoozedAt: now,
+        snoozedUntil: plan.snoozedUntil,
+        ladderStep: plan.step,
+        kind: "quick",
+      });
+      bb.log.info(
+        `quick snooze ${threadId} step=${plan.step} days=${plan.ladderDays}` +
+          `${plan.shiftedOffWeekend ? " shifted-off-weekend" : ""}${plan.reset ? " reset" : ""}`,
+      );
+      return {
+        snoozedUntil: plan.snoozedUntil,
+        ladderStep: plan.step,
+        ladderDays: plan.ladderDays,
+        shiftedOffWeekend: plan.shiftedOffWeekend,
+      };
     },
     async unsnooze({ threadId }) {
       clear(threadId);
@@ -1289,6 +1619,21 @@ export default function plugin(bb: BbPluginApi) {
     },
   });
 
+  // Daily, in the small hours: a working rhythm is a six-week average, so it
+  // cannot move fast enough to be worth asking more often, and the read walks
+  // every project's prompt history.
+  bb.background.schedule("project-rhythm", "17 4 * * *", async () => {
+    if (shutdown.signal.aborted) return;
+    await refreshProjectRhythms();
+  });
+
+  // Once at startup as well, so a fresh install does not spend its first day
+  // with every project unclassified and every weekend snooze literal.
+  void (async () => {
+    if (shutdown.signal.aborted) return;
+    await refreshProjectRhythms();
+  })();
+
   bb.background.schedule("pr-watch", "0 * * * *", async () => {
     if (shutdown.signal.aborted) return;
     const ghPath = await resolveGhPath(shutdown.signal);
@@ -1353,6 +1698,7 @@ export default function plugin(bb: BbPluginApi) {
         // Clear the shelf first so a successful agent turn cannot land back
         // on Snoozed when it goes idle. Then start a turn with what changed.
         clear(threadId);
+        resetBackoff(threadId);
         await bb.sdk.threads.send({
           threadId,
           mode: "auto",
