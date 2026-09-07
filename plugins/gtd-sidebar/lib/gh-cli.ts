@@ -10,6 +10,28 @@ export interface GhCommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * True when the run was cancelled rather than failed.
+   *
+   * A plugin reload aborts every in-flight `gh`, and the child dies with no
+   * stderr and a non-zero exit — indistinguishable, to a caller reading only
+   * `exitCode`, from GitHub refusing the request. Every reload therefore used
+   * to log a burst of "failed" warnings naming pull requests that were
+   * perfectly fine.
+   */
+  aborted: boolean;
+}
+
+/**
+ * The HTTP status `gh api` puts on stderr, as in `gh: Not Found (HTTP 404)`.
+ *
+ * `gh` exits 1 for every HTTP error, so the process exit code cannot tell a
+ * missing repository from a forbidden one from a rate limit. This is the only
+ * place the status survives.
+ */
+export function githubHttpStatus(stderr: string): number | null {
+  const match = /\(HTTP (\d{3})\)/.exec(stderr);
+  return match === null ? null : Number(match[1]);
 }
 
 export interface GhRunner {
@@ -30,10 +52,15 @@ function exec(
       (error, stdout, stderr) => {
         const exitCode =
           error && "code" in error && typeof error.code === "number" ? error.code : error ? 1 : 0;
+        const aborted =
+          error !== null &&
+          error !== undefined &&
+          ((error as NodeJS.ErrnoException).code === "ABORT_ERR" || signal.aborted);
         resolve({
           stdout: typeof stdout === "string" ? stdout : "",
           stderr: typeof stderr === "string" ? stderr : "",
-          exitCode: error && (error as NodeJS.ErrnoException).code === "ABORT_ERR" ? 1 : exitCode,
+          exitCode: aborted ? 1 : exitCode,
+          aborted,
         });
       },
     );
@@ -61,7 +88,13 @@ export async function githubRestJson(
   path: string,
   timeoutMs = 20_000,
   init?: { method?: string; body?: unknown },
-): Promise<{ raw: unknown; stdout: string; stderr: string; exitCode: number }> {
+): Promise<{
+  raw: unknown;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  aborted: boolean;
+}> {
   const args = ["api", "--hostname", "github.com"];
   if (init?.method !== undefined && init.method !== "GET") {
     args.push("--method", init.method);
@@ -84,7 +117,13 @@ export async function githubRestJson(
         raw = null;
       }
     }
-    return { raw, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    return {
+      raw,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      aborted: result.aborted,
+    };
   } finally {
     if (inputPath !== null) await unlink(inputPath).catch(() => undefined);
   }
@@ -94,7 +133,13 @@ export async function githubGraphql(
   gh: GhRunner,
   query: string,
   timeoutMs = 30_000,
-): Promise<{ raw: unknown; stdout: string; stderr: string; exitCode: number }> {
+): Promise<{
+  raw: unknown;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  aborted: boolean;
+}> {
   const result = await gh.run(
     ["api", "graphql", "--hostname", "github.com", "-f", `query=${query}`],
     timeoutMs,
@@ -108,5 +153,11 @@ export async function githubGraphql(
       raw = null;
     }
   }
-  return { raw, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+  return {
+    raw,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    aborted: result.aborted,
+  };
 }
