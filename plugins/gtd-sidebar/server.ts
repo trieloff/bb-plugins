@@ -454,7 +454,17 @@ export default function plugin(bb: BbPluginApi) {
    * Persisted so a reload does not walk straight back into the limit.
    */
   let restBudget: RestBudgetState = FRESH_REST_BUDGET;
-  void (async () => {
+  /**
+   * Awaited before the pause is read, never merely started.
+   *
+   * Fire-and-forget lost the race: the first index tick arrived about a second
+   * after a reload, before the stored pause had loaded, so it saw a clean
+   * budget and spent — which is the one moment a pause most needs to hold,
+   * because a reload is exactly when a burst of catch-up requests goes out.
+   * Persisting the pause is pointless if it is not in hand before the decision
+   * that consults it.
+   */
+  const restBudgetLoaded = (async () => {
     try {
       restBudget = parseRestBudget(await bb.storage.kv.get(PR_INDEX_REST_BUDGET_KEY));
     } catch {
@@ -469,7 +479,7 @@ export default function plugin(bb: BbPluginApi) {
     if (result.aborted) return result;
     const next =
       result.exitCode === 0
-        ? afterSuccess(restBudget)
+        ? afterSuccess(restBudget, Date.now())
         : isRateLimited(result)
           ? afterRefusal(restBudget, Date.now())
           : restBudget;
@@ -1202,6 +1212,7 @@ export default function plugin(bb: BbPluginApi) {
       }
       const gh = resolvedGhPath === null ? null : createGhRunner(shutdown.signal, resolvedGhPath);
 
+      await restBudgetLoaded;
       const skipRest = isPaused(restBudget, Date.now());
 
       let restRemaining: number | null = null;

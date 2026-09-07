@@ -99,11 +99,29 @@ describe("REST backoff", () => {
     assert.equal((state.skipUntilMs ?? 0) - (NOW + MINUTE), 5 * MINUTE);
   });
 
-  it("resets only on a call that actually went through", () => {
+  it("resets on a call that went through after the wait expired", () => {
     const state = afterRefusal(afterRefusal(FRESH_REST_BUDGET, NOW), NOW);
-    assert.deepEqual(afterSuccess(state), FRESH_REST_BUDGET);
+    const expired = (state.skipUntilMs ?? 0) + 1;
+    assert.deepEqual(afterSuccess(state, expired), FRESH_REST_BUDGET);
     // Already clear: the same object back, so nothing re-persists per call.
-    assert.equal(afterSuccess(FRESH_REST_BUDGET), FRESH_REST_BUDGET);
+    assert.equal(afterSuccess(FRESH_REST_BUDGET, NOW), FRESH_REST_BUDGET);
+  });
+
+  /**
+   * The regression that this was caught on, live.
+   *
+   * Several paths spend REST without checking the pause first — a webhook
+   * delivery resolving one pull request, a release lookup. A rate-limited
+   * account still lets calls through intermittently, so one of those
+   * succeeding wiped a pause seconds after it was set and released the burst
+   * it was holding back.
+   */
+  it("does not let a success during the wait cancel it", () => {
+    const paused = afterRefusal(FRESH_REST_BUDGET, NOW);
+    const midway = NOW + 30 * 1000;
+    assert.equal(isPaused(paused, midway), true);
+    assert.equal(afterSuccess(paused, midway), paused);
+    assert.equal(isPaused(afterSuccess(paused, midway), midway), true);
   });
 
   it("survives whatever is actually in the store", () => {

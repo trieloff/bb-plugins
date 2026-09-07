@@ -43,13 +43,21 @@ export function afterRefusal(state: RestBudgetState, now: number): RestBudgetSta
 }
 
 /**
- * A call that went through: back to the bottom.
+ * A call that went through, once the wait is actually over: back to the bottom.
  *
- * Keyed on success rather than on the pause expiring, so a limit that is still
- * in force when the pause runs out climbs again on the next refusal instead of
- * starting over.
+ * A success DURING the wait does not count, and that is the whole subtlety. A
+ * secondary rate limit is a cap on rate, not a gate — calls still get through
+ * intermittently while it is in force, and several paths here spend REST
+ * without consulting the pause first (a webhook delivery resolving one pull
+ * request, a release lookup). Letting any of those cancel the wait meant the
+ * pause was wiped seconds after being set, releasing exactly the burst it was
+ * meant to hold back. Observed doing precisely that.
+ *
+ * So the wait, once committed to, runs its course. Only a success after it
+ * expires says the limit has genuinely lifted.
  */
-export function afterSuccess(state: RestBudgetState): RestBudgetState {
+export function afterSuccess(state: RestBudgetState, now: number): RestBudgetState {
+  if (isPaused(state, now)) return state;
   return state.strikes === 0 && state.skipUntilMs === null ? state : FRESH_REST_BUDGET;
 }
 
