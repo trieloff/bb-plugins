@@ -437,6 +437,16 @@ export default function plugin(bb: BbPluginApi) {
   >();
   const hookEnsuredAt = new Map<string, number>();
   const HOOK_ENSURE_TTL_MS = 60 * 60 * 1000;
+  /**
+   * How long a repository that errored waits before being asked again.
+   *
+   * Without a backoff of its own an error meant "ask again next cycle", every
+   * cycle, forever. Shorter than the success TTL because a genuine transient —
+   * a dropped connection, a 5xx — deserves another try well before the hour is
+   * up; long enough that a persistent one costs four log lines an hour rather
+   * than a flood.
+   */
+  const HOOK_ERROR_RETRY_MS = 15 * 60 * 1000;
   let liveTunnelOrigin: string | null = null;
   let hookPreviousUrl: string | null = null;
   let tunnelStatus: WebhookTunnelStatus = WEBHOOK_TUNNEL_STATUS_OFF;
@@ -588,13 +598,23 @@ export default function plugin(bb: BbPluginApi) {
           if (last !== undefined && now - last < HOOK_ENSURE_TTL_MS) continue;
           try {
             const result = await ensureGithubRepoHook(gh, repo, url, secret, hookPreviousUrl);
+            // The plugin is going away mid-flight. Nothing failed, and the
+            // repositories after this one would only be cancelled too.
+            if (result === "cancelled") return;
             if (result === "denied") {
-              bb.log.warn(`github webhook denied for ${key} (need admin:repo_hook)`);
+              bb.log.warn(
+                `github webhook denied for ${key}: this token cannot manage its hooks. ` +
+                  "If it is your repository, run " +
+                  "`gh auth refresh -h github.com -s admin:repo_hook`.",
+              );
               hookEnsuredAt.set(key, now + 23 * 60 * 60 * 1000);
               continue;
             }
             if (result === "error") {
-              bb.log.warn(`github webhook ensure failed for ${key}`);
+              bb.log.warn(`github webhook ensure failed for ${key}; retrying in 15m`);
+              // Back off. Marking the attempt is what stops a repository that
+              // keeps failing from being retried on every single cycle.
+              hookEnsuredAt.set(key, now - HOOK_ENSURE_TTL_MS + HOOK_ERROR_RETRY_MS);
               continue;
             }
             hookEnsuredAt.set(key, now);
@@ -1168,6 +1188,9 @@ export default function plugin(bb: BbPluginApi) {
         }
         const pending = (async () => {
           const fetched = await githubGraphql(gh, query);
+          if (fetched.aborted) {
+            return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
+          }
           if (fetched.exitCode !== 0) {
             throw new Error(
               fetched.stderr.trim() || `gh graphql merge queue exited ${fetched.exitCode}`,
@@ -1233,6 +1256,10 @@ export default function plugin(bb: BbPluginApi) {
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls?state=open&per_page=100`;
           const pending = (async () => {
             const listed = await githubRestJson(gh, path);
+            // A reload aborts every in-flight `gh`. That is not a failure and
+            // must not be reported as one: the tick is over, and the next one
+            // asks again from a clean cache.
+            if (listed.aborted) return [];
             if (listed.exitCode !== 0) {
               throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
             }
@@ -1251,6 +1278,7 @@ export default function plugin(bb: BbPluginApi) {
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls/${number}`;
           const pending = (async () => {
             const listed = await githubRestJson(gh, path);
+            if (listed.aborted) return null;
             if (listed.exitCode !== 0) {
               throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
             }
@@ -1267,6 +1295,7 @@ export default function plugin(bb: BbPluginApi) {
           if (gh === null) return [];
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
           const listed = await githubRestJson(gh, path);
+          if (listed.aborted) return [];
           if (listed.exitCode !== 0) {
             throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
           }
