@@ -12,6 +12,7 @@ import { z } from "zod";
 // as a path source, so nothing rewrites tsconfig paths for it.
 import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
 import { classifyProjectRhythm } from "./lib/work-rhythm.ts";
+import { isReloadCancellation } from "./lib/shutdown.ts";
 import { planQuickSnooze } from "./lib/snooze-plan.ts";
 import { isWithinSettledWindow } from "./lib/settled-threads.ts";
 import { gitButlerHostContract } from "./lib/gitbutler.ts";
@@ -622,11 +623,13 @@ export default function plugin(bb: BbPluginApi) {
               bb.log.info(`github webhook ${result} for ${key}`);
             }
           } catch (error) {
+            if (isReloadCancellation(error)) return;
             bb.log.warn(`github webhook ensure ${key}: ${String(error)}`);
           }
         }
       })
       .catch((error) => {
+        if (isReloadCancellation(error)) return;
         bb.log.warn(`github webhook ensure: ${String(error)}`);
       });
   };
@@ -818,7 +821,9 @@ export default function plugin(bb: BbPluginApi) {
       // settled on a Sunday is still work you did on a Sunday.
       threads = await bb.sdk.threads.list({ limit: 5_000 });
     } catch (error) {
-      bb.log.warn(`project rhythm refresh could not list threads: ${String(error)}`);
+      if (!isReloadCancellation(error)) {
+        bb.log.warn(`project rhythm refresh could not list threads: ${String(error)}`);
+      }
       return;
     }
 

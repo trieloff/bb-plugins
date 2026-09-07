@@ -21,6 +21,7 @@ import {
   type RestPull,
   type SidebarPullRequest,
 } from "./pr-index.ts";
+import { isReloadCancellation } from "./shutdown.ts";
 
 export interface ThreadPrQuery {
   threadId: string;
@@ -136,6 +137,18 @@ export async function resolveThreadPullRequests(
     pending.push(query);
   }
 
+  /**
+   * Warn, unless the plugin is being replaced.
+   *
+   * Every catch below falls back to a safe empty value and logs why. A reload
+   * makes all of them fire at once — sixteen environments in one second, in
+   * the case that prompted this — naming things that were never broken.
+   */
+  const warnUnlessCancelled = (error: unknown, message: string): void => {
+    if (isReloadCancellation(error)) return;
+    deps.log.warn(message);
+  };
+
   const repoByEnvironment = new Map<string, GithubRepo | null>();
   const uniqueEnvIds = [
     ...new Set(
@@ -147,7 +160,7 @@ export async function resolveThreadPullRequests(
       try {
         repoByEnvironment.set(environmentId, await deps.getRepo(environmentId));
       } catch (error) {
-        deps.log.warn(`git remote for ${environmentId} failed: ${String(error)}`);
+        warnUnlessCancelled(error, `git remote for ${environmentId} failed: ${String(error)}`);
         repoByEnvironment.set(environmentId, null);
       }
     }),
@@ -171,7 +184,7 @@ export async function resolveThreadPullRequests(
     try {
       release = await deps.getLatestRelease(repo);
     } catch (error) {
-      deps.log.warn(`latest release for ${key} failed: ${String(error)}`);
+      warnUnlessCancelled(error, `latest release for ${key} failed: ${String(error)}`);
     }
     releaseByRepo.set(key, release);
     return release;
@@ -195,19 +208,19 @@ export async function resolveThreadPullRequests(
       try {
         open = await deps.listOpenPulls(repo);
       } catch (error) {
-        deps.log.warn(`REST open pulls for ${key} failed: ${String(error)}`);
+        warnUnlessCancelled(error, `REST open pulls for ${key} failed: ${String(error)}`);
       }
       try {
         closed = await deps.listRecentClosedPulls(repo);
       } catch (error) {
-        deps.log.warn(`REST closed pulls for ${key} failed: ${String(error)}`);
+        warnUnlessCancelled(error, `REST closed pulls for ${key} failed: ${String(error)}`);
       }
       let queuedNumbers: number[] = [];
       if (deps.listMergeQueueNumbers !== undefined) {
         try {
           queuedNumbers = await deps.listMergeQueueNumbers(repo);
         } catch (error) {
-          deps.log.warn(`merge queue for ${key} failed: ${String(error)}`);
+          warnUnlessCancelled(error, `merge queue for ${key} failed: ${String(error)}`);
         }
       }
       let checkRollups: ReadonlyMap<number, CheckRollup> = new Map();
@@ -215,7 +228,7 @@ export async function resolveThreadPullRequests(
         try {
           checkRollups = await deps.listCheckRollups(repo);
         } catch (error) {
-          deps.log.warn(`check rollups for ${key} failed: ${String(error)}`);
+          warnUnlessCancelled(error, `check rollups for ${key} failed: ${String(error)}`);
         }
       }
       const release = await releaseFor(repo);
@@ -259,7 +272,7 @@ export async function resolveThreadPullRequests(
       pullByNumber.set(key, pull);
       return pull;
     } catch (error) {
-      deps.log.warn(`REST pull ${key} failed: ${String(error)}`);
+      warnUnlessCancelled(error, `REST pull ${key} failed: ${String(error)}`);
       pullByNumber.set(key, null);
       return null;
     }
