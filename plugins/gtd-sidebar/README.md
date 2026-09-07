@@ -125,7 +125,34 @@ never hidden.
 
 ### Snoozing
 
-The hover button snoozes until **09:00 tomorrow**.
+The hover button starts at **09:00 tomorrow** and applies two corrections, both
+aimed at the same failure — a thread that comes back at a moment you were never
+going to deal with it, so you snooze it again, and again.
+
+**It skips weekends on projects you only work on weekdays.** A Friday snooze on
+such a project wakes Monday, and so does a Saturday one. Which projects those
+are is inferred, never assumed: each night the plugin reads when you actually
+sent turns, per project, over the last six weeks, and compares your weekend
+rate to your weekday rate. Days count once each up to a cap, so a single long
+Sunday cannot outvote a month of weekdays, and a Gamma prior keeps a thin
+history saying "no opinion" rather than "definitely a work project". A project
+with less than a fortnight of history, or barely any turns, stays unclassified
+and snoozes literally. Nothing you do at weekends gets taken away from you on a
+guess.
+
+**It backs off when you keep putting the same thread off.** Snooze a thread,
+let it come back untouched, snooze it again, and the second snooze lasts two
+days. Then three, five, eight, thirteen, twenty-one, and a month, where it
+stops. The button always says what it will do — "Snooze until Monday", "Snooze
+for 8 days" — so the ladder is never a surprise.
+
+Anything actually happening puts a thread back at the bottom of the ladder: a
+new turn on the thread while it was away, or its pull request moving. Both are
+already wake conditions, so a thread that comes back for a reason starts over,
+and only a thread you are repeatedly ignoring climbs.
+
+Every snooze is recorded, which is what makes the ladder possible — the
+lifecycle row only ever held the most recent one.
 
 Once an hour the plugin asks GitHub about every snoozed thread that has a pull
 request — one GraphQL query, not one call per PR. If comments, reviews, checks,

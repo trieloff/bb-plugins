@@ -13,6 +13,7 @@ import {
   type ThreadLifecycleRow,
   type ThreadShelf,
 } from "@/lib/lifecycle";
+import { planQuickSnooze, quickSnoozeLabel, type QuickSnoozePlan } from "@/lib/snooze-plan";
 import { readWarmStartRows, writeWarmStartRows } from "@/lib/warm-start";
 import { useRetryingRead } from "@/hooks/use-retrying-read";
 
@@ -58,6 +59,16 @@ export interface LifecycleApi {
   settle(threadId: string): void;
   unsettle(threadId: string): void;
   snooze(threadId: string, snoozedUntil: number, pullRequestUrl?: string | null): void;
+  /**
+   * The one-click snooze. The server picks the wake time, from this thread's
+   * ladder position and its project's working rhythm — see `quickSnoozePlan`
+   * for the same answer computed locally, which is what the button says it
+   * will do before it does it.
+   */
+  quickSnooze(thread: PluginSidebarThread, pullRequestUrl?: string | null): void;
+  /** What `quickSnooze` would do, for the button's label. */
+  quickSnoozePlan(thread: PluginSidebarThread): QuickSnoozePlan;
+  quickSnoozeLabel(thread: PluginSidebarThread): string;
   unsnooze(threadId: string): void;
 }
 
@@ -85,6 +96,17 @@ export function useLifecycle(threads: readonly PluginSidebarThread[]): Lifecycle
     () => new Map((seededRows ?? []).map((row) => [row.threadId, row])),
   );
   const [now, setNow] = useState(() => Date.now());
+  // The ladder positions and the weekday-only verdicts, kept only so a card
+  // can label its own button. Neither gates anything and neither is cached
+  // across mounts: the server decides on click either way, so the worst a
+  // missing copy costs is a button that reads "Snooze until tomorrow" and
+  // delivers Monday.
+  const [backoff, setBackoff] = useState<ReadonlyMap<string, { ladderStep: number; snoozedAt: number }>>(
+    () => new Map(),
+  );
+  const [weekdayOnlyProjectIds, setWeekdayOnlyProjectIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   // Two questions, and one flag cannot answer both. This one asks whether the
   // shelves may be painted; a cache hit says yes immediately.
   const [shelvesReady, setShelvesReady] = useState(seededRows !== null);
@@ -123,6 +145,8 @@ export function useLifecycle(threads: readonly PluginSidebarThread[]): Lifecycle
           ? current
           : new Map(result.rows.map((row) => [row.threadId, row])),
       );
+      setBackoff(new Map(result.backoff.map((row) => [row.threadId, row])));
+      setWeekdayOnlyProjectIds(new Set(result.weekdayOnlyProjectIds));
       setServerRowsLoaded(true);
       // After the state, not before it: what is on screen must never depend on
       // the cache write having gone through.
@@ -239,6 +263,19 @@ export function useLifecycle(threads: readonly PluginSidebarThread[]): Lifecycle
     const mutate = async (method: "settle" | "unsettle" | "unsnooze", threadId: string) => {
       await rpc.call(method, { threadId });
     };
+    // The same call the server makes, on the same inputs, so the label on the
+    // button and the wake time behind it are one decision described twice
+    // rather than two decisions that happen to agree.
+    const planFor = (thread: PluginSidebarThread): QuickSnoozePlan => {
+      const previous = backoff.get(thread.id);
+      return planQuickSnooze({
+        now,
+        previousStep: previous?.ladderStep ?? null,
+        lastSnoozedAt: previous?.snoozedAt ?? null,
+        latestAttentionAt: thread.latestAttentionAt,
+        weekdayOnlyProject: weekdayOnlyProjectIds.has(thread.projectId),
+      });
+    };
     return {
       shelfFor: (thread) => resolveShelf(rows.get(thread.id), signalsFor(thread), now),
       // A row only ever exists for a parked thread, so its keys are the set.
@@ -257,6 +294,15 @@ export function useLifecycle(threads: readonly PluginSidebarThread[]): Lifecycle
           ...(pullRequestUrl ? { pullRequestUrl } : {}),
         });
       },
+      quickSnooze: (thread, pullRequestUrl) => {
+        void rpc.call("quickSnooze", {
+          threadId: thread.id,
+          projectId: thread.projectId,
+          ...(pullRequestUrl ? { pullRequestUrl } : {}),
+        });
+      },
+      quickSnoozePlan: (thread) => planFor(thread),
+      quickSnoozeLabel: (thread) => quickSnoozeLabel(planFor(thread), now),
     };
-  }, [now, parkedThreadIds, rows, rpc, shelvesReady]);
+  }, [backoff, now, parkedThreadIds, rows, rpc, shelvesReady, weekdayOnlyProjectIds]);
 }
