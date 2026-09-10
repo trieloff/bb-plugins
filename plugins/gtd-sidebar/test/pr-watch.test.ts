@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  chunkWatchedUrls,
   buildSnoozedPrWatchQuery,
   canonicalPullRequestUrl,
   diffSnapshots,
@@ -63,6 +64,20 @@ describe("watchedUrlsForQuery", () => {
     assert.equal(watched.length, MAX_WATCHED_PRS);
     assert.equal(watched[0], "https://github.com/acme/app/pull/12");
     assert.equal(new Set(watched).size, watched.length);
+  });
+});
+
+describe("chunkWatchedUrls", () => {
+  it("covers every unique URL across pages of MAX_WATCHED_PRS", () => {
+    const urls = Array.from(
+      { length: MAX_WATCHED_PRS + 3 },
+      (_, i) => `https://github.com/acme/app/pull/${i + 1}`,
+    );
+    const chunks = chunkWatchedUrls(urls);
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks[0]?.length, MAX_WATCHED_PRS);
+    assert.equal(chunks[1]?.length, 3);
+    assert.equal(chunks.flat().length, MAX_WATCHED_PRS + 3);
   });
 });
 

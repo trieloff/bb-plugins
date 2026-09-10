@@ -8,25 +8,8 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
 import type { gtdSidebarRpcContract } from "@/server";
 import { PR_INDEX_CHANNEL } from "@/lib/channels";
 import { threadDisplayTitle } from "@/lib/inbox";
-import { resolveSidebarBranchLabel } from "@/lib/gitbutler";
+import { gitButlerBranchNamesFor } from "@/lib/gitbutler";
 import type { SidebarPullRequest } from "@/lib/pr-index";
-
-function branchNamesFor(
-  thread: PluginSidebarThread,
-  gitButlerLabels: ReadonlyMap<string, string>,
-): string[] {
-  const raw = thread.environment?.branchName?.trim() ?? "";
-  const label =
-    resolveSidebarBranchLabel(
-      thread.environment?.branchName ?? null,
-      thread.environment?.id ?? null,
-      gitButlerLabels,
-    )?.trim() ?? "";
-  const names: string[] = [];
-  if (raw.length > 0) names.push(raw);
-  if (label.length > 0 && label !== raw) names.push(label);
-  return names;
-}
 
 /** The unconditional backfill, for when webhook delivery is not set up. */
 const RECONCILE_INTERVAL_MS = 10 * 60_000;
@@ -61,7 +44,7 @@ function asIndexRow(value: unknown): IndexRow | null {
 
 export function useThreadPullRequests(
   threads: readonly PluginSidebarThread[],
-  gitButlerLabels: ReadonlyMap<string, string>,
+  gitButlerBranchNames: ReadonlyMap<string, readonly string[]> = new Map(),
 ): ReadonlyMap<string, SidebarPullRequest> {
   const rpc = useRpc<typeof gtdSidebarRpcContract>();
   const [byThreadId, setByThreadId] = useState<ReadonlyMap<string, SidebarPullRequest>>(
@@ -74,10 +57,14 @@ export function useThreadPullRequests(
         threadId: thread.id,
         environmentId: thread.environment?.id ?? null,
         branchName: thread.environment?.branchName ?? null,
-        branchNames: branchNamesFor(thread, gitButlerLabels),
+        branchNames: gitButlerBranchNamesFor(
+          thread.environment?.branchName ?? null,
+          thread.environment?.id ?? null,
+          gitButlerBranchNames,
+        ),
         title: threadDisplayTitle(thread),
       })),
-    [gitButlerLabels, threads],
+    [gitButlerBranchNames, threads],
   );
   const payloadKey = useMemo(
     () =>

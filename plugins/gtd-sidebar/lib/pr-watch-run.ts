@@ -2,6 +2,7 @@ import {
   MAX_PR_BACKFILL_PER_TICK,
   buildSnoozedPrWatchQuery,
   canonicalPullRequestUrl,
+  chunkWatchedUrls,
   diffSnapshots,
   fingerprintOf,
   isGraphqlRateLimited,
@@ -111,106 +112,114 @@ export async function pollSnoozedPullRequests(deps: PrWatchPollDeps): Promise<Pr
     };
   }
 
-  const query = buildSnoozedPrWatchQuery(urls);
-  const result = await deps.graphql(query);
-  const parsed = parseSnoozedPrWatchResponse(result.raw);
-
-  if (
-    isGraphqlRateLimited(result.raw, result.stderr) ||
-    (result.exitCode !== 0 && parsed.snapshots.length === 0)
-  ) {
-    const skipUntilMs =
-      parsed.rateLimit !== null
-        ? skipUntilMsFromResetAt(parsed.rateLimit.resetAt, deps.now)
-        : deps.now + 60 * 60 * 1000;
-    deps.log.warn("GitHub refused the snoozed PR watch; waiting for the rate limit to reset");
-    return {
-      remaining: parsed.rateLimit?.remaining ?? 0,
-      skipUntilMs,
-      queried: 0,
-      woken: 0,
-      baselined: 0,
-    };
-  }
-
-  const remaining = parsed.rateLimit?.remaining ?? deps.remainingHint;
-  const skipUntilMs =
-    parsed.rateLimit !== null && shouldSkipForRateLimit(parsed.rateLimit.remaining, null, deps.now)
-      ? skipUntilMsFromResetAt(parsed.rateLimit.resetAt, deps.now)
-      : null;
-
+  let remaining = deps.remainingHint;
+  let skipUntilMs: number | null = null;
+  let queried = 0;
   let woken = 0;
   let baselined = 0;
-  const snapshotsByUrl = new Map(
-    parsed.snapshots.map((snapshot) => [
-      canonicalPullRequestUrl(snapshot.url) ?? snapshot.url,
-      snapshot,
-    ]),
-  );
 
-  for (const [url, threadIds] of watchersByUrl) {
-    const snapshot = snapshotsByUrl.get(url);
-    if (snapshot === undefined) continue;
-    const nextJson = serializeSnapshot(snapshot);
-    const nextFingerprint = fingerprintOf(snapshot);
+  for (const chunk of chunkWatchedUrls(urls)) {
+    if (shouldSkipForRateLimit(remaining, skipUntilMs, deps.now)) break;
+    const query = buildSnoozedPrWatchQuery(chunk);
+    const result = await deps.graphql(query);
+    const parsed = parseSnoozedPrWatchResponse(result.raw);
 
-    for (const threadId of threadIds) {
-      const watch = deps.store.getWatch(threadId);
-      const previous = parseStoredSnapshot(watch?.snapshotJson ?? null);
-      if (previous === null) {
-        deps.store.upsertWatch({
-          threadId,
-          prUrl: url,
-          snapshotJson: nextJson,
-          lastPolledAt: deps.now,
-        });
-        baselined += 1;
-        continue;
-      }
+    if (
+      isGraphqlRateLimited(result.raw, result.stderr) ||
+      (result.exitCode !== 0 && parsed.snapshots.length === 0)
+    ) {
+      skipUntilMs =
+        parsed.rateLimit !== null
+          ? skipUntilMsFromResetAt(parsed.rateLimit.resetAt, deps.now)
+          : deps.now + 60 * 60 * 1000;
+      remaining = parsed.rateLimit?.remaining ?? 0;
+      deps.log.warn("GitHub refused the snoozed PR watch; waiting for the rate limit to reset");
+      break;
+    }
 
-      if (fingerprintOf(previous) === nextFingerprint) {
-        deps.store.upsertWatch({
-          threadId,
-          prUrl: url,
-          snapshotJson: nextJson,
-          lastPolledAt: deps.now,
-        });
-        continue;
-      }
+    remaining = parsed.rateLimit?.remaining ?? remaining;
+    if (
+      parsed.rateLimit !== null &&
+      shouldSkipForRateLimit(parsed.rateLimit.remaining, null, deps.now)
+    ) {
+      skipUntilMs = skipUntilMsFromResetAt(parsed.rateLimit.resetAt, deps.now);
+    }
 
-      const changes = diffSnapshots(previous, snapshot);
-      if (changes.length === 0) {
-        deps.store.upsertWatch({
-          threadId,
-          prUrl: url,
-          snapshotJson: nextJson,
-          lastPolledAt: deps.now,
-        });
-        continue;
-      }
+    queried += parsed.snapshots.length;
+    const snapshotsByUrl = new Map(
+      parsed.snapshots.map((snapshot) => [
+        canonicalPullRequestUrl(snapshot.url) ?? snapshot.url,
+        snapshot,
+      ]),
+    );
 
-      try {
-        await deps.wakeThread(threadId, snapshot, changes);
-        woken += 1;
-      } catch (error) {
-        // Leave the previous snapshot in place so the next hour retries the
-        // same diff. Restoring the new snapshot here would swallow a failed
-        // wake and never ask again.
-        deps.log.warn(`could not wake snoozed thread ${threadId}: ${String(error)}`);
+    for (const url of chunk) {
+      const threadIds = watchersByUrl.get(url);
+      if (threadIds === undefined) continue;
+      const snapshot = snapshotsByUrl.get(url);
+      if (snapshot === undefined) continue;
+      const nextJson = serializeSnapshot(snapshot);
+      const nextFingerprint = fingerprintOf(snapshot);
+
+      for (const threadId of threadIds) {
+        const watch = deps.store.getWatch(threadId);
+        const previous = parseStoredSnapshot(watch?.snapshotJson ?? null);
+        if (previous === null) {
+          deps.store.upsertWatch({
+            threadId,
+            prUrl: url,
+            snapshotJson: nextJson,
+            lastPolledAt: deps.now,
+          });
+          baselined += 1;
+          continue;
+        }
+
+        if (fingerprintOf(previous) === nextFingerprint) {
+          deps.store.upsertWatch({
+            threadId,
+            prUrl: url,
+            snapshotJson: nextJson,
+            lastPolledAt: deps.now,
+          });
+          continue;
+        }
+
+        const changes = diffSnapshots(previous, snapshot);
+        if (changes.length === 0) {
+          deps.store.upsertWatch({
+            threadId,
+            prUrl: url,
+            snapshotJson: nextJson,
+            lastPolledAt: deps.now,
+          });
+          continue;
+        }
+
+        try {
+          await deps.wakeThread(threadId, snapshot, changes);
+          woken += 1;
+        } catch (error) {
+          // Leave the previous snapshot in place so the next hour retries the
+          // same diff. Restoring the new snapshot here would swallow a failed
+          // wake and never ask again.
+          deps.log.warn(`could not wake snoozed thread ${threadId}: ${String(error)}`);
+        }
       }
     }
-  }
 
-  if (parsed.rateLimit !== null) {
-    deps.log.info(
-      `snoozed PR watch queried ${parsed.snapshots.length} PRs, cost ${parsed.rateLimit.cost}, ${parsed.rateLimit.remaining}/${parsed.rateLimit.limit} remaining`,
-    );
+    if (parsed.rateLimit !== null) {
+      deps.log.info(
+        `snoozed PR watch queried ${parsed.snapshots.length} PRs, cost ${parsed.rateLimit.cost}, ${parsed.rateLimit.remaining}/${parsed.rateLimit.limit} remaining`,
+      );
+    }
+    if (skipUntilMs !== null) break;
   }
 
   return {
     remaining,
     skipUntilMs,
-    queried: parsed.snapshots.length,
+    queried,
     woken,
     baselined,
   };

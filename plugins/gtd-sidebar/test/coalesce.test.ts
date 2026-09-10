@@ -83,4 +83,11 @@ describe("createCoalescer", () => {
     assert.equal(await coalescer.get("k", load), "fetched");
     assert.equal(loads, 1);
   });
+
+  it("peeks a live answer without starting a load", () => {
+    const coalescer = createCoalescer<string>(60_000, () => 0);
+    assert.equal(coalescer.peek("k"), undefined);
+    coalescer.put("k", "cached");
+    assert.equal(coalescer.peek("k"), "cached");
+  });
 });

@@ -20,6 +20,8 @@
 export interface Coalescer<T> {
   /** The cached answer, the in-flight one, or a new `load()` — in that order. */
   get(key: string, load: () => Promise<T>): Promise<T>;
+  /** The live cached answer, or undefined when the key is empty or stale. */
+  peek(key: string): T | undefined;
   /** Record an answer bought elsewhere, so a reader does not buy it again. */
   put(key: string, value: T): void;
   /** Drop a key whose answer an event has just invalidated. */
@@ -32,10 +34,16 @@ export function createCoalescer<T>(
 ): Coalescer<T> {
   const settled = new Map<string, { at: number; value: T }>();
   const inFlight = new Map<string, Promise<T>>();
+  const live = (key: string): T | undefined => {
+    const cached = settled.get(key);
+    if (cached === undefined) return undefined;
+    if (now() - cached.at < ttlMs) return cached.value;
+    return undefined;
+  };
   return {
     get(key, load) {
-      const cached = settled.get(key);
-      if (cached !== undefined && now() - cached.at < ttlMs) return Promise.resolve(cached.value);
+      const cached = live(key);
+      if (cached !== undefined) return Promise.resolve(cached);
       const pending = inFlight.get(key);
       if (pending !== undefined) return pending;
       const started = (async () => {
@@ -47,6 +55,9 @@ export function createCoalescer<T>(
       });
       inFlight.set(key, started);
       return started;
+    },
+    peek(key) {
+      return live(key);
     },
     put(key, value) {
       settled.set(key, { at: now(), value });

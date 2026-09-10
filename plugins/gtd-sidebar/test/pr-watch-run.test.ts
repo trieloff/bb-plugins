@@ -7,6 +7,7 @@ import {
 } from "../lib/pr-watch-run.ts";
 import {
   MAX_PR_BACKFILL_PER_TICK,
+  MAX_WATCHED_PRS,
   serializeSnapshot,
   type PrWatchSnapshot,
 } from "../lib/pr-watch.ts";
@@ -236,5 +237,47 @@ describe("pollSnoozedPullRequests", () => {
     assert.match(queries[0] ?? "", /p0: resource/);
     assert.match(queries[0] ?? "", /p1: resource/);
     assert.equal([...(queries[0] ?? "").matchAll(/^query /gm)].length, 1);
+  });
+
+  it("pages past MAX_WATCHED_PRS so later watches are still polled", async () => {
+    const snoozed = Array.from({ length: MAX_WATCHED_PRS + 1 }, (_, i) => ({
+      threadId: `thr_${i}`,
+      snoozedUntil: now + 60_000,
+    }));
+    const watches = snoozed.map((row, i) => ({
+      threadId: row.threadId,
+      prUrl: `https://github.com/acme/app/pull/${i + 1}`,
+      snapshotJson: null,
+    }));
+    const store = memoryStore(snoozed, watches);
+    const queries: string[] = [];
+    const result = await pollSnoozedPullRequests({
+      now,
+      store,
+      graphql: async (query) => {
+        queries.push(query);
+        return {
+          raw: {
+            data: {
+              rateLimit: {
+                cost: 8,
+                remaining: 4_000,
+                resetAt: "2026-08-26T11:00:00Z",
+                limit: 5_000,
+              },
+            },
+          },
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+      resolvePrUrl: async () => null,
+      wakeThread: async () => {},
+      log: { info() {}, warn() {} },
+      remainingHint: null,
+      skipUntilMs: null,
+    });
+    assert.equal(queries.length, 2);
+    assert.equal(result.queried, 0);
   });
 });

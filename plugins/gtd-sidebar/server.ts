@@ -46,6 +46,7 @@ import {
   parseRestPulls,
   parseRestRateLimit,
   sidebarPrFromRest,
+  withPullRelease,
   type CachedPullRow,
   type CheckRollup,
   type LatestRelease,
@@ -194,6 +195,7 @@ export const gtdSidebarRpcContract = defineRpcContract({
         z.object({
           environmentId: z.string(),
           label: z.string(),
+          branchNames: z.array(z.string().trim().min(1)).max(16).default([]),
         }),
       ),
     }),
@@ -656,6 +658,28 @@ export default function plugin(bb: BbPluginApi) {
     return result.changes;
   };
 
+  /**
+   * Webhook GETs always arrive with `released: false`. Overlay the cached
+   * latest release so an `issue_comment` cannot paint a released badge back
+   * to merged. If we have no cache, keep the indexed colour when it is already
+   * released — a number-only event is not evidence a release was yanked.
+   */
+  const annotatePullWithRelease = (owner: string, repo: string, pull: RestPull): RestPull => {
+    const overlaid = withPullRelease(
+      pull,
+      latestReleaseCache.peek(`${owner}/${repo}`) ?? null,
+    );
+    if (overlaid.released) return overlaid;
+    const existing = db
+      .prepare(
+        `SELECT attention FROM thread_pr_index
+          WHERE owner = ? AND repo = ? AND number = ?`,
+      )
+      .get(owner, repo, pull.number) as { attention: string } | undefined;
+    if (existing?.attention === "released") return { ...overlaid, released: true };
+    return overlaid;
+  };
+
   const applyPullToIndex = (owner: string, repo: string, pull: RestPull, now: number) => {
     const sidebar = sidebarPrFromRest(pull);
     db.prepare(
@@ -867,6 +891,61 @@ export default function plugin(bb: BbPluginApi) {
       .prepare(`DELETE FROM thread_snooze_backoff WHERE thread_id = ?`)
       .run(threadId).changes;
     if (changes > 0) bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId });
+  };
+
+  const readWatchRow = (threadId: string) =>
+    db
+      .prepare(
+        `SELECT thread_id, pr_url, snapshot_json, last_polled_at
+           FROM snoozed_pr_watch
+          WHERE thread_id = ?`,
+      )
+      .get(threadId) as
+      | {
+          thread_id: string;
+          pr_url: string;
+          snapshot_json: string | null;
+          last_polled_at: number | null;
+        }
+      | undefined;
+
+  /**
+   * Clear the shelf, then send. If the host cannot take the wake, put the
+   * snooze and watch rows back so the hourly poller can retry. Clearing first
+   * still stops a successful idle from landing the thread on Snoozed again.
+   */
+  const unsnoozeThenSend = async (
+    threadId: string,
+    send: () => Promise<void>,
+  ): Promise<void> => {
+    const lifecycle = readOne(threadId);
+    const watch = readWatchRow(threadId);
+    const backoff = readBackoff(threadId);
+    clear(threadId);
+    resetBackoff(threadId);
+    try {
+      await send();
+    } catch (error) {
+      if (lifecycle !== undefined) write(lifecycle);
+      if (watch !== undefined) {
+        db.prepare(
+          `INSERT INTO snoozed_pr_watch
+             (thread_id, pr_url, snapshot_json, last_polled_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(thread_id) DO UPDATE SET
+             pr_url = excluded.pr_url,
+             snapshot_json = excluded.snapshot_json,
+             last_polled_at = excluded.last_polled_at`,
+        ).run(
+          watch.thread_id,
+          watch.pr_url,
+          watch.snapshot_json,
+          watch.last_polled_at ?? 0,
+        );
+      }
+      if (backoff !== undefined) writeBackoff(threadId, backoff.ladderStep, backoff.snoozedAt);
+      throw error;
+    }
   };
 
   const recordSnoozeHistory = (entry: {
@@ -1105,14 +1184,13 @@ export default function plugin(bb: BbPluginApi) {
     for (const { thread_id: threadId } of watched) {
       const row = readOne(threadId);
       if (row === undefined || row.snoozedUntil === null || row.snoozedUntil <= now) continue;
-      clear(threadId);
-      // The pull request moved, so the next snooze is a fresh decision.
-      resetBackoff(threadId);
       try {
-        await bb.sdk.threads.send({
-          threadId,
-          mode: "auto",
-          input: [{ type: "text", text: reason, mentions: [] }],
+        await unsnoozeThenSend(threadId, async () => {
+          await bb.sdk.threads.send({
+            threadId,
+            mode: "auto",
+            input: [{ type: "text", text: reason, mentions: [] }],
+          });
         });
       } catch (error) {
         bb.log.warn(`webhook unsnooze send ${threadId} failed: ${String(error)}`);
@@ -1155,6 +1233,7 @@ export default function plugin(bb: BbPluginApi) {
           pull = { ...detailed, inMergeQueue: pull.inMergeQueue || detailed.inMergeQueue };
         }
       }
+      pull = annotatePullWithRelease(direct.owner, direct.repo, pull);
       rows.push(...applyPullToIndex(direct.owner, direct.repo, pull, now));
       if (SNOOZE_WAKE_EVENTS.has(input.event)) {
         await wakeSnoozedForPullUrl(pull.url, `GitHub ${input.event} on ${pull.url}`);
@@ -1162,8 +1241,9 @@ export default function plugin(bb: BbPluginApi) {
     } else if (repo !== null) {
       const numbers = webhookPrNumbers(input.event, payload);
       for (const number of numbers) {
-        const pull = await fetchPullDetail(repo.owner, repo.repo, number);
-        if (pull === null) continue;
+        const fetched = await fetchPullDetail(repo.owner, repo.repo, number);
+        if (fetched === null) continue;
+        const pull = annotatePullWithRelease(repo.owner, repo.repo, fetched);
         rows.push(...applyPullToIndex(repo.owner, repo.repo, pull, now));
         if (SNOOZE_WAKE_EVENTS.has(input.event)) {
           await wakeSnoozedForPullUrl(pull.url, `GitHub ${input.event} on ${pull.url}`);
@@ -1228,6 +1308,7 @@ export default function plugin(bb: BbPluginApi) {
             return {
               environmentId,
               label: summary.label,
+              branchNames: summary.branchNames ?? [],
             };
           } catch {
             // The card keeps bb's own branch label when the environment or its
@@ -1864,20 +1945,18 @@ export default function plugin(bb: BbPluginApi) {
         return pullRequest.pullRequest.url;
       },
       wakeThread: async (threadId, snapshot, changes) => {
-        // Clear the shelf first so a successful agent turn cannot land back
-        // on Snoozed when it goes idle. Then start a turn with what changed.
-        clear(threadId);
-        resetBackoff(threadId);
-        await bb.sdk.threads.send({
-          threadId,
-          mode: "auto",
-          input: [
-            {
-              type: "text",
-              text: formatAgentWakeMessage(snapshot, changes),
-              mentions: [],
-            },
-          ],
+        await unsnoozeThenSend(threadId, async () => {
+          await bb.sdk.threads.send({
+            threadId,
+            mode: "auto",
+            input: [
+              {
+                type: "text",
+                text: formatAgentWakeMessage(snapshot, changes),
+                mentions: [],
+              },
+            ],
+          });
         });
       },
       log: bb.log,

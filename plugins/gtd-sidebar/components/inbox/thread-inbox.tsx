@@ -104,10 +104,14 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
   const [gitButlerLabels, setGitButlerLabels] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
   );
+  const [gitButlerBranchNames, setGitButlerBranchNames] = useState<
+    ReadonlyMap<string, readonly string[]>
+  >(() => new Map());
 
   useEffect(() => {
     if (gitButlerEnvironmentKey.length === 0) {
       setGitButlerLabels(new Map());
+      setGitButlerBranchNames(new Map());
       return;
     }
 
@@ -122,6 +126,14 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
               result.environments.map((environment) => [
                 environment.environmentId,
                 environment.label,
+              ]),
+            ),
+          );
+          setGitButlerBranchNames(
+            new Map(
+              result.environments.map((environment) => [
+                environment.environmentId,
+                environment.branchNames ?? [],
               ]),
             ),
           );
@@ -162,7 +174,7 @@ export function ThreadInbox({ activeThreadId, onNavigate, searchQuery }: PluginT
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [showSettled, setShowSettled] = useState(false);
 
-  const pullRequestByThreadId = useThreadPullRequests(threads, gitButlerLabels);
+  const pullRequestByThreadId = useThreadPullRequests(threads, gitButlerBranchNames);
 
   const projectNameById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),

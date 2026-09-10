@@ -850,6 +850,35 @@ describe("resolveThreadPullRequests", () => {
     assert.equal(resolved.get("thr_1")?.number, 1);
   });
 
+  it("does not list closed pulls after an open-list refusal latches the pause", async () => {
+    let paused = false;
+    const listed: string[] = [];
+    await resolveThreadPullRequests([query({ branchName: "feat/one" })], {
+      now: 5_000,
+      restRemaining: 4_000,
+      restPaused: () => paused,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => {
+        listed.push("open");
+        paused = true;
+        return [pull({ number: 1, headRef: "feat/one", headSha: "sha1" })];
+      },
+      listRecentClosedPulls: async () => {
+        listed.push("closed");
+        return [];
+      },
+      listMergeQueueNumbers: async () => {
+        listed.push("overlay");
+        return [];
+      },
+      getPull: async () => null,
+      log: { info() {}, warn() {} },
+    });
+    assert.deepEqual(listed, ["open"]);
+  });
+
   it("serves a stale cache when REST is skipped and the title has no number", async () => {
     const resolved = await resolveThreadPullRequests([query()], {
       now: 5_000 + PR_CACHE_FRESH_MS + 1,

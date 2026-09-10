@@ -249,21 +249,27 @@ export async function resolveThreadPullRequests(
       } catch (error) {
         warnUnlessCancelled(error, `REST open pulls for ${key} failed: ${String(error)}`);
       }
+      // listOpenPulls can latch the pause via noteRestOutcome. Closed listing,
+      // overlay, and release used to fire anyway and retried a refused overlay.
+      if (!mayStillSpend()) {
+        pullsByRepo.set(key, open);
+        break;
+      }
       try {
         closed = await deps.listRecentClosedPulls(repo);
       } catch (error) {
         warnUnlessCancelled(error, `REST closed pulls for ${key} failed: ${String(error)}`);
       }
       let queuedNumbers: number[] = [];
-      if (deps.listMergeQueueNumbers !== undefined) {
+      let checkRollups: ReadonlyMap<number, CheckRollup> = new Map();
+      if (mayStillSpend() && deps.listMergeQueueNumbers !== undefined) {
         try {
           queuedNumbers = await deps.listMergeQueueNumbers(repo);
         } catch (error) {
           warnUnlessCancelled(error, `merge queue for ${key} failed: ${String(error)}`);
         }
       }
-      let checkRollups: ReadonlyMap<number, CheckRollup> = new Map();
-      if (deps.listCheckRollups !== undefined) {
+      if (mayStillSpend() && deps.listCheckRollups !== undefined) {
         try {
           checkRollups = await deps.listCheckRollups(repo);
         } catch (error) {

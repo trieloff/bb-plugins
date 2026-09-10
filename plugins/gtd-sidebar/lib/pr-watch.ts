@@ -226,7 +226,7 @@ export function buildSnoozedPrWatchQuery(urls: readonly string[]): string {
   ].join("\n");
 }
 
-export function watchedUrlsForQuery(urls: readonly string[]): string[] {
+export function canonicalWatchedUrls(urls: readonly string[]): string[] {
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const url of urls) {
@@ -234,9 +234,26 @@ export function watchedUrlsForQuery(urls: readonly string[]): string[] {
     if (canonical === null || seen.has(canonical)) continue;
     seen.add(canonical);
     unique.push(canonical);
-    if (unique.length >= MAX_WATCHED_PRS) break;
   }
   return unique;
+}
+
+/** First page only. Prefer {@link chunkWatchedUrls} when every watch must run. */
+export function watchedUrlsForQuery(urls: readonly string[]): string[] {
+  return canonicalWatchedUrls(urls).slice(0, MAX_WATCHED_PRS);
+}
+
+export function chunkWatchedUrls(
+  urls: readonly string[],
+  size: number = MAX_WATCHED_PRS,
+): string[][] {
+  const unique = canonicalWatchedUrls(urls);
+  if (unique.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += size) {
+    chunks.push(unique.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

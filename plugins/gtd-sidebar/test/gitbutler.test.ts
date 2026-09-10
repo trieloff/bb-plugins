@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseGitButlerBranchSummary, resolveSidebarBranchLabel } from "../lib/gitbutler.ts";
+import {
+  gitButlerBranchNamesFor,
+  parseGitButlerBranchSummary,
+  resolveSidebarBranchLabel,
+} from "../lib/gitbutler.ts";
 
 describe("parseGitButlerBranchSummary", () => {
   it("uses the real name when one virtual branch is applied", () => {
@@ -66,5 +70,31 @@ describe("resolveSidebarBranchLabel", () => {
       resolveSidebarBranchLabel("gitbutler/workspace", "env_unknown", labels),
       "gitbutler/workspace",
     );
+  });
+});
+
+describe("gitButlerBranchNamesFor", () => {
+  it("uses the host's virtual branch names, not the count label", () => {
+    const branches = new Map([["env_local", ["scott/api", "scott/ui", "scott/docs"]]]);
+    assert.deepEqual(
+      gitButlerBranchNamesFor("gitbutler/workspace", "env_local", branches),
+      ["scott/api", "scott/ui", "scott/docs"],
+    );
+    assert.deepEqual(
+      gitButlerBranchNamesFor("3 GitButler branches", "env_local", branches),
+      ["scott/api", "scott/ui", "scott/docs"],
+    );
+  });
+
+  it("drops GitButler workspace refs when the host has not answered", () => {
+    assert.deepEqual(
+      gitButlerBranchNamesFor("gitbutler/workspace", "env_unknown", new Map()),
+      [],
+    );
+    assert.deepEqual(gitButlerBranchNamesFor("3 GitButler branches", "env_x", new Map()), []);
+  });
+
+  it("keeps a real git branch when GitButler is not in play", () => {
+    assert.deepEqual(gitButlerBranchNamesFor("feat/ship", "env_x", new Map()), ["feat/ship"]);
   });
 });

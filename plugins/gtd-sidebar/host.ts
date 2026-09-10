@@ -18,7 +18,11 @@ export default experimental_defineHostEntry({
           signal: context.signal,
           timeout: 5_000,
         });
-        return { label: parseGitButlerBranchSummary(stdout)?.label ?? null };
+        const summary = parseGitButlerBranchSummary(stdout);
+        return {
+          label: summary?.label ?? null,
+          branchNames: summary?.branchNames ?? [],
+        };
       } catch {
         // A regular repository, a host without `but`, and a stopped GitButler
         // project all keep bb's own branch label. This probe is an enhancement.
