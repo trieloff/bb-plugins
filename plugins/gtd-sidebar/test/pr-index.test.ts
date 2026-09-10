@@ -16,6 +16,7 @@ import {
   parseRestPulls,
   PR_CACHE_FRESH_MS,
   releaseCoversBranch,
+  rollupSettlesAttention,
   sidebarPrFromRest,
   sidebarPrFromTitle,
   withCheckRollups,
@@ -415,6 +416,17 @@ describe("needsCheckRollupFetch", () => {
   });
 });
 
+describe("rollupSettlesAttention", () => {
+  it("is true only for the rollups that outrank mergeable_state", () => {
+    assert.equal(rollupSettlesAttention(pull({ checkRollup: "pending" })), true);
+    assert.equal(rollupSettlesAttention(pull({ checkRollup: "failure" })), true);
+    assert.equal(rollupSettlesAttention(pull({ checkRollup: "error" })), true);
+    // Success leaves clean, behind, blocked, and dirty all still possible.
+    assert.equal(rollupSettlesAttention(pull({ checkRollup: "success" })), false);
+    assert.equal(rollupSettlesAttention(pull({ checkRollup: null })), false);
+  });
+});
+
 describe("resolveThreadPullRequests", () => {
   const query = (overrides: Partial<ThreadPrQuery> = {}): ThreadPrQuery => ({
     threadId: "thr_1",
@@ -730,7 +742,7 @@ describe("resolveThreadPullRequests", () => {
     assert.equal(resolved.get("thr_1")?.attention, "merged");
   });
 
-  it("overlays pending checks so a blocked PR does not paint as failed", async () => {
+  it("takes pending checks from the repo overlay without a numbered GET", async () => {
     const lookedUp: number[] = [];
     const resolved = await resolveThreadPullRequests([query()], {
       now: 5_000,
@@ -747,11 +759,15 @@ describe("resolveThreadPullRequests", () => {
       listCheckRollups: async () => new Map([[12, "pending"]]),
       log: { info() {}, warn() {} },
     });
-    assert.deepEqual(lookedUp, [12]);
+    // One `gh api graphql` already said the checks are running, and nothing
+    // `mergeable_state` could add outranks that. Buying it per thread is what
+    // made this plugin the token's biggest spender.
+    assert.deepEqual(lookedUp, []);
     assert.equal(resolved.get("thr_1")?.attention, "checks_pending");
   });
 
-  it("lets a numbered GET's failed rollup outrank a stale pending overlay", async () => {
+  it("takes a failed overlay rollup without a numbered GET", async () => {
+    const lookedUp: number[] = [];
     const resolved = await resolveThreadPullRequests([query()], {
       now: 5_000,
       restRemaining: 4_000,
@@ -759,13 +775,79 @@ describe("resolveThreadPullRequests", () => {
       putCache: () => {},
       getRepo: async () => ({ owner: "acme", repo: "app" }),
       listOpenPulls: async () => [pull({ mergeableState: "unknown" })],
-      getPull: async (_repo, number) =>
-        pull({ number, mergeableState: "blocked", checkRollup: "failure" }),
+      getPull: async (_repo, number) => {
+        lookedUp.push(number);
+        return pull({ number, mergeableState: "blocked" });
+      },
       listRecentClosedPulls: async () => [],
-      listCheckRollups: async () => new Map([[12, "pending"]]),
+      listCheckRollups: async () => new Map([[12, "failure"]]),
       log: { info() {}, warn() {} },
     });
+    assert.deepEqual(lookedUp, []);
     assert.equal(resolved.get("thr_1")?.attention, "checks_failed");
+  });
+
+  it("still buys the numbered GET when the overlay rollup decides nothing", async () => {
+    const known: Array<{ headSha?: string; checkRollup?: string | null } | undefined> = [];
+    const resolved = await resolveThreadPullRequests([query()], {
+      now: 5_000,
+      restRemaining: 4_000,
+      getCache: () => undefined,
+      putCache: () => {},
+      getRepo: async () => ({ owner: "acme", repo: "app" }),
+      listOpenPulls: async () => [pull({ mergeableState: "unknown" })],
+      getPull: async (_repo, number, hint) => {
+        known.push(hint);
+        return pull({ number, mergeableState: "clean", checkRollup: "success" });
+      },
+      listRecentClosedPulls: async () => [],
+      // Green checks say nothing about conflicts, review gates, or being
+      // behind — only `mergeable_state` does, so this one is still worth a call.
+      listCheckRollups: async () => new Map([[12, "success"]]),
+      log: { info() {}, warn() {} },
+    });
+    assert.equal(resolved.get("thr_1")?.attention, "ready_to_merge");
+    // And it goes out carrying what the tick already paid for, so the server
+    // can answer from its head-SHA memo and skip the combined-status call.
+    assert.deepEqual(known, [{ headSha: "abc123", checkRollup: "success" }]);
+  });
+
+  it("stops spending for the rest of the tick once a refusal latches a pause", async () => {
+    let paused = false;
+    const lookedUp: number[] = [];
+    const resolved = await resolveThreadPullRequests(
+      [
+        query({ threadId: "thr_1", branchName: "feat/one" }),
+        query({ threadId: "thr_2", environmentId: "env_2", branchName: "feat/two" }),
+      ],
+      {
+        now: 5_000,
+        restRemaining: 4_000,
+        restPaused: () => paused,
+        getCache: () => undefined,
+        putCache: () => {},
+        getRepo: async (environmentId) =>
+          environmentId === "env_1"
+            ? { owner: "acme", repo: "app" }
+            : { owner: "acme", repo: "other" },
+        listOpenPulls: async (repo) =>
+          repo.repo === "app"
+            ? [pull({ number: 1, headRef: "feat/one", headSha: "sha1" })]
+            : [pull({ number: 2, headRef: "feat/two", headSha: "sha2" })],
+        getPull: async (_repo, number) => {
+          lookedUp.push(number);
+          // GitHub refuses and the budget latches a pause mid-tick.
+          paused = true;
+          return null;
+        },
+        listRecentClosedPulls: async () => [],
+        log: { info() {}, warn() {} },
+      },
+    );
+    // The second thread's lookup used to go out anyway, sustaining the very
+    // limit the pause was set for.
+    assert.deepEqual(lookedUp, [1]);
+    assert.equal(resolved.get("thr_1")?.number, 1);
   });
 
   it("serves a stale cache when REST is skipped and the title has no number", async () => {

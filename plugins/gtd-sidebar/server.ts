@@ -52,6 +52,7 @@ import {
   type RestPull,
 } from "./lib/pr-index.ts";
 import { resolveThreadPullRequests } from "./lib/pr-index-run.ts";
+import { createCoalescer } from "./lib/coalesce.ts";
 import { upsertBrowserTab, type InAppBrowserTab } from "./lib/open-in-app-browser.ts";
 import { LIFECYCLE_CHANNEL, PR_INDEX_CHANNEL, WEBHOOK_TUNNEL_CHANNEL } from "./lib/channels.ts";
 import { ensureGithubRepoHook } from "./lib/github-hooks.ts";
@@ -496,16 +497,54 @@ export default function plugin(bb: BbPluginApi) {
     }
     return result;
   };
-  const restPullsInFlight = new Map<string, Promise<ReturnType<typeof parseRestPulls>>>();
-  const restPullGetInFlight = new Map<string, Promise<RestPull | null>>();
+  /**
+   * How long a repository's pull listing stands before it is asked again.
+   *
+   * Short enough that a reconcile still sees a merge within the same minute,
+   * long enough that the burst of reconciles a batch of thread renames sets
+   * off costs one call instead of one per rename.
+   */
+  const REPO_PULLS_CACHE_MS = 30_000;
+  /** The REST budget moves at 5000 an hour; a minute-old reading is current. */
+  const RATE_LIMIT_CACHE_MS = 60_000;
+  /**
+   * How long a pull's `mergeable_state` stands for an unchanged head commit.
+   *
+   * Keyed by head SHA, so a push always misses, and it holds merge state only
+   * — never a check rollup. That split is what makes the memo safe: checks are
+   * the fast-moving half and come fresh from the repo-level GraphQL overlay on
+   * every tick, so a reader overwrites whatever rollup the memo happens to
+   * carry. What is left is conflicts, review gates, and being behind, which do
+   * not move under a fixed SHA without a webhook — and a webhook writes
+   * straight through `fetchPullDetail`. Deliberately longer than one reconcile
+   * so a steady sidebar stops re-buying the same answer every ten minutes.
+   */
+  const PULL_MERGE_STATE_CACHE_MS = 20 * 60_000;
+
+  const repoOpenPulls = createCoalescer<RestPull[]>(REPO_PULLS_CACHE_MS);
+  // Closed listings had no sharing at all, only open ones did. Every thread in
+  // a repository asked for the same hundred closed pulls, and the observed
+  // twenty-two-in-a-second `repos/<owner>/<repo>/pulls` burst is what that
+  // looks like from the token's side.
+  const repoClosedPulls = createCoalescer<RestPull[]>(REPO_PULLS_CACHE_MS);
+  const restRateLimit = createCoalescer<number | null>(RATE_LIMIT_CACHE_MS);
+  const pullMergeStateBySha = createCoalescer<RestPull | null>(PULL_MERGE_STATE_CACHE_MS);
+  /** No TTL: sharing only, for the lookups with no fresh rollup to pair with. */
+  const pullDetailInFlight = createCoalescer<RestPull | null>(0);
   // Releases move on the order of hours, not the ten-minute reconcile, so the
   // answer is held between ticks. A `release` webhook clears the entry, which
   // is what makes the badge deepen the moment a release actually ships.
-  const latestReleaseCache = new Map<string, { at: number; release: LatestRelease | null }>();
-  const repoPrOverlayInFlight = new Map<
-    string,
-    Promise<{ queuedNumbers: number[]; checkRollups: Map<number, CheckRollup> }>
-  >();
+  const latestReleaseCache = createCoalescer<LatestRelease | null>(LATEST_RELEASE_CACHE_MS);
+  /**
+   * The one call the rest of this now leans on: merge-queue membership and
+   * every open pull's check rollup, for a whole repository, in one request.
+   * Held on the same terms as the listings it decorates, or it would be asked
+   * for more often than they are.
+   */
+  const repoPrOverlay = createCoalescer<{
+    queuedNumbers: number[];
+    checkRollups: Map<number, CheckRollup>;
+  }>(REPO_PULLS_CACHE_MS);
   const hookEnsuredAt = new Map<string, number>();
   const HOOK_ENSURE_TTL_MS = 60 * 60 * 1000;
   /**
@@ -579,9 +618,21 @@ export default function plugin(bb: BbPluginApi) {
     const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
     const fetched = noteRestOutcome(await githubRestJson(gh, path));
     if (fetched.exitCode !== 0) return null;
-    const pull = parseRestPull(fetched.raw);
-    if (pull === null) return null;
-    return attachCombinedStatus(gh, owner, repo, pull);
+    const parsed = parseRestPull(fetched.raw);
+    if (parsed === null) return null;
+    const pull = await attachCombinedStatus(gh, owner, repo, parsed);
+    // A webhook is the reason to fetch, never a reason to read a memo — the
+    // event is the news that the memo is wrong. Writing through is what keeps
+    // the reconcile from buying the same answer again ten minutes later. The
+    // rollup is dropped on the way in: that half of the answer belongs to the
+    // overlay, and a memo is the wrong place to keep something that moves.
+    if (pull.headSha.length > 0) {
+      pullMergeStateBySha.put(`${owner}/${repo}#${number}@${pull.headSha}`, {
+        ...pull,
+        checkRollup: null,
+      });
+    }
+    return pull;
   };
 
   /**
@@ -594,7 +645,7 @@ export default function plugin(bb: BbPluginApi) {
    * `refresh` below triggers decide the colour.
    */
   const expireMergedIndexRows = (owner: string, repo: string): number => {
-    latestReleaseCache.delete(`${owner}/${repo}`);
+    latestReleaseCache.forget(`${owner}/${repo}`);
     const result = db
       .prepare(
         `UPDATE thread_pr_index
@@ -1217,10 +1268,14 @@ export default function plugin(bb: BbPluginApi) {
 
       let restRemaining: number | null = null;
       // Asking for the budget is itself a request, and one we should not make
-      // while we are being told to slow down.
+      // while we are being told to slow down. Nor once per caller: every
+      // visible thread's reconcile used to open with its own probe, ~200 an
+      // hour, and the answer it wants moves by at most 5000 an hour.
       if (gh !== null && !skipRest) {
-        const limit = noteRestOutcome(await githubRestJson(gh, "rate_limit", 8_000));
-        restRemaining = parseRestRateLimit(limit.raw)?.restRemaining ?? null;
+        restRemaining = await restRateLimit.get("core", async () => {
+          const limit = noteRestOutcome(await githubRestJson(gh, "rate_limit", 8_000));
+          return parseRestRateLimit(limit.raw)?.restRemaining ?? null;
+        });
       }
 
       const readPrCache = (environmentId: string): CachedPullRow | undefined => {
@@ -1261,13 +1316,11 @@ export default function plugin(bb: BbPluginApi) {
         if (gh === null)
           return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
         const key = `${repo.owner}/${repo.repo}`;
-        const inflight = repoPrOverlayInFlight.get(key);
-        if (inflight !== undefined) return inflight;
         const query = mergeQueueQuery(repo.owner, repo.repo);
         if (query === null) {
           return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
         }
-        const pending = (async () => {
+        return repoPrOverlay.get(key, async () => {
           const fetched = noteRestOutcome(await githubGraphql(gh, query));
           if (fetched.aborted) {
             return { queuedNumbers: [] as number[], checkRollups: new Map<number, CheckRollup>() };
@@ -1281,17 +1334,16 @@ export default function plugin(bb: BbPluginApi) {
             queuedNumbers: parseMergeQueueNumbers(fetched.raw),
             checkRollups: parseOpenPullCheckRollups(fetched.raw),
           };
-        })().finally(() => {
-          repoPrOverlayInFlight.delete(key);
         });
-        repoPrOverlayInFlight.set(key, pending);
-        return pending;
       };
 
       const resolved = await resolveThreadPullRequests(threads, {
         now: Date.now(),
         restRemaining,
         skipRest,
+        // Asked again before every remaining call, so the first refusal ends
+        // this tick instead of only the next one.
+        restPaused: () => isPaused(restBudget, Date.now()),
         getCache: readPrCache,
         putCache: (row) => {
           db.prepare(
@@ -1333,10 +1385,8 @@ export default function plugin(bb: BbPluginApi) {
         listOpenPulls: async (repo) => {
           if (gh === null) return [];
           const key = `${repo.owner}/${repo.repo}`;
-          const inflight = restPullsInFlight.get(key);
-          if (inflight !== undefined) return inflight;
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls?state=open&per_page=100`;
-          const pending = (async () => {
+          return repoOpenPulls.get(key, async () => {
             const listed = noteRestOutcome(await githubRestJson(gh, path));
             // A reload aborts every in-flight `gh`. That is not a failure and
             // must not be reported as one: the tick is over, and the next one
@@ -1346,60 +1396,68 @@ export default function plugin(bb: BbPluginApi) {
               throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
             }
             return parseRestPulls(listed.raw);
-          })().finally(() => {
-            restPullsInFlight.delete(key);
           });
-          restPullsInFlight.set(key, pending);
-          return pending;
         },
-        getPull: async (repo, number) => {
+        getPull: async (repo, number, known) => {
           if (gh === null) return null;
           const key = `${repo.owner}/${repo.repo}#${number}`;
-          const inflight = restPullGetInFlight.get(key);
-          if (inflight !== undefined) return inflight;
+          const headSha = known?.headSha ?? "";
+          const knownRollup = known?.checkRollup ?? null;
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls/${number}`;
-          const pending = (async () => {
+          const load = async (withCombinedStatus: boolean): Promise<RestPull | null> => {
             const listed = noteRestOutcome(await githubRestJson(gh, path));
             if (listed.aborted) return null;
             if (listed.exitCode !== 0) {
               throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
             }
-            const pull = parseRestPull(listed.raw);
-            if (pull === null) return null;
-            return attachCombinedStatus(gh, repo.owner, repo.repo, pull);
-          })().finally(() => {
-            restPullGetInFlight.delete(key);
-          });
-          restPullGetInFlight.set(key, pending);
-          return pending;
+            const parsed = parseRestPull(listed.raw);
+            if (parsed === null) return null;
+            return withCombinedStatus
+              ? attachCombinedStatus(gh, repo.owner, repo.repo, parsed)
+              : parsed;
+          };
+          // Two calls per thread became one, then one every twenty minutes.
+          //
+          // The head SHA names what the answer is about, so it is the key; the
+          // repo-level GraphQL overlay is already carrying this pull's check
+          // rollup, so `attachCombinedStatus` has nothing left to buy and the
+          // memo has nothing perishable to hold. Both halves have to be true:
+          // without a rollup in hand there is no fresh check state to pair a
+          // memo hit with, and without a SHA — a pull found only by number, in
+          // a repository this tick never listed — there is nothing to key on.
+          // Then sharing the in-flight call is all that is safe.
+          if (headSha.length > 0 && knownRollup !== null) {
+            const detail = await pullMergeStateBySha.get(`${key}@${headSha}`, () => load(false));
+            return detail === null ? null : { ...detail, checkRollup: knownRollup };
+          }
+          return pullDetailInFlight.get(key, () => load(true));
         },
         listRecentClosedPulls: async (repo) => {
           if (gh === null) return [];
+          const key = `${repo.owner}/${repo.repo}`;
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
-          const listed = noteRestOutcome(await githubRestJson(gh, path));
-          if (listed.aborted) return [];
-          if (listed.exitCode !== 0) {
-            throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
-          }
-          return parseRestPulls(listed.raw);
+          return repoClosedPulls.get(key, async () => {
+            const listed = noteRestOutcome(await githubRestJson(gh, path));
+            if (listed.aborted) return [];
+            if (listed.exitCode !== 0) {
+              throw new Error(listed.stderr.trim() || `gh api ${path} exited ${listed.exitCode}`);
+            }
+            return parseRestPulls(listed.raw);
+          });
         },
         listMergeQueueNumbers: async (repo) => (await loadRepoPrOverlay(repo)).queuedNumbers,
         listCheckRollups: async (repo) => (await loadRepoPrOverlay(repo)).checkRollups,
         getLatestRelease: async (repo) => {
           if (gh === null) return null;
           const key = `${repo.owner}/${repo.repo}`;
-          const cached = latestReleaseCache.get(key);
-          if (cached !== undefined && Date.now() - cached.at < LATEST_RELEASE_CACHE_MS) {
-            return cached.release;
-          }
           const path = `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/releases/latest`;
-          const fetched = noteRestOutcome(await githubRestJson(gh, path));
-          // 404 is the ordinary answer for a repo that has never shipped a
-          // release, not a failure. Everything else is cached as "no release"
-          // too, so one bad response cannot make the whole tick retry it.
-          const release = fetched.exitCode === 0 ? parseLatestRelease(fetched.raw) : null;
-          latestReleaseCache.set(key, { at: Date.now(), release });
-          return release;
+          return latestReleaseCache.get(key, async () => {
+            const fetched = noteRestOutcome(await githubRestJson(gh, path));
+            // 404 is the ordinary answer for a repo that has never shipped a
+            // release, not a failure. Everything else is cached as "no release"
+            // too, so one bad response cannot make the whole tick retry it.
+            return fetched.exitCode === 0 ? parseLatestRelease(fetched.raw) : null;
+          });
         },
         log: bb.log,
       });

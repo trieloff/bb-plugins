@@ -8,6 +8,7 @@ import {
   mergeListedPulls,
   MIN_REST_REMAINING,
   needsMergeStateLookup,
+  rollupSettlesAttention,
   sidebarPrFromCache,
   sidebarPrFromRest,
   sidebarPrFromTitle,
@@ -44,12 +45,34 @@ export interface PrIndexDeps {
    * Folding one into the other would have hidden that, again.
    */
   skipRest?: boolean;
+  /**
+   * Whether the pause is running *right now*, asked again before each call.
+   *
+   * `skipRest` is read once, when the tick starts. That is the wrong tense for
+   * a limit a tick can trip over halfway through: the first refusal latches a
+   * pause, and every remaining thread in the same loop kept spending anyway,
+   * sustaining the limit it had just been told about. This lets the rest of
+   * the tick see the pause the tick itself created.
+   */
+  restPaused?(): boolean;
   getCache(environmentId: string): CachedPullRow | undefined;
   putCache(row: CachedPullRow): void;
   getRepo(environmentId: string): Promise<GithubRepo | null>;
   listOpenPulls(repo: GithubRepo): Promise<RestPull[]>;
   listRecentClosedPulls(repo: GithubRepo): Promise<RestPull[]>;
-  getPull(repo: GithubRepo, number: number): Promise<RestPull | null>;
+  /**
+   * The numbered GET, the only route that carries `mergeable_state`.
+   *
+   * `known` is what this tick has already paid for: the head SHA the repo
+   * listing reported, so an unchanged pull can be answered from a memo, and
+   * the check rollup the repo-level GraphQL overlay returned, so the caller
+   * does not buy the combined status a second time.
+   */
+  getPull(
+    repo: GithubRepo,
+    number: number,
+    known?: { headSha?: string; checkRollup?: CheckRollup | null },
+  ): Promise<RestPull | null>;
   /** GitHub merge-queue PR numbers for this repo; omit to skip the overlay. */
   listMergeQueueNumbers?(repo: GithubRepo): Promise<number[]>;
   /**
@@ -178,6 +201,8 @@ export async function resolveThreadPullRequests(
   const canSpendRest =
     deps.skipRest !== true &&
     (deps.restRemaining === null || deps.restRemaining >= MIN_REST_REMAINING);
+  /** The budget at the top of the tick, and the pause as it stands right now. */
+  const mayStillSpend = (): boolean => canSpendRest && deps.restPaused?.() !== true;
   const pullsByRepo = new Map<string, RestPull[]>();
 
   // One `releases/latest` per repository per tick, memoised for the numbered
@@ -189,7 +214,7 @@ export async function resolveThreadPullRequests(
     const key = `${repo.owner}/${repo.repo}`;
     const memo = releaseByRepo.get(key);
     if (memo !== undefined) return memo;
-    if (!canSpendRest || deps.getLatestRelease === undefined) return null;
+    if (!mayStillSpend() || deps.getLatestRelease === undefined) return null;
     if (releaseByRepo.size >= MAX_REPOS_PER_TICK) return null;
     let release: LatestRelease | null = null;
     try {
@@ -213,6 +238,9 @@ export async function resolveThreadPullRequests(
       if (repos.length >= MAX_REPOS_PER_TICK) break;
     }
     for (const repo of repos) {
+      // A refusal on the previous repository has already latched a pause. The
+      // remaining repositories used to march straight through it.
+      if (!mayStillSpend()) break;
       const key = `${repo.owner}/${repo.repo}`;
       let open: RestPull[] = [];
       let closed: RestPull[] = [];
@@ -271,13 +299,17 @@ export async function resolveThreadPullRequests(
   const pullByNumber = new Map<string, RestPull | null>();
   let numberedLookups = 0;
 
-  const lookupNumbered = async (repo: GithubRepo, number: number): Promise<RestPull | null> => {
+  const lookupNumbered = async (
+    repo: GithubRepo,
+    number: number,
+    known?: { headSha?: string; checkRollup?: CheckRollup | null },
+  ): Promise<RestPull | null> => {
     const key = `${repo.owner}/${repo.repo}#${number}`;
     if (pullByNumber.has(key)) return pullByNumber.get(key) ?? null;
-    if (!canSpendRest || numberedLookups >= MAX_PR_LOOKUPS_PER_TICK) return null;
+    if (!mayStillSpend() || numberedLookups >= MAX_PR_LOOKUPS_PER_TICK) return null;
     numberedLookups += 1;
     try {
-      const fetched = await deps.getPull(repo, number);
+      const fetched = await deps.getPull(repo, number, known);
       // The numbered GET answers for repositories the list loop skipped, so
       // it carries the release overlay itself; without it a PR found only by
       // number would stay plain merged after its release shipped.
@@ -302,8 +334,16 @@ export async function resolveThreadPullRequests(
     // The list route leaves `mergeable_state` out, so a listed open PR carries
     // no attention at all and paints green. Buy the real state with a numbered
     // GET; the lookup cache and per-tick cap keep the cost bounded.
-    if (listed !== null && repo !== null && needsMergeStateLookup(listed)) {
-      const detailed = await lookupNumbered(repo, listed.number);
+    if (
+      listed !== null &&
+      repo !== null &&
+      needsMergeStateLookup(listed) &&
+      !rollupSettlesAttention(listed)
+    ) {
+      const detailed = await lookupNumbered(repo, listed.number, {
+        headSha: listed.headSha,
+        checkRollup: listed.checkRollup,
+      });
       if (detailed !== null) {
         listed = {
           ...detailed,

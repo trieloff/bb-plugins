@@ -348,6 +348,30 @@ export function needsMergeStateLookup(pull: RestPull): boolean {
   return pull.mergeableState === "unknown";
 }
 
+/**
+ * True when the repo-level check rollup has already settled the badge, so the
+ * numbered GET would only confirm what is on screen.
+ *
+ * `restPullAttention` reads the rollup before it reads `mergeable_state`: a
+ * pending rollup is `checks_pending` and a failing one is `checks_failed`, no
+ * matter what the numbered GET would have said. One `gh api graphql` per
+ * repository already carries that rollup for every open pull, so spending a
+ * second REST call per thread to re-derive the same answer is pure duplicate —
+ * and it is the bulk of what this plugin spent. GraphQL cannot replace the GET
+ * outright: `mergeable` and `mergeStateStatus` both come back `UNKNOWN` from a
+ * bulk `pullRequests` query, exactly as `mergeable_state` is absent from the
+ * REST list, because GitHub computes mergeability lazily per pull.
+ *
+ * The residue is narrow and self-correcting: a pull that both conflicts and
+ * has CI in flight reads `checks_pending` until CI settles, instead of
+ * `conflicts`. A rollup of `success` decides nothing on its own, so those
+ * pulls still buy the GET and still show ready-to-merge, blocked, or conflicts.
+ */
+export function rollupSettlesAttention(pull: RestPull): boolean {
+  const rollup = parseCheckRollupState(pull.checkRollup);
+  return rollup === "pending" || rollup === "failure" || rollup === "error";
+}
+
 const GITHUB_NAME = /^[A-Za-z0-9_.-]+$/u;
 
 export function mergeQueueQuery(owner: string, repo: string): string | null {
