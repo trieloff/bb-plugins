@@ -7,6 +7,7 @@
 // see `lib/warm-start.ts` for the browser-side copy of the same rows, which is
 // the one part it does not take.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 // Relative, not the `@/` alias the frontend uses: bb loads this file directly
 // as a path source, so nothing rewrites tsconfig paths for it.
@@ -27,7 +28,6 @@ import {
 } from "./lib/rest-budget.ts";
 import { planQuickSnooze } from "./lib/snooze-plan.ts";
 import { isWithinSettledWindow } from "./lib/settled-threads.ts";
-import { randomBytes } from "node:crypto";
 import {
   createGhRunner,
   githubGraphql,
@@ -75,7 +75,7 @@ import {
   type WebhookTunnelStatus,
 } from "./lib/github-webhook-tunnel.ts";
 
-const migrations = [
+const baseMigrations = [
   `CREATE TABLE IF NOT EXISTS thread_lifecycle (
      thread_id      TEXT PRIMARY KEY,
      settled_at     INTEGER,
@@ -86,10 +86,9 @@ const migrations = [
   // Without them, un-settling gives the parent back and leaves its children
   // archived for good.
   `ALTER TABLE thread_lifecycle ADD COLUMN archived_thread_ids TEXT`,
-  // Upstream now treats Settled as a direct view of bb's archive. Keep this at
-  // index 2 for databases first created by that version; the final copy below
-  // also migrates databases that previously used index 2 for the PR watch.
-  `DELETE FROM thread_lifecycle WHERE snoozed_until IS NULL`,
+];
+
+const forkMigrations = [
   `CREATE TABLE IF NOT EXISTS snoozed_pr_watch (
      thread_id       TEXT PRIMARY KEY,
      pr_url          TEXT NOT NULL,
@@ -145,11 +144,52 @@ const migrations = [
      observed_days   INTEGER NOT NULL,
      computed_at     INTEGER NOT NULL
    )`,
-  // The fork shipped the GitHub tables before upstream retired plugin-owned
-  // settle rows. Repeating this append-only migration lets both histories
-  // converge without reinterpreting an already-applied migration index.
-  `DELETE FROM thread_lifecycle WHERE snoozed_until IS NULL`,
 ];
+
+// Upstream made bb's archive authoritative for Settled after this fork had
+// already used migration index 2 for `snoozed_pr_watch`. Both histories are in
+// use, so each must keep its own immutable prefix and append the other's work.
+const retirePluginSettlesMigration = `DELETE FROM thread_lifecycle WHERE snoozed_until IS NULL`;
+const forkMigrationOrder = [...baseMigrations, ...forkMigrations, retirePluginSettlesMigration];
+const upstreamMigrationOrder = [...baseMigrations, retirePluginSettlesMigration, ...forkMigrations];
+
+function migrationHash(statement: string): string {
+  return createHash("sha256").update(statement).digest("hex");
+}
+
+export function migrationsForDatabase(db: {
+  prepare(sql: string): { get(...params: unknown[]): unknown };
+}): string[] {
+  try {
+    const migration = db.prepare(`SELECT statement_hash FROM _bb_migrations WHERE id = 2`).get() as
+      | { statement_hash: string | null }
+      | undefined;
+    if (migration === undefined) return forkMigrationOrder;
+
+    if (migration.statement_hash === migrationHash(retirePluginSettlesMigration)) {
+      return upstreamMigrationOrder;
+    }
+    if (migration.statement_hash === migrationHash(forkMigrations[0]!)) {
+      return forkMigrationOrder;
+    }
+
+    // Pre-hash bb databases recorded only migration ids. The table created by
+    // the fork's index 2 is enough to distinguish the two historical orders.
+    if (migration.statement_hash === null) {
+      const forkTable = db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'snoozed_pr_watch'`)
+        .get();
+      return forkTable === undefined ? upstreamMigrationOrder : forkMigrationOrder;
+    }
+
+    // Preserve bb's fail-closed mismatch check for any unknown history.
+    return forkMigrationOrder;
+  } catch {
+    // A fresh database has no migration table yet and starts on this fork's
+    // established order.
+    return forkMigrationOrder;
+  }
+}
 const PR_WATCH_RATE_LIMIT_KEY = "pr-watch:rate-limit";
 /** The index's own pause, separate from the watch's GraphQL budget. */
 const PR_INDEX_REST_BUDGET_KEY = "pr-index:rest-budget";
@@ -501,7 +541,7 @@ export default function plugin(bb: BbPluginApi) {
   });
 
   const db = bb.storage.database();
-  bb.storage.migrate(db, migrations);
+  bb.storage.migrate(db, migrationsForDatabase(db));
   const collapsedThreads = createCollapsedThreadsStore(bb.sdk.system.uiPreferences);
 
   const shutdown = new AbortController();
