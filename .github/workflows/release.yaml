@@ -1,4 +1,4 @@
-name: Release (npm)
+name: Release
 
 on:
   push:
@@ -7,104 +7,40 @@ on:
 permissions:
   contents: write
   id-token: write
+  issues: write
   pull-requests: write
 
-# A second main push can update version PRs. It must not interrupt an npm
-# publish between a scoped package and its unscoped mirror.
+# Every main push must wait its turn. It must not interrupt an npm publish
+# between a scoped package and its unscoped mirror, or replace a pending run.
 concurrency:
-  group: release-npm
+  group: release
   cancel-in-progress: false
+  queue: max
 
 jobs:
-  plan:
-    name: Plan (Packages)
-    runs-on: namespace-profile-linux-8vcpu-16gb-cached
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-24.04
     outputs:
-      packages: ${{ steps.plan.outputs.packages }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      paths_released: ${{ steps.release.outputs.paths_released }}
     steps:
-      - uses: namespacelabs/nscloud-checkout-action@v9
+      - name: Create package release PRs or GitHub Releases
+        id: release
+        uses: googleapis/release-please-action@v4
         with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup
-        with:
-          bb-cli: "false"
+          token: ${{ github.token }}
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
 
-      - name: Find packages with pending changesets
-        id: plan
-        run: bun scripts/package-release.ts plan
-
-  version:
-    name: Version (${{ matrix.package.id }})
-    needs: plan
-    if: needs.plan.outputs.packages != '[]'
-    runs-on: namespace-profile-linux-8vcpu-16gb-cached
-    timeout-minutes: 15
+  publish:
+    name: Publish (${{ matrix.path }})
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.plan.outputs.packages) }}
-    steps:
-      - uses: namespacelabs/nscloud-checkout-action@v9
-        with:
-          persist-credentials: true
-      - uses: ./.github/actions/setup
-        with:
-          bb-cli: "false"
-
-      - name: Version only this package
-        id: version
-        env:
-          PACKAGE_NAME: ${{ matrix.package.name }}
-        run: bun scripts/package-release.ts version "$PACKAGE_NAME"
-
-      - name: Push the package release branch
-        env:
-          BRANCH: ${{ steps.version.outputs.branch }}
-          COMMIT_MESSAGE: ${{ steps.version.outputs.commit_message }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --all
-          if git diff --cached --quiet; then
-            echo "The package version command produced no changes." >&2
-            exit 1
-          fi
-          git commit -m "$COMMIT_MESSAGE"
-          git push --force origin "HEAD:refs/heads/$BRANCH"
-
-      - name: Create or update the package release PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ steps.version.outputs.branch }}
-          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
-          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
-          PR_TITLE: ${{ steps.version.outputs.pr_title }}
-        run: |
-          release_pr_body="This PR releases \`${PACKAGE_NAME}@${PACKAGE_VERSION}\`. It consumes only this package's changesets. Merging it publishes the scoped package and its unscoped mirror, then creates the package GitHub Release."
-          release_pr="$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$release_pr" ]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}" -f title="$PR_TITLE" -f body="$release_pr_body" >/dev/null
-          else
-            gh pr create --base main --head "$BRANCH" --title "$PR_TITLE" --body "$release_pr_body"
-          fi
-
-  migrate:
-    name: Migrate (Legacy PR)
-    needs: [plan, version]
-    if: always() && needs.plan.result == 'success' && (needs.version.result == 'success' || needs.version.result == 'skipped')
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Close the legacy combined release PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          legacy_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head changeset-release/main --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$legacy_pr" ]; then
-            gh pr close --repo "$GITHUB_REPOSITORY" "$legacy_pr" --delete-branch --comment "Replaced by one release PR per package."
-          fi
-
-  publish:
-    name: Publish (Packages)
+        path: ${{ fromJSON(needs.release-please.outputs.paths_released) }}
     # npm trusted publishing accepts OIDC identities from GitHub-hosted runners,
     # not self-hosted Namespace runners.
     runs-on: ubuntu-24.04
@@ -122,7 +58,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
           no-cache: true
 
       # Trusted publishing requires npm >=11.5.1. Pin it so an image update
@@ -133,19 +69,40 @@ jobs:
           bun install --frozen-lockfile
           bun install --global "bb-app@$(node -p "require('./package.json').config.bbVersion")"
 
-      - name: Publish unpublished package versions
-        id: changesets
-        uses: changesets/action/publish@v2
-        with:
-          github-token: ${{ github.token }}
-          script: bun run release
-          create-github-releases: true
-          push-git-tags: true
+      - name: Build released package
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PATH: ${{ matrix.path }}
+        run: |
+          package_name="$(node -p "require('./$RELEASE_PATH/package.json').name")"
+          if [[ "$RELEASE_PATH" == plugins/* ]]; then
+            bun run build:framework
+          fi
+          bun run --filter "$package_name" build
 
-      # `scripts/publish.ts` rewrites each manifest for the unscoped mirror and
-      # must restore the original bytes, including after a failed publish.
-      - name: Verify manifests were restored
-        if: always()
-        run: git diff --exit-code -- 'plugins/*/package.json'
+      - name: Upload plugin source maps
+        if: ${{ contains(fromJSON('["plugins/amp", "plugins/dotfiles"]'), matrix.path) }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+        run: |
+          case "${{ matrix.path }}" in
+            plugins/amp) export SENTRY_PROJECT=bb-plugin-amp ;;
+            plugins/dotfiles) export SENTRY_PROJECT=bb-plugin-dotfiles ;;
+          esac
+          bun scripts/sentry-release.ts "${{ matrix.path }}"
+
+      - name: Publish package
+        working-directory: ${{ matrix.path }}
+        run: npm publish --access public
+
+      # Keep the established unscoped plugin package alongside the canonical
+      # scoped package. This checkout is disposable, so the temporary manifest
+      # rewrite needs no restoration machinery.
+      - name: Publish unscoped plugin package
+        if: ${{ startsWith(matrix.path, 'plugins/') }}
+        working-directory: ${{ matrix.path }}
+        env:
+          RELEASE_PATH: ${{ matrix.path }}
+        run: |
+          npm pkg set "name=bb-plugin-${RELEASE_PATH#plugins/}"
+          npm publish --access public

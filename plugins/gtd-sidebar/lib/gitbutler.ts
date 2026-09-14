@@ -54,10 +54,11 @@ export function parseGitButlerBranchSummary(stdout: string): GitButlerBranchSumm
     ),
   ];
 
-  if (branchNames.length === 0) return null;
+  const firstBranch = branchNames[0];
+  if (firstBranch === undefined) return null;
 
   return {
-    label: branchNames.length === 1 ? branchNames[0] : `${branchNames.length} GitButler branches`,
+    label: branchNames.length === 1 ? firstBranch : `${branchNames.length} GitButler branches`,
     branchNames,
   };
 }
@@ -75,12 +76,7 @@ export function resolveSidebarBranchLabel(
 const GITBUTLER_WORKSPACE_REF = "gitbutler/workspace";
 const GITBUTLER_COUNT_LABEL = /^\d+ GitButler branches$/u;
 
-/**
- * Names that can match a GitHub head ref. The sidebar display label for a
- * multi-branch GitButler workspace is a count, and bb's raw ref is
- * `gitbutler/workspace` — both of those fail PR matching. The host's parsed
- * virtual-branch names are the ones that can hit.
- */
+/** Branch names suitable for matching a GitHub head ref. */
 export function gitButlerBranchNamesFor(
   branchName: string | null,
   environmentId: string | null,
@@ -88,14 +84,24 @@ export function gitButlerBranchNamesFor(
 ): string[] {
   if (environmentId !== null) {
     const fromHost = gitButlerBranches.get(environmentId);
-    if (fromHost !== undefined && fromHost.length > 0) {
-      return [...fromHost];
-    }
+    if (fromHost !== undefined && fromHost.length > 0) return [...fromHost];
   }
   const raw = branchName?.trim() ?? "";
   if (raw.length === 0) return [];
   if (raw === GITBUTLER_WORKSPACE_REF || GITBUTLER_COUNT_LABEL.test(raw)) return [];
   return [raw];
+}
+
+export function gitButlerLabelsMatch(
+  current: ReadonlyMap<string, string>,
+  next: ReadonlyMap<string, string>,
+): boolean {
+  if (current === next) return true;
+  if (current.size !== next.size) return false;
+  for (const [environmentId, label] of next) {
+    if (current.get(environmentId) !== label) return false;
+  }
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

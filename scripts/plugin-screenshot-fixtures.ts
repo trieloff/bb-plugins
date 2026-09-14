@@ -24,6 +24,8 @@ import {
   SCREENSHOT_PREFLIGHT_PLUGINS,
   SCREENSHOT_ROOT,
   SCREENSHOT_THEME_ID,
+  SIDEBAR_PROVIDER,
+  SIDEBAR_PROVIDER_KEY,
   type ScreenshotBatch,
   type ScreenshotClip,
   type ScreenshotOptions,
@@ -34,8 +36,6 @@ const ROOT = SCREENSHOT_ROOT;
 const DPR = 3;
 const APP_VIEWPORT = { width: 1512, height: 1000 } as const;
 const FIXED_TIME = new Date("2026-08-13T12:00:00.000Z");
-const SIDEBAR_PROVIDER_KEY = "bb.sidebar.threadListProvider";
-const SIDEBAR_PROVIDER = "gtd-sidebar/inbox";
 /**
  * The title gtd-sidebar registers for that provider. The Appearance capture
  * exists to show it, so the run fails rather than shipping an image of some
@@ -63,7 +63,6 @@ const SIDEBAR_PLUGIN_ORDER = [
   { id: "automations/automations", label: "Automations" },
   { id: "agentation/annotations", label: "Agentation" },
   { id: "dotfiles/dotfiles", label: "Dotfiles" },
-  { id: "agent-proxy/agent-proxy", label: "Agent Proxy" },
 ] as const;
 const DEFAULT_PROJECT_ID = "proj_b25re9h8d7";
 const IDLE_THREAD_ID = "thr_fytu99znvt";
@@ -77,7 +76,7 @@ const EXECUTION_OPTIONS = {
       capabilities: {
         supportsArchive: false,
         supportsRename: false,
-        supportsServiceTier: true,
+        supportsServiceTier: false,
         supportsUserQuestion: false,
         supportsFork: false,
         supportedPermissionModes: ["accept-edits", "full"],
@@ -86,6 +85,12 @@ const EXECUTION_OPTIONS = {
       displayName: "Amp",
       id: "acp-amp",
       logoUrl: "/api/v1/system/providers/acp-amp/logo",
+      reasoningLevels: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+        { id: "ultra", label: "Ultra" },
+      ],
     },
   ],
   permissionCeiling: "full",
@@ -198,14 +203,6 @@ export interface FixtureSpec {
 }
 
 export const PLUGIN_SCREENSHOT_FIXTURES: readonly FixtureSpec[] = [
-  { id: "agent-proxy/home", plugin: "agent-proxy", filename: "home.png", width: 596, height: 500 },
-  {
-    id: "agent-proxy/agents",
-    plugin: "agent-proxy",
-    filename: "agents.png",
-    width: 596,
-    height: 500,
-  },
   {
     id: "agentation/capture",
     plugin: "agentation",
@@ -306,55 +303,6 @@ async function fulfillJson(route: Route, result: unknown): Promise<void> {
   });
 }
 
-async function mockAgentProxy(context: BrowserContext): Promise<void> {
-  const status = {
-    state: "running",
-    pid: 15_859,
-    port: 8317,
-    installedVersion: "v7.2.128@bd34ceca0420",
-    crashCount: 0,
-    lastExit: null,
-    endpoints: {
-      openai: "http://127.0.0.1:8317/v1",
-      anthropic: "http://127.0.0.1:8317",
-      gemini: "http://127.0.0.1:8317/v1beta",
-    },
-    service: {
-      manager: "launchd",
-      label: "com.bb.plugin.agent-proxy",
-      definitionPath: "/Users/example/Library/LaunchAgents/com.bb.plugin.agent-proxy.plist",
-      loaded: true,
-    },
-    source: { repository: "router-for-me/CLIProxyAPI", branch: "latest", error: null },
-    latest: { version: "v7.2.128@bd34ceca0420", checkedAt: FIXED_TIME.valueOf() },
-  };
-  const endpoints = {
-    ...status.endpoints,
-    apiKey: "sk-local-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  };
-  const agentsStatus = {
-    claude: {
-      applied: false,
-      canRestore: true,
-      settingsPath: "/Users/example/.claude/settings.json",
-      lastBackup:
-        "/Users/example/.bb/plugins/agent-proxy/backups/claude-settings.json.2026-08-11T08-00-00-000Z",
-    },
-    codex: {
-      codexHomePath: "/Users/example/.bb/plugins/agent-proxy/agents/codex-home",
-      generated: false,
-      envKey: "OPENAI_API_KEY",
-    },
-  };
-  await context.route("**/api/v1/plugins/agent-proxy/rpc/*", async (route) => {
-    const method = new URL(route.request().url()).pathname.split("/").at(-1);
-    if (method === "status") await fulfillRpc(route, status);
-    else if (method === "endpoints") await fulfillRpc(route, endpoints);
-    else if (method === "agentsStatus") await fulfillRpc(route, agentsStatus);
-    else await route.continue();
-  });
-}
-
 function annotationFixture() {
   return {
     id: "screenshot-copy-buttons",
@@ -371,19 +319,19 @@ function annotationFixture() {
     accessibility: "focusable",
     nearbyText: "Copy",
     nearbyElements: "div.min-w-0",
-    fullPath: "body.bb-app-shell > div#root > main > div[data-bb-plugin=agent-proxy] main button",
+    fullPath: "body.bb-app-shell > div#root > main > div.thread-message-list button",
     isMultiSelect: true,
     kind: "feedback",
     status: "pending",
     thread: [],
     sessionId: "ses_screenshot",
     bb: {
-      route: "/plugins/agent-proxy/agent-proxy",
-      pluginId: "agent-proxy",
-      surface: "navPanel",
-      threadId: null,
-      projectId: null,
-      routeLabel: "agent-proxy panel",
+      route: `/projects/${STACK_PROJECT_ID}/threads/${STACK_THREAD_ID}`,
+      pluginId: null,
+      surface: null,
+      threadId: STACK_THREAD_ID,
+      projectId: STACK_PROJECT_ID,
+      routeLabel: `thread ${STACK_THREAD_ID}`,
     },
     createdAt: FIXED_TIME.toISOString(),
     updatedAt: FIXED_TIME.toISOString(),
@@ -481,10 +429,10 @@ function stackFixture() {
     ],
     [
       28,
-      "docs(skills): clarify BB testing targets",
+      "docs(skills): narrow BB app testing scope",
       24,
       23,
-      ".dotfiles/.agents/skills/bb-plugin-testing/SKILL.md",
+      ".dotfiles/.agents/skills/bb-app-testing/SKILL.md",
     ],
     [
       29,
@@ -1041,7 +989,7 @@ async function mockGtdSidebar(context: BrowserContext): Promise<void> {
   const settledThreads = [
     settledSidebarThread("thr_capture_settled_1", "commit and sync", 32),
     settledSidebarThread("thr_capture_settled_2", "Investigate bb-testing app usage", 50),
-    settledSidebarThread("thr_capture_settled_3", "Fix agent proxy reset defaults", 16),
+    settledSidebarThread("thr_capture_settled_3", "Fix account pool reset defaults", 16),
     settledSidebarThread("thr_capture_settled_4", "Update theme color palette", 41),
   ];
   await context.route("**/api/v1/sidebar-bootstrap", (route) =>
@@ -1068,22 +1016,20 @@ async function mockGtdSidebar(context: BrowserContext): Promise<void> {
       });
     } else if (method === "listLifecycle") {
       await fulfillRpc(route, {
-        rows: inbox
-          .slice(1)
-          .map((thread, index) => ({
+        rows: [
+          ...inbox.slice(1).map((thread, index) => ({
             threadId: thread.id,
             settledAt: null,
             snoozedUntil: FIXED_TIME.valueOf() + 86_400_000,
             snoozedAt: FIXED_TIME.valueOf() - (index + 1) * 60_000,
-          }))
-          .concat(
-            settledThreads.map((thread) => ({
-              threadId: thread.id,
-              settledAt: thread.settledAt,
-              snoozedUntil: null,
-              snoozedAt: null,
-            })),
-          ),
+          })),
+          ...settledThreads.map((thread) => ({
+            threadId: thread.id,
+            settledAt: thread.settledAt,
+            snoozedUntil: null,
+            snoozedAt: null,
+          })),
+        ],
       });
     } else if (method === "listSettledThreads") {
       await fulfillRpc(route, { threads: settledThreads });
@@ -1091,21 +1037,21 @@ async function mockGtdSidebar(context: BrowserContext): Promise<void> {
   });
 }
 
-async function createContext(browser: Browser, viewport = APP_VIEWPORT): Promise<BrowserContext> {
+async function createContext(
+  browser: Browser,
+  viewport: { width: number; height: number } = APP_VIEWPORT,
+): Promise<BrowserContext> {
   const context = await createScreenshotContext(browser, {
     viewport,
     dpr: DPR,
   });
   await context.addInitScript(
-    ({ order, orderKey, provider, providerKey }) => {
-      localStorage.setItem(providerKey, JSON.stringify(provider));
+    ({ order, orderKey }) => {
       localStorage.setItem(orderKey, JSON.stringify(order));
     },
     {
       order: SIDEBAR_PLUGIN_ORDER.map(({ id }) => id),
       orderKey: SIDEBAR_PLUGIN_ORDER_KEY,
-      provider: SIDEBAR_PROVIDER,
-      providerKey: SIDEBAR_PROVIDER_KEY,
     },
   );
   await context.route("**/api/v1/system/execution-options?**", (route) =>
@@ -1160,20 +1106,6 @@ async function navigate(
   await ready.waitFor({ state: "visible" });
   await page.getByRole("combobox", { name: /^Project scope:/ }).waitFor({ state: "attached" });
   await settle(page, options);
-}
-
-async function ensureHostSidebarClosed(page: Page): Promise<void> {
-  const pluginSidebar = page.locator("aside").filter({ hasText: "Running · :8317" });
-  await pluginSidebar.waitFor({ state: "visible" });
-  const box = await pluginSidebar.boundingBox();
-  if (box && box.x > 1) {
-    await page.locator('button[data-sidebar="trigger"]').click({ force: true });
-    await page.waitForFunction(() => {
-      const sidebars = [...document.querySelectorAll("aside")];
-      const sidebar = sidebars.find((element) => element.textContent?.includes("Running · :8317"));
-      return sidebar?.getBoundingClientRect().x === 0;
-    });
-  }
 }
 
 async function ensureHostSidebarOpen(page: Page): Promise<void> {
@@ -1239,46 +1171,16 @@ function fixtureWriter(batch: ScreenshotBatch, outputDir: string | null): WriteC
     });
 }
 
-async function captureAgentProxy(browser: Browser, writeCapture: WriteCapture): Promise<void> {
-  const context = await createContext(browser, { width: 596, height: 500 });
-  try {
-    await mockAgentProxy(context);
-    await mockAgentation(context, {});
-    const page = await createScreenshotPage(context, { fixedTime: FIXED_TIME });
-    const home = specById.get("agent-proxy/home")!;
-    await navigate(
-      page,
-      "/plugins/agent-proxy/agent-proxy",
-      page.getByText("CLIProxyAPI core", { exact: true }),
-    );
-    await ensureHostSidebarClosed(page);
-    await settle(page);
-    await writeCapture(page, home);
-
-    const agents = specById.get("agent-proxy/agents")!;
-    await navigate(
-      page,
-      "/plugins/agent-proxy/agent-proxy/agents",
-      page.getByText("Anything OpenAI-compatible", { exact: true }),
-    );
-    await ensureHostSidebarClosed(page);
-    await settle(page);
-    await writeCapture(page, agents);
-  } finally {
-    await context.close();
-  }
-}
-
 async function captureAgentation(browser: Browser, writeCapture: WriteCapture): Promise<void> {
   const captureContext = await createContext(browser);
   try {
-    await mockAgentProxy(captureContext);
     await mockAgentation(captureContext, { toolbarAnnotation: true });
+    await mockThread(captureContext, THREAD_CAPTURE_FIXTURES.stack!);
     const page = await createScreenshotPage(captureContext, { fixedTime: FIXED_TIME });
     await navigate(
       page,
-      "/plugins/agent-proxy/agent-proxy",
-      page.getByText("Local endpoints", { exact: true }),
+      `/projects/${STACK_PROJECT_ID}/threads/${STACK_THREAD_ID}`,
+      page.getByText("Stack submitted", { exact: true }),
       { showAgentation: true },
     );
     await ensureHostSidebarOpen(page);
@@ -1551,7 +1453,6 @@ async function captureGtdSidebar(browser: Browser, writeCapture: WriteCapture): 
 }
 
 const captures: Record<string, (browser: Browser, writeCapture: WriteCapture) => Promise<void>> = {
-  "agent-proxy": captureAgentProxy,
   agentation: captureAgentation,
   amp: captureAmp,
   "gh-stack": captureGhStack,

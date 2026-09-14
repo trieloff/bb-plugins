@@ -4,7 +4,7 @@ import { z } from "zod";
 import { installDom } from "../../testing/testing.ts";
 import { defineMutation, defineQuery } from "../rpc.ts";
 
-// Tier-3 order (§8): DOM first, then the SDK test runtime, then any
+// Tier-3 order (§9): DOM first, then the SDK test runtime, then any
 // module that imports @get-bb/plugin-sdk/app — the app facade binds
 // globalThis.__bbPluginRuntime AT IMPORT TIME, so ./query/query.ts must be
 // imported dynamically after installTestPluginRuntime().
@@ -20,17 +20,19 @@ type ReactNode = import("react").ReactNode;
 const demoRPC = {
   overview: defineQuery({
     output: z.object({ total: z.number() }),
-    handler: () => ({ total: 0 }),
+    execute: () => ({ total: 0 }),
   }),
   readFile: defineQuery({
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
-    handler: (_context: unknown, input) => ({ content: input.path }),
+    execute(_ctx, { path }) {
+      return { content: path };
+    },
   }),
   saveFile: defineMutation({
     input: z.object({ path: z.string() }),
     output: z.object({ saved: z.boolean() }),
-    handler: () => ({ saved: true }),
+    execute: () => ({ saved: true }),
   }),
 };
 

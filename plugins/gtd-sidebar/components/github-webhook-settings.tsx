@@ -7,10 +7,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { gtdSidebarRpcContract } from "@/server";
 import { WEBHOOK_TUNNEL_CHANNEL } from "@/lib/channels";
-import {
-  WEBHOOK_TUNNEL_STATUS_OFF,
-  type WebhookTunnelStatus,
-} from "@/lib/webhook-tunnel-status";
+import { WEBHOOK_TUNNEL_STATUS_OFF, type WebhookTunnelStatus } from "@/lib/webhook-tunnel-status";
 
 function asStatus(value: unknown): WebhookTunnelStatus | null {
   if (typeof value !== "object" || value === null) return null;
@@ -40,7 +37,9 @@ function statusCopy(status: WebhookTunnelStatus, enabled: boolean): string {
         ? "The trycloudflare tunnel is up. GitHub hooks are registered against it; the address changes when bb restarts."
         : `GitHub can reach this bb at ${status.url}. The address changes when bb restarts.`;
     case "error":
-      return status.error ?? "The Cloudflare tunnel failed. Toggle the setting off and on to retry.";
+      return (
+        status.error ?? "The Cloudflare tunnel failed. Toggle the setting off and on to retry."
+      );
     default:
       return "GitHub webhooks via Cloudflare is on. Waiting for the tunnel to start.";
   }
@@ -55,14 +54,14 @@ export function GithubWebhookSettings() {
 
   useEffect(() => {
     let cancelled = false;
-    void rpc
-      .call("githubWebhookTunnelStatus", {})
-      .then((next) => {
+    void (async () => {
+      try {
+        const next = await rpc.call("githubWebhookTunnelStatus", {});
         if (!cancelled) setStatus(next);
-      })
-      .catch(() => {
+      } catch {
         // The host-rendered toggle still works if status rpc is down.
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };

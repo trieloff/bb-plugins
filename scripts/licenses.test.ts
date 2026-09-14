@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ALLOWED_LICENSES } from "./publish";
+import { ALLOWED_LICENSES } from "./package-check";
 import { workspacePlugins } from "./plugin-package";
 
 const ROOT = join(import.meta.dir, "..");
@@ -31,7 +31,9 @@ describe("licensing", () => {
     test(`${plugin.id} declares an allowed licence in its manifest`, () => {
       // A plugin may add terms on top of MIT when it embeds third-party code
       // under them, but only an expression the publish gate also accepts.
-      expect([...ALLOWED_LICENSES]).toContain(plugin.manifest.license);
+      const license = plugin.manifest.license;
+      if (license === undefined) throw new Error(`${plugin.id} has no package licence`);
+      expect([...ALLOWED_LICENSES]).toContain(license);
     });
 
     test(`${plugin.id} ships its LICENSE in the npm tarball`, () => {

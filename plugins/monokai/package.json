@@ -1,6 +1,6 @@
 {
   "name": "@smsunarto/bb-plugin-monokai",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A dark Monokai-family palette for bb: one meaning per hue, a single text ladder, and a matching terminal.",
   "keywords": [
     "bb",
@@ -26,8 +26,8 @@
   },
   "type": "module",
   "engines": {
-    "bb": ">=0.39.0 <1.0.0",
-    "bbPluginSdk": ">=0.4.8"
+    "bb": ">=0.40.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.21"
   },
   "bb": {
     "name": "bb Monokai",
@@ -40,6 +40,7 @@
       }
     },
     "server": "./server.ts",
+    "app": "./app.ts",
     "themes": [
       {
         "id": "bb-monokai",
@@ -56,16 +57,24 @@
   "files": [
     "dist/server.js",
     "dist/server.meta.json",
+    "dist/app.js",
+    "dist/app.meta.json",
+    "dist/app.css",
     "themes/",
     "assets/",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
-    "server.ts"
+    "server.ts",
+    "app.ts",
+    "app/",
+    "shared/"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.8",
+    "@get-bb/plugin-sdk": "0.4.84",
     "@storybook/react-vite": "10.5.7",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
@@ -81,7 +90,7 @@
     "zod": "^4.3.6"
   },
   "scripts": {
-    "dev": "bun ../../scripts/dev-plugin.ts",
+    "dev": "bun run generate:theme && \"${BB_CLI:?Run bun run dev from the repository root}\" plugin dev .",
     "storybook": "storybook dev --port 6006",
     "generate:theme": "bun run scripts/generate-theme.ts",
     "sync:code-theme": "bun run scripts/sync-code-theme.ts",

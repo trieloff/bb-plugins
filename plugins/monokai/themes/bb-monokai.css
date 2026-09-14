@@ -28,8 +28,7 @@
  *   1. The 13 `--trees-icon-*` file-icon swatches. They are declared on
  *      `:host`, so only the flat `--trees-file-icon-color` handle is reachable
  *      and all 48 language icons collapse to one colour.
- *   2. xterm construction options: font size 12, blinking cursor. Cursor colour
- *      is locked to `--foreground` and cursor accent to `--sidebar`; terminal
+ *   2. xterm cursor blinking. Cursor colour follows `--foreground`; terminal
  *      selection is silently clamped to 30% alpha, so a solid #404040 selection
  *      fill is not obtainable. Scrollbar and overview ruler derive from
  *      `--foreground` only.
@@ -47,25 +46,30 @@
 
 :root,
 .light {
-  /* Fonts are the only genuinely mode-independent values here.
+  /* Fonts are the only genuinely mode-independent values here. The frontend
+   * sets --bb-monokai-ui-font from the plugin setting. The fallback keeps the
+   * default deterministic before that setting arrives.
    * --font-mono covers code in the app document; --diffs-font-family covers the
    * code/diff views, which render in shadow DOM but only ever READ this name,
    * never declare it on :host, so the document value inherits in. */
+  --font-sans: var(--bb-monokai-ui-font, "Inter Variable", Inter, sans-serif);
   --font-mono: "Berkeley Mono", ui-monospace, Menlo, monospace;
   --diffs-font-family: "Berkeley Mono", ui-monospace, Menlo, monospace;
-}
-
-/* The terminal font is an xterm.js option hardcoded in the app, not a design
- * token. xterm uses its DOM renderer here, so an !important override works —
- * it must also cover the char-measure element so cell metrics stay in sync
- * with what is rendered. */
-.xterm .xterm-rows,
-.xterm .xterm-char-measure-element,
-.xterm .xterm-helper-textarea {
-  font-family: "BerkeleyMono Nerd Font Mono", "Berkeley Mono", monospace !important;
+  --diffs-header-font-family: var(--font-sans);
 }
 
 .dark {
+  --bb-monokai-active: 1;
+
+  /* Match Ghostty cursor-monokai and its 13-point font with 40% extra cell
+   * height. The patched font supplies Nerd Font glyphs to xterm. Our content
+   * script applies these options to both its DOM and WebGL renderers. */
+  --terminal-background: #141414;
+  --terminal-font-family: "BerkeleyMono Nerd Font Mono", "Berkeley Mono", monospace;
+  --terminal-font-size: 13;
+  --terminal-line-height: 1.4;
+  --bb-monokai-code-entity: #9ddd54;
+
   /* ---- Anchors --------------------------------------------------------
    * bb derives every surface, border and state fill as
    * color-mix(in oklch, var(--ink) N%, var(--canvas)). Left alone those land
@@ -94,7 +98,14 @@
                                            * and #1E1E1E; coarse on purpose */
   --surface-raised: #e3e3dd12; /* -> #262626 */
   --surface-raised-solid: #262626;
-  --surface-scrim: #141414eb; /* veil = darkest ground */
+  --surface-scrim: #181818eb; /* not a veil: bb paints the page
+                                           * header and floating control
+                                           * clusters with it, over the pane.
+                                           * On the content ground it flattens
+                                           * to #181818; on the chrome ground
+                                           * the header read one step darker
+                                           * than the safe-area strip above it
+                                           * on phones. */
 
   --agent-surface-background: #1e1e1e;
   --agent-surface-border: #e3e3dd11;
@@ -247,9 +258,9 @@
   --diffs-modified-color-override: #f1b467;
 
   --diffs-bg-context-override: #181818;
-  --diffs-bg-context-gutter-override: #141414;
-  --diffs-bg-buffer-override: #141414;
-  --diffs-bg-separator-override: #141414;
+  --diffs-bg-context-gutter-override: #181818;
+  --diffs-bg-buffer-override: #181818;
+  --diffs-bg-separator-override: #262626;
   --diffs-bg-addition-override: #3fa26622;
   --diffs-bg-addition-emphasis-override: #3fa26644;
   --diffs-bg-deletion-override: #e3467122;
@@ -257,16 +268,15 @@
   --diffs-bg-hover-override: #e3e3dd12;
   --diffs-bg-selection-override: #40404099;
 
-  /* The number gutters stay on the chrome ground rather than taking the row
-   * wash: role-coloured numbers only clear AA that way (#E34671 reaches 4.72:1
-   * on #141414 but only 3.98:1 on the deletion wash). */
-  --diffs-bg-addition-number-override: #141414;
-  --diffs-bg-deletion-number-override: #141414;
+  /* Number gutters share the neutral code ground, not the change-row wash.
+   * Feedback numbers retain their contrast against the content surface. */
+  --diffs-bg-addition-number-override: #181818;
+  --diffs-bg-deletion-number-override: #181818;
   --diffs-bg-selection-number-override: #262626;
-  --diffs-fg-number-override: #e3e3dd8c; /* 5.02:1 on the gutter */
-  --diffs-fg-number-addition-override: #3fa266; /* 5.76:1 */
-  --diffs-fg-number-deletion-override: #e34671; /* 4.72:1 */
-  --diffs-fg-conflict-marker-override: #f1b467; /* 9.69:1 */
+  --diffs-fg-number-override: #e3e3dd8c;
+  --diffs-fg-number-addition-override: #3fa266;
+  --diffs-fg-number-deletion-override: #e34671;
+  --diffs-fg-conflict-marker-override: #f1b467;
 
   /* ---- File tree (shadow DOM) -----------------------------------------
    * bb already sets background, foreground, border, hover, selection, focus
@@ -298,11 +308,30 @@
   --trees-file-icon-cyan: #e3e3dd8c;
 }
 
-/* Keep the project/navigation sidebar on the #141414 chrome ground. The
- * thread-side panel belongs to the #181818 editor plane instead; scope the
- * token at its panel root so terminal and left-sidebar consumers do not move. */
-.dark #thread-detail-secondary-panel {
-  --sidebar: #181818;
+/* The current BB terminal canvas sits inside this padded sidebar surface.
+ * Match its padding to xterm's background even when the side panel scopes
+ * --sidebar to the editor ground. */
+.dark .bg-sidebar:has(> div > .xterm) {
+  background-color: var(--terminal-background);
+}
+
+/* Both outer sidebars spend the solid pane-divider role. The active right
+ * resize handle owns that boundary, so suppress the panel border beneath it
+ * instead of painting the divider twice. */
+.dark [data-sidebar="panel"],
+.dark #thread-detail-secondary-panel > aside {
+  border-color: var(--sidebar-border);
+}
+
+.dark #thread-detail-secondary-panel-handle[data-panel-resize-handle-enabled="true"] {
+  --border-seam: var(--sidebar-border);
+}
+
+.dark
+  #thread-detail-secondary-panel-handle[data-panel-resize-handle-enabled="true"]
+  + #thread-detail-secondary-panel
+  > aside {
+  border-color: transparent;
 }
 
 /* Cursor Monokai leaves chat.request* unset. Its visible user request bubble is
@@ -341,11 +370,355 @@
   background-color: #1e1e1e;
 }
 
-/* Chat image thumbnails already have a clipped rounded silhouette. Remove the
- * selected-surface keyline so screenshots sit cleanly in the message bubble;
- * keep a transparent 1px edge to avoid changing their measured size. */
-.dark button.cursor-zoom-in:has(> img.object-cover) {
-  border-color: transparent;
+/* Keep the new-thread composer at the conversation footer's position. The
+ * desktop column fills its scroll viewport, with homepage sections above the
+ * composer. Compact home already anchors it at the bottom. Both use the same
+ * 0.5rem bottom inset, explicitly overriding bb's pb-4 utility. */
+.dark #root-compose-main-panel .\@container\/page > div:has(> [data-promptbox-shell]) {
+  min-height: 100%;
+  padding-bottom: 0.5rem;
+}
+
+.dark
+  #root-compose-main-panel
+  .\@container\/page
+  > div
+  > [data-promptbox-shell] {
+  order: 1;
+  margin-top: auto;
+}
+
+.dark [data-testid="root-compose-compact-composer"] > .bg-background,
+.dark .chat-prompt-box {
+  padding-bottom: 0.5rem;
+}
+
+/* bb opens the new-thread slash and mention menu below the composer, which was
+ * correct while that composer sat at the top of the column. Anchored at the
+ * footer it runs off the viewport, so open it upward like the follow-up
+ * composer's own menu. */
+.dark #root-compose-main-panel [data-promptbox-typeahead-menu] {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+/* New-thread geometry is the reference: an 80px editor and a 32px metadata
+ * row. Follow-up defaults shrink both, moving the text and controls after
+ * submission. Keep context/queue banners above this fixed composer geometry. */
+.dark
+  [data-follow-up-composer]
+  [data-promptbox]:not([data-promptbox-compact])
+  [data-promptbox-editor-scroll] {
+  min-height: 80px !important;
+  max-height: calc(70dvh - 3rem) !important;
+}
+
+/* Compact composers keep bb's native Project, Machine, and Permission mode
+ * controls. Fixed metadata geometry is a desktop alignment treatment. */
+@media (min-width: 768px) {
+  .dark [data-follow-up-composer-footer] {
+    min-height: 2rem;
+    max-height: 2rem;
+    padding-left: 0.875rem;
+  }
+
+  .dark [data-follow-up-composer-footer] [aria-label="Permission mode"] {
+    height: 2rem;
+  }
+
+  /* Keep metadata slots stable when editable pickers become read-only labels,
+   * and reserve the context meter's space before usage arrives. */
+  .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) {
+    --monokai-metadata-width: 8rem;
+    --monokai-project-width: calc(var(--monokai-metadata-width) * 0.9375);
+    --monokai-detail-width: calc(var(--monokai-metadata-width) * 1.03125);
+  }
+
+  .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) > :last-child {
+    position: relative;
+    padding-right: 2rem;
+  }
+
+  .dark [data-follow-up-composer-footer] [aria-label^="Context window "] {
+    position: absolute;
+    right: 0;
+    margin: 0;
+  }
+
+  .dark [data-follow-up-composer-footer] > :first-child > div {
+    display: grid;
+    grid-template-columns: var(--monokai-project-width) repeat(2, var(--monokai-detail-width)) auto;
+    width: 100%;
+    gap: 0.25rem;
+    padding-right: 0;
+  }
+
+  .dark [data-follow-up-composer-footer] [data-option-display],
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
+    font-weight: 500;
+    height: 2rem;
+  }
+
+  .dark [data-follow-up-composer-footer] [data-option-display] > span,
+  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]) {
+    gap: 0.25rem;
+  }
+
+  .dark [data-promptbox-shell] div > [data-promptbox-project-control],
+  .dark [data-promptbox-shell] [data-promptbox-project-slot],
+  .dark [data-follow-up-composer-footer] [data-option-display]:has([data-icon="Folder"]) {
+    width: var(--monokai-project-width);
+    max-width: var(--monokai-project-width);
+    flex: 0 0 var(--monokai-project-width);
+  }
+
+  .dark [data-promptbox-shell] [aria-label="Environment"],
+  .dark [data-promptbox-shell] [aria-label="Machine"],
+  .dark [data-promptbox-shell] [aria-label="Branch"],
+  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]),
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
+    width: var(--monokai-detail-width);
+    max-width: var(--monokai-detail-width);
+    flex: 0 0 var(--monokai-detail-width);
+  }
+
+  .dark [data-promptbox-shell] :is([data-promptbox-project-control], [aria-label="Environment"], [aria-label="Machine"], [aria-label="Branch"], [aria-label="Permission mode"]) {
+    position: relative;
+    padding-left: 0.5rem;
+    padding-right: 1.75rem;
+  }
+
+  .dark [data-promptbox-shell] :is([data-promptbox-project-control], [aria-label="Environment"], [aria-label="Machine"], [aria-label="Branch"], [aria-label="Permission mode"]) > [data-icon="ChevronDown"] {
+    position: absolute;
+    right: 0.5rem;
+    width: 1rem;
+  }
+
+  .dark [data-promptbox-shell] [data-promptbox-project-slot] > [aria-label="Don't work in a project"] {
+    left: 0.375rem;
+  }
+
+  /* Unlike the pickers these chips carry no chevron, so the padding stays
+   * symmetric — a right-side reserve would offset the centered label group
+   * from the column's middle. */
+  .dark [data-follow-up-composer-footer] [data-option-display]:has([data-icon="Folder"]),
+  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]),
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  .dark [data-follow-up-composer-footer] [data-option-display]:has([data-icon="Folder"]) {
+    grid-column: 1;
+  }
+
+  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]) {
+    grid-column: 2;
+  }
+
+  /* Outside a project, the environment is the whole thread location summary.
+   * Remove the empty project and checkout columns instead of leaving the machine
+   * label stranded in the second fixed slot. */
+  .dark
+    [data-follow-up-composer-footer]
+    > :first-child
+    > div:not(:has(> [data-option-display], > [data-promptbox-hide-branch-compact]))
+    > div:has(> [data-option-display]) {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
+  .dark
+    [data-follow-up-composer-footer]
+    > :first-child
+    > div:not(:has(> [data-option-display], > [data-promptbox-hide-branch-compact]))
+    > div
+    > [data-option-display] {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
+    grid-column: 3;
+    line-height: 1.25;
+  }
+
+  /* The "new thread in this environment" control lands in the grid's `auto`
+   * track, which the default justify-content stretches to the row's leftover
+   * width; the button's default justify-self then fills that track. Pin it to
+   * the start edge at natural icon-button size, beside the checkout chip. The
+   * -ml-1 utility is the stable hook — bb renamed the control's aria-label
+   * across releases while keeping the negative margin. */
+  .dark [data-follow-up-composer-footer] button.-ml-1 {
+    justify-self: start;
+  }
+
+  /* Composer environment controls render on two surfaces and share one
+   * treatment — adjust them together, not per surface:
+   *   - [data-follow-up-composer-footer]: read-only chips on thread pages.
+   *     The footer itself nests inside [data-promptbox-shell], so the union
+   *     below is what keeps the two surfaces in one selector list.
+   *   - [data-promptbox-shell]: the new-thread composer's picker row
+   *     ([data-promptbox-project-control], Environment, Machine, Branch).
+   *
+   * The icon stays pinned to the left edge while the label centers in the
+   * space to its right. OptionDisplay and the pickers wrap icon and label in
+   * a content-sized inner span, and bb 0.43 renders the footer's machine
+   * chip as a w-fit grid item, so those boxes must fill before the label has
+   * room to center. A truncated label's auto margins collapse, keeping the
+   * clip start-aligned. */
+  .dark
+    :is([data-follow-up-composer-footer], [data-promptbox-shell])
+    :is(
+      [data-option-display],
+      [data-promptbox-project-control],
+      [aria-label="Environment"],
+      [aria-label="Machine"],
+      [aria-label="Branch"]
+    )
+    :is(span, div):has(> :is([data-promptbox-full-label], [data-promptbox-compact-label], span.truncate)),
+  .dark
+    [data-follow-up-composer-footer]
+    div:has(> [aria-label^="Environment type:"])
+    > [data-option-display] {
+    flex: 1 1 auto;
+  }
+
+  .dark [data-follow-up-composer-footer] > :first-child > div > span:has(> [data-icon]) {
+    width: 100%;
+  }
+
+  .dark
+    :is([data-follow-up-composer-footer], [data-promptbox-shell])
+    :is(
+      [data-option-display],
+      [data-promptbox-project-control],
+      [aria-label="Environment"],
+      [aria-label="Machine"],
+      [aria-label="Branch"],
+      [data-promptbox-hide-branch-compact]
+    )
+    :is([data-promptbox-full-label], [data-promptbox-compact-label], span.truncate),
+  .dark
+    [data-follow-up-composer-footer]
+    > :first-child
+    > div
+    > span:has(> [data-icon])
+    > span:last-of-type {
+    margin-inline: auto;
+  }
+
+  /* The checkout label fades at the end of its lane instead of ellipsizing.
+   * The mask sits on the label element itself, so only the text dissolves —
+   * the icon, chevron, and chip background stay opaque. The label fills its
+   * lane and centers its text inside, which keeps the vru centering for
+   * short labels while anchoring the fade zone to the lane's right edge;
+   * `safe center` (and Chrome's start-aligned overflow for inline text)
+   * keeps the label's beginning visible when it clips. On the picker the
+   * lane ends at the chevron reserve, on the footer chip at the padding. */
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] > span:last-of-type,
+  .dark [data-promptbox-shell] [aria-label="Branch"] > span.contents > span.truncate,
+  .dark [data-promptbox-shell] [aria-label="Branch"] > span.truncate {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+    justify-content: safe center;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent 100%);
+  }
+
+  /* Clip must reach every truncating descendant, not only the outer label:
+   * the picker's parenthetical label nests a second .truncate for the branch
+   * name (BranchPicker's `Current (<name>)` shape), and that inner span is
+   * what actually ellipsizes. */
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] span.truncate,
+  .dark [data-promptbox-shell] [aria-label="Branch"] span.truncate {
+    text-overflow: clip;
+  }
+
+  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] > svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  @container promptbox-shell (max-width: 40rem) {
+    .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) {
+      --monokai-metadata-width: 6.5rem;
+    }
+  }
+
+  @container promptbox-shell (max-width: 30rem) {
+    .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) {
+      --monokai-metadata-width: clamp(4.5rem, 28cqw, 6.5rem);
+      --monokai-project-width: var(--monokai-metadata-width);
+      --monokai-detail-width: var(--monokai-metadata-width);
+    }
+
+    .dark [data-promptbox-shell] [aria-label="Branch"],
+    .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
+      display: none;
+    }
+  }
+}
+
+/* Narrow-pane rules otherwise hide the metadata row even while expanded. */
+.dark [data-follow-up-composer-expanded] {
+  --follow-up-composer-container-compact: false;
+}
+
+/* Retain the native one-line mode when the user collapses a narrow pane. */
+@container follow-up-composer style(--follow-up-composer-container-compact: true) {
+  .dark
+    [data-follow-up-composer]:not([data-follow-up-composer-expanded])
+    [data-follow-up-composer-footer] {
+    min-height: 0;
+    max-height: 0;
+  }
+
+  .dark
+    [data-follow-up-composer]:not([data-follow-up-composer-expanded])
+    [data-promptbox]:not([data-promptbox-voice-active])
+    [data-promptbox-editor-scroll] {
+    min-height: 3rem !important;
+    max-height: 3rem !important;
+  }
+}
+
+/* bb gives empty composer placeholders font-light (300). SF Pro loses too much
+ * stroke weight at phone scale, so mobile placeholders use the regular text
+ * weight. Typed composer text already uses 400 and needs no override. */
+@media (max-width: 767px) {
+  .dark
+    [data-promptbox]
+    [data-promptbox-editor-content]
+    .ProseMirror
+    p.is-editor-empty:first-child::before {
+    font-weight: 400;
+  }
+}
+
+/* Inline images must read as pictures, not as part of the panel. Most of them
+ * are dark screenshots on the #181818 ground, so without an edge they merge
+ * into the message. Every image surface gets the theme's standard --border
+ * keyline: markdown images (which bb ships frameless), attachment thumbnails
+ * in both bubbles, and timeline row previews. Markdown images also get bb's
+ * rounded-md radius, a border-box so max-w-full holds, and more block margin
+ * than bb's my-2 so the frame is not packed against the surrounding prose.
+ * vertical-align drops the inline baseline gap under the frame. */
+.dark img.cursor-zoom-in,
+.dark button.cursor-zoom-in:has(> img) {
+  border: 1px solid var(--border);
+}
+
+.dark img.cursor-zoom-in {
+  border-radius: 0.375rem; /* = rounded-md; bb defines no --radius token */
+  box-sizing: border-box;
+  margin-block: 1.25rem;
+  vertical-align: middle;
 }
 
 /* Keep button fills on the neutral ground ramp without changing --primary,
@@ -356,18 +729,25 @@
   color: var(--foreground);
 }
 
-.dark button.bg-primary:hover,
-.dark button.bg-foreground:hover {
-  background-color: #404040;
-}
-
 .dark button.bg-secondary {
   background-color: #1e1e1e;
   border: 1px solid var(--input);
 }
 
-.dark button.bg-secondary:hover {
-  background-color: #262626;
+/* Hover fills only where a pointer can hover. bb's own `hover:` utilities sit
+ * inside Tailwind's `@media (hover: hover)`, but a bare `:hover` rule also
+ * matches the element a finger last tapped, so on a phone the raised fill would
+ * stay stuck on the button until the next tap lands somewhere else. Every
+ * theme hover rule lives under this query for the same reason. */
+@media (hover: hover) {
+  .dark button.bg-primary:hover,
+  .dark button.bg-foreground:hover {
+    background-color: #404040;
+  }
+
+  .dark button.bg-secondary:hover {
+    background-color: #262626;
+  }
 }
 
 /* Tooltips use the same bg-primary utility as action buttons upstream, but
@@ -377,6 +757,14 @@
   background-color: #1e1e1e;
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--foreground);
+}
+
+/* The model picker's sticky group headings ("Model", "Reasoning") paint
+ * bg-background to cover rows scrolling under them, but they sit on a
+ * bg-popover surface, so the header strip reads one ramp step lighter than
+ * the menu around it. Give them the popover ground instead. */
+.dark .bg-popover .sticky.bg-background {
+  background-color: var(--popover);
 }
 
 /* Composer stop button.
@@ -412,8 +800,10 @@
                              * `fill-current`, so it tracks this. */
 }
 
-.dark [data-promptbox-submit-action][aria-label="Stop run"]:hover {
-  background-color: color-mix(in oklab, var(--destructive) 90%, transparent);
+@media (hover: hover) {
+  .dark [data-promptbox-submit-action][aria-label="Stop run"]:hover {
+    background-color: color-mix(in oklab, var(--destructive) 90%, transparent);
+  }
 }
 
 /* Lightweight code highlighter (sugar-high) used for inline code and code
@@ -423,7 +813,13 @@
  * tie on specificity loses the moment a thread is opened. Repeating the class
  * outranks it without reaching for `!important`.
  * Measured on the recessed well #1E1E1E. */
+.dark .bg-surface-recessed:has(> .bb-code-highlight),
+.dark code.bg-muted\/70 {
+  background-color: #181818;
+}
+
 .dark .bb-code-highlight.bb-code-highlight {
+  background-color: #181818;
   --sh-space: inherit;
   --sh-identifier: #e3e3dd; /* everything else — 12.79:1 */
   --sh-property: #e3e3dd; /* properties are white by contract */
@@ -435,14 +831,58 @@
   --sh-class: #51dae9; /* compile-time structure — 9.85:1 */
   --sh-entity: #9ddd54; /* callables — 10.13:1 */
   --sh-jsxliterals: #fe5d86; /* JSX tags are machinery, same as keywords */
+  /* The pre inherits the prose `leading-relaxed` strut from the thread
+   * container, while sugar-high renders each line as an inline-block. The
+   * strut wins the line box, so every row carries prose leading. Remove the
+   * strut and let the code child below own each row at code leading. */
+  line-height: 0;
 }
 
-/* Diagram fences use adjacent rows of box-drawing glyphs. They describe
- * structure rather than source code, but sugar-high still classifies capitalized
- * labels and connectors as code tokens. Collapse every token to the text color
- * so the diagram stays legible instead of acquiring arbitrary syntax hues.
- * Remove the pre's strut and let the code child own each row. */
-.dark .bb-code-highlight.bb-code-highlight:has(> .language-diagram) {
+.dark .bb-code-highlight.bb-code-highlight > code {
+  line-height: 1.5;
+}
+
+/* Diagram fences use adjacent rows of box-drawing glyphs. Berkeley Mono draws
+ * those glyphs 1.2em tall, so the rows must sit at or under 1.3 leading or the
+ * vertical connectors split (measured in bb at 12px: 1.3 joins, 1.35 gaps).
+ * Source code keeps the 1.5 above; only these fences pay the tighter leading.
+ * `patch` is a diagram diff: bb keeps the raw fence name on the element while
+ * sugar-high treats `patch` as an alias of `diff`, so the rows keep their
+ * add/remove shading. Plain `diff` fences stay at 1.5 for source code. */
+.dark .bb-code-highlight.bb-code-highlight > :is(.language-diagram, .language-patch) {
+  line-height: 1.3;
+}
+
+/* bb raises thread code from 12px to 14px on compact coarse-pointer layouts,
+ * and at 14px the 1.3 leading opens the connectors again (measured on an
+ * iPhone 14 viewport: 1.3 and 1.25 gap, 1.2 joins). The glyphs are 1.2em tall,
+ * so 1.2 joins at any size; only the phone case pays the tighter leading. */
+@media (max-width: 767px) and (pointer: coarse) {
+  .dark .bb-code-highlight.bb-code-highlight > :is(.language-diagram, .language-patch) {
+    line-height: 1.2;
+  }
+}
+
+/* iOS Safari zooms the page into any focused field that renders text under
+ * 16px, and bb's viewport meta sets no maximum-scale to stop it. bb keeps the
+ * composer editor and the thread search field at 13px, so every field a phone
+ * user types into sits at 16px on compact coarse-pointer layouts. The composer
+ * placeholder inherits the size through its ::before. Checkbox, radio, range,
+ * and file inputs draw no text and keep their native size. */
+@media (max-width: 767px) and (pointer: coarse) {
+  .dark [data-promptbox] [data-promptbox-editor-content] .ProseMirror,
+  .dark input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]),
+  .dark textarea,
+  .dark select {
+    font-size: 16px;
+  }
+}
+
+/* Diagram fences describe structure rather than source code, but sugar-high
+ * still classifies capitalized labels and connectors as code tokens. Collapse
+ * every token to the text color so the diagram stays legible instead of
+ * acquiring arbitrary syntax hues. */
+.dark .bb-code-highlight.bb-code-highlight:has(> :is(.language-diagram, .language-patch)) {
   --sh-identifier: var(--foreground);
   --sh-property: var(--foreground);
   --sh-sign: var(--foreground);
@@ -452,11 +892,6 @@
   --sh-class: var(--foreground);
   --sh-entity: var(--foreground);
   --sh-jsxliterals: var(--foreground);
-  line-height: 0;
-}
-
-.dark .bb-code-highlight > .language-diagram {
-  line-height: 1.25;
 }
 
 /* Code and diff surface ground. `--diffs-bg` and `--diffs-fg` have no
@@ -468,4 +903,255 @@
 diffs-container {
   --diffs-dark-bg: #181818;
   --diffs-dark: #e3e3dd;
+}
+
+/* BB owns the GitDiffCardHeader outside Pierre's shadow root. The wrapper
+ * has no dedicated data attribute in BB 0.42.1: match its direct collapse
+ * control structure, including collapsed cards, within the Git diff panel.
+ * Smart embeds expose their own header class. Bodies keep the content ground. */
+.dark .smart-embed-header,
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .bg-background:has(> .flex > span > button[aria-expanded]) {
+  background-color: #1e1e1e;
+}
+
+.dark .smart-embed-header,
+.dark .smart-embed-path,
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .bg-background:has(> .flex > span > button[aria-expanded])
+  .font-mono {
+  font-family: var(--font-sans);
+}
+
+/* The canvas plugin renders `.canvas-mdx` prose on the Cursor theme's rendered
+ * Markdown contract. Its stylesheet exposes these hooks so a theme can supply
+ * the accent hues; without them it falls back to bb's neutral tokens. */
+.dark .canvas-prose {
+  --canvas-prose-heading: #e3e3dd;
+  --canvas-prose-strong: #51dae9;
+  --canvas-prose-link: #51dae9;
+  --canvas-prose-link-hover: #75f0ff;
+  --canvas-prose-marker: #7c7865;
+  --canvas-prose-quote-rule: #fe5d86;
+  --canvas-prose-rule: #e3e3dd11;
+  --canvas-prose-code-well: #262626;
+}
+
+/* bb's notification history is a first-class themed surface, separate from
+ * the native browser and operating-system banners delivered by the push
+ * notification plugin. The host owns responsive placement: a popover on
+ * desktop and its persistent drawer on compact layouts. */
+.dark [data-testid="notification-center"] {
+  font-family: var(--font-sans);
+}
+
+.dark [data-testid="notification-center"] > div:first-child {
+  border-color: var(--border-seam);
+}
+
+.dark [data-testid="notification-row"] {
+  transition: background-color 120ms ease-out;
+}
+
+.dark [data-testid="notification-row"][data-focused="true"] {
+  background: var(--surface-selected);
+}
+
+@media (hover: hover) {
+  .dark [data-testid="notification-row"]:hover {
+    background: var(--state-hover);
+  }
+
+  .dark [data-testid="notification-center"] button:hover {
+    background: var(--state-hover);
+    color: var(--foreground);
+  }
+}
+
+.dark [data-testid="notification-center"] button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (min-width: 768px) {
+  .dark [data-testid="notification-center"] {
+    overflow: hidden;
+    border-color: var(--border);
+    border-radius: 16px;
+    background: var(--popover);
+    box-shadow:
+      0 0 0 1px #e3e3dd1e,
+      0 4px 12px -4px #141414eb;
+  }
+}
+
+/* Sonner owns toast state and actions. On desktop the theme changes
+ * presentation only. Compact mobile layouts keep bb's native notification
+ * geometry. The last matching anchor is the focused conversation, with the
+ * app's main area covering compose/settings routes. Viewport coordinates are
+ * the CSS fallback when an anchor is unavailable. */
+@media (min-width: 768px) {
+  .dark [data-testid="app-layout-content-shell"] > main,
+  .dark [data-testid="app-layout-content-shell"] [data-thread-window] {
+    anchor-name: --bb-monokai-conversation;
+  }
+
+.dark [data-split-pane-id][data-focused="false"] [data-thread-window] {
+  anchor-name: none;
+}
+
+.dark [data-sonner-toaster] {
+  position-anchor: --bb-monokai-conversation;
+  top: calc(env(safe-area-inset-top) + var(--bb-app-chrome-row-height, 48px) + 16px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: 50% !important;
+  width: min(384px, calc(100vw - 32px)) !important;
+  transform: translateX(-50%) !important;
+  font-family: var(--font-sans);
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+}
+
+@supports (position-anchor: --bb-monokai-conversation) {
+  .dark [data-sonner-toaster] {
+    top: max(
+      calc(env(safe-area-inset-top) + var(--bb-app-chrome-row-height, 48px) + 16px),
+      calc(anchor(top, 0px) + 16px)
+    ) !important;
+    left: anchor(center, 50%) !important;
+    width: min(384px, calc(anchor-size(width, 100vw) - 32px)) !important;
+  }
+}
+
+/* bb still declares bottom-position data attributes. Reverse Sonner's stack
+ * direction without replacing its animation, dismissal, or button handlers. */
+.dark [data-sonner-toast] {
+  top: 0;
+  bottom: auto;
+  width: 100%;
+  --lift: 1;
+  --lift-amount: var(--gap);
+}
+
+.dark [data-sonner-toast][data-mounted="false"] {
+  --y: translateY(-100%);
+}
+
+.dark [data-sonner-toast].bb-app-toast > div {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--popover);
+  border-color: var(--border);
+  color: var(--popover-foreground);
+  box-shadow:
+    0 0 0 1px #e3e3dd1e,
+    0 4px 12px -4px #141414eb;
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div {
+  align-items: center;
+  gap: 10px;
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div > div:first-child {
+  margin-top: 0;
+  color: var(--muted-foreground);
+}
+
+/* Keep actions beside the copy and the dismiss control inside the card.
+ * These structural selectors also cover bb's plain description container. */
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-columns: auto;
+  grid-auto-flow: column;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:first-child {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+/* A title without a description shares the actions' full height. */
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2):has(> div:nth-child(2) > div) > div:first-child {
+  grid-row: 1;
+}
+
+.dark [data-sonner-toast].bb-app-toast svg {
+  margin: 0;
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:first-child > div {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) {
+  display: contents;
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > div {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+
+.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > button {
+  grid-row: 1 / span 2;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > button:hover {
+    background: var(--state-active);
+  }
+}
+
+.dark [data-sonner-toast].bb-app-toast button[aria-label="Dismiss notification"] {
+  position: static;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  transform: none;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+@media (hover: hover) {
+  .dark [data-sonner-toast].bb-app-toast button[aria-label="Dismiss notification"]:hover {
+    background: var(--state-hover);
+    color: var(--popover-foreground);
+  }
+}
+
+.dark [data-sonner-toast].bb-app-toast button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 }

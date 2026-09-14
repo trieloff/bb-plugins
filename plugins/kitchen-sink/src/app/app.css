@@ -1,0 +1,324 @@
+.smart-embed {
+  --smart-embed-target-width: calc(100ch + 8rem + 4px);
+  box-sizing: border-box;
+  width: min(var(--smart-embed-target-width), 100%);
+  max-width: 100%;
+  margin: 0.75rem auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  color: var(--foreground);
+  font-family: var(
+    --diffs-font-family,
+    "SF Mono",
+    Monaco,
+    Consolas,
+    "Ubuntu Mono",
+    "Liberation Mono",
+    "Courier New",
+    monospace
+  );
+  font-size: var(--diffs-font-size, 13px);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+.smart-embed-header {
+  display: flex;
+  min-height: 2.5rem;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 55%, transparent);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
+.smart-embed-open,
+.smart-embed-header-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.smart-embed-open {
+  cursor: pointer;
+}
+
+.smart-embed-open:hover {
+  background: color-mix(in oklch, var(--accent) 70%, transparent);
+}
+
+.smart-embed-open:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.smart-embed-kind,
+.smart-embed-warning,
+.smart-embed-powered {
+  flex: 0 0 auto;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1rem;
+}
+
+.smart-embed-kind {
+  color: var(--foreground);
+}
+
+.smart-embed-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smart-embed-warning {
+  color: var(--destructive);
+}
+
+.smart-embed-workspace {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1rem;
+}
+
+.smart-embed-powered {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.smart-embed-body {
+  max-height: min(32rem, 65vh);
+  overflow: auto;
+  background: var(--background);
+}
+
+/* A stable viewport contains both lazy loading stages and later refreshes. */
+.smart-embed-fixed .smart-embed-body {
+  height: min(20rem, 55vh);
+  max-height: none;
+  scrollbar-gutter: stable;
+}
+
+.smart-embed-renderer {
+  display: block;
+  min-width: 100%;
+}
+
+.smart-embed-diff {
+  border-radius: 0.625rem;
+  background: var(--background);
+}
+
+.smart-diff-header {
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem 0 0.6875rem;
+  border-bottom: 0;
+  background: #1e1e1e;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.smart-diff-toggle {
+  display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.smart-diff-toggle:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.smart-diff-toggle svg {
+  width: 0.625rem;
+  height: 1rem;
+  transition: transform 150ms;
+}
+
+.smart-diff-toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+.smart-diff-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.smart-diff-open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.smart-diff-open:hover {
+  text-decoration: underline;
+}
+
+.smart-diff-toggle:focus-visible,
+.smart-diff-open:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.smart-diff-proposed {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+
+.smart-diff-stats {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+  margin: 0 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.smart-diff-stats dd {
+  margin: 0;
+}
+
+.smart-diff-count-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.smart-diff-deletions {
+  color: var(--diff-removed, var(--destructive));
+}
+
+.smart-diff-additions {
+  color: var(--diff-added, var(--success, var(--primary)));
+}
+
+.smart-embed-notice {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  font-size: 0.8125rem;
+}
+
+.smart-embed-notice-muted {
+  color: var(--muted-foreground);
+}
+
+.smart-embed-notice-error {
+  border-color: color-mix(in oklch, var(--destructive) 45%, var(--border));
+  color: var(--destructive);
+}
+
+.inline-vis-loading {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.75rem;
+}
+
+.inline-vis-skeleton {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0.375rem;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--muted) 75%, transparent) 25%,
+    color-mix(in oklch, var(--accent) 80%, transparent) 50%,
+    color-mix(in oklch, var(--muted) 75%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: inline-vis-loading 1.5s ease-in-out infinite;
+}
+
+.inline-vis-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--background);
+}
+
+.inline-vis-markdown {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--background);
+}
+
+.inline-vis-alert {
+  overflow-wrap: anywhere;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.inline-vis-alert-error {
+  border-color: color-mix(in oklch, var(--destructive) 40%, transparent);
+  background: color-mix(in oklch, var(--destructive) 10%, transparent);
+  color: var(--destructive);
+}
+
+@keyframes inline-vis-loading {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smart-diff-toggle svg {
+    transition: none;
+  }
+  .inline-vis-skeleton {
+    animation: none;
+  }
+}

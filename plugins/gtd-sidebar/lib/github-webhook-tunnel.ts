@@ -1,16 +1,10 @@
-import {
-  dedicatedGithubWebhookUrl,
-  shouldStartCloudflareTunnel,
-} from "./github-webhook.ts";
+import { dedicatedGithubWebhookUrl, shouldStartCloudflareTunnel } from "./github-webhook.ts";
 import {
   resolveCloudflaredPath,
   startTrycloudflareTunnel,
   type TrycloudflareTunnel,
 } from "./cloudflared.ts";
-import {
-  startWebhookListener,
-  type WebhookRequestHandler,
-} from "./webhook-listener.ts";
+import { startWebhookListener, type WebhookRequestHandler } from "./webhook-listener.ts";
 import type { WebhookTunnelStatus } from "./webhook-tunnel-status.ts";
 
 export type { WebhookTunnelStatus, WebhookTunnelState } from "./webhook-tunnel-status.ts";
@@ -167,11 +161,7 @@ export async function maintainCloudflareWebhookTunnel(args: {
           tunnel.wait.then((code) => ({ kind: "exit" as const, code })),
           waitUntilAborted(run.signal).then(() => ({ kind: "abort" as const })),
         ]);
-        if (
-          stopped.kind === "exit" &&
-          !run.signal.aborted &&
-          !args.signal.aborted
-        ) {
+        if (stopped.kind === "exit" && !run.signal.aborted && !args.signal.aborted) {
           const message = `cloudflared exited ${stopped.code}`;
           args.log.warn(`github webhook tunnel: ${message}`);
           args.onStatus({

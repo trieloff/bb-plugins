@@ -11,6 +11,10 @@ import { z } from "zod";
 // Relative, not the `@/` alias the frontend uses: bb loads this file directly
 // as a path source, so nothing rewrites tsconfig paths for it.
 import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
+import { gtdSidebarHostContract } from "./lib/host-contract.ts";
+import { createCollapsedThreadsStore } from "./lib/collapsed-threads.ts";
+import { createThreadNamer, subscribeToThreadNaming } from "./thread-namer.ts";
+import { createThreadTitleInference } from "./thread-title-inference.ts";
 import { classifyProjectRhythm } from "./lib/work-rhythm.ts";
 import { isReloadCancellation } from "./lib/shutdown.ts";
 import {
@@ -23,7 +27,6 @@ import {
 } from "./lib/rest-budget.ts";
 import { planQuickSnooze } from "./lib/snooze-plan.ts";
 import { isWithinSettledWindow } from "./lib/settled-threads.ts";
-import { gitButlerHostContract } from "./lib/gitbutler.ts";
 import { randomBytes } from "node:crypto";
 import {
   createGhRunner,
@@ -83,6 +86,10 @@ const migrations = [
   // Without them, un-settling gives the parent back and leaves its children
   // archived for good.
   `ALTER TABLE thread_lifecycle ADD COLUMN archived_thread_ids TEXT`,
+  // Upstream now treats Settled as a direct view of bb's archive. Keep this at
+  // index 2 for databases first created by that version; the final copy below
+  // also migrates databases that previously used index 2 for the PR watch.
+  `DELETE FROM thread_lifecycle WHERE snoozed_until IS NULL`,
   `CREATE TABLE IF NOT EXISTS snoozed_pr_watch (
      thread_id       TEXT PRIMARY KEY,
      pr_url          TEXT NOT NULL,
@@ -138,6 +145,10 @@ const migrations = [
      observed_days   INTEGER NOT NULL,
      computed_at     INTEGER NOT NULL
    )`,
+  // The fork shipped the GitHub tables before upstream retired plugin-owned
+  // settle rows. Repeating this append-only migration lets both histories
+  // converge without reinterpreting an already-applied migration index.
+  `DELETE FROM thread_lifecycle WHERE snoozed_until IS NULL`,
 ];
 const PR_WATCH_RATE_LIMIT_KEY = "pr-watch:rate-limit";
 /** The index's own pause, separate from the watch's GraphQL budget. */
@@ -279,6 +290,25 @@ export const gtdSidebarRpcContract = defineRpcContract({
       ),
     }),
   },
+  listPinnedOrder: {
+    input: z.object({}),
+    output: z.object({
+      pins: z.array(
+        z.object({
+          threadId: z.string(),
+          pinSortKey: z.string().nullable(),
+        }),
+      ),
+    }),
+  },
+  listCollapsedThreads: {
+    input: z.object({}),
+    output: z.object({ threadIds: z.array(z.string()) }),
+  },
+  toggleCollapsedThread: {
+    input: threadIdSchema,
+    output: z.object({ threadIds: z.array(z.string()) }),
+  },
   settle: { input: threadIdSchema, output: z.object({ ok: z.boolean() }) },
   unsettle: { input: threadIdSchema, output: z.object({ ok: z.boolean() }) },
   snooze: {
@@ -399,6 +429,14 @@ export const gtdSidebarRpcContract = defineRpcContract({
       })
       .strict(),
   },
+  reorderProject: {
+    input: z.object({
+      projectId: z.string().trim().min(1),
+      previousProjectId: z.string().nullable(),
+      nextProjectId: z.string().nullable(),
+    }),
+    output: z.object({ ok: z.boolean() }),
+  },
 });
 
 export { LIFECYCLE_CHANNEL, PR_INDEX_CHANNEL, WEBHOOK_TUNNEL_CHANNEL } from "./lib/channels.ts";
@@ -408,8 +446,21 @@ const WEBHOOK_SECRET_KEY = "github-webhook-secret";
 const WEBHOOK_LAST_URL_KEY = "github-webhook-last-url";
 
 export default function plugin(bb: BbPluginApi) {
-  const gitButlerHost = bb.hosts.experimental_client({ contract: gitButlerHostContract });
+  const host = bb.hosts.experimental_client({ contract: gtdSidebarHostContract });
   const pluginSettings = bb.settings.define({
+    localMachineId: {
+      type: "string",
+      label: "Local machine",
+      description: "Machine ID whose threads show no machine globe.",
+      default: "",
+    },
+    compactThreads: {
+      type: "boolean",
+      label: "Compact thread rows",
+      description:
+        "Show desktop threads on one line. Subthreads and mobile rows always use compact rows.",
+      default: false,
+    },
     showProviderIcon: {
       type: "boolean",
       label: "Show the agent icon on each card",
@@ -437,10 +488,21 @@ export default function plugin(bb: BbPluginApi) {
       description:
         "Leave empty unless you already have an unauthenticated HTTPS origin that forwards to this bb. bb connect URLs (*.getbb.app) cannot receive GitHub POSTs. When the Cloudflare setting is on, this is ignored unless it is a real public origin.",
     },
+    automaticallyNameThreads: {
+      type: "boolean",
+      label: "Automatically name threads",
+      description: "Name new threads and rename only when you start different work.",
+      default: true,
+    },
+  });
+  const threadNamer = createThreadNamer(bb, {
+    automaticallyNameThreads: async () => (await pluginSettings.get()).automaticallyNameThreads,
+    inference: createThreadTitleInference(bb),
   });
 
   const db = bb.storage.database();
   bb.storage.migrate(db, migrations);
+  const collapsedThreads = createCollapsedThreadsStore(bb.sdk.system.uiPreferences);
 
   const shutdown = new AbortController();
   bb.onDispose(() => shutdown.abort());
@@ -665,10 +727,7 @@ export default function plugin(bb: BbPluginApi) {
    * released — a number-only event is not evidence a release was yanked.
    */
   const annotatePullWithRelease = (owner: string, repo: string, pull: RestPull): RestPull => {
-    const overlaid = withPullRelease(
-      pull,
-      latestReleaseCache.peek(`${owner}/${repo}`) ?? null,
-    );
+    const overlaid = withPullRelease(pull, latestReleaseCache.peek(`${owner}/${repo}`) ?? null);
     if (overlaid.released) return overlaid;
     const existing = db
       .prepare(
@@ -914,10 +973,7 @@ export default function plugin(bb: BbPluginApi) {
    * snooze and watch rows back so the hourly poller can retry. Clearing first
    * still stops a successful idle from landing the thread on Snoozed again.
    */
-  const unsnoozeThenSend = async (
-    threadId: string,
-    send: () => Promise<void>,
-  ): Promise<void> => {
+  const unsnoozeThenSend = async (threadId: string, send: () => Promise<void>): Promise<void> => {
     const lifecycle = readOne(threadId);
     const watch = readWatchRow(threadId);
     const backoff = readBackoff(threadId);
@@ -936,12 +992,7 @@ export default function plugin(bb: BbPluginApi) {
              pr_url = excluded.pr_url,
              snapshot_json = excluded.snapshot_json,
              last_polled_at = excluded.last_polled_at`,
-        ).run(
-          watch.thread_id,
-          watch.pr_url,
-          watch.snapshot_json,
-          watch.last_polled_at ?? 0,
-        );
+        ).run(watch.thread_id, watch.pr_url, watch.snapshot_json, watch.last_polled_at ?? 0);
       }
       if (backoff !== undefined) writeBackoff(threadId, backoff.ladderStep, backoff.snoozedAt);
       throw error;
@@ -958,20 +1009,14 @@ export default function plugin(bb: BbPluginApi) {
     db.prepare(
       `INSERT INTO snooze_history (thread_id, snoozed_at, snoozed_until, ladder_step, kind)
        VALUES (?, ?, ?, ?, ?)`,
-    ).run(
-      entry.threadId,
-      entry.snoozedAt,
-      entry.snoozedUntil,
-      entry.ladderStep,
-      entry.kind,
-    );
+    ).run(entry.threadId, entry.snoozedAt, entry.snoozedUntil, entry.ladderStep, entry.kind);
   };
 
   const readWeekdayOnlyProjectIds = (): string[] =>
     (
-      db
-        .prepare(`SELECT project_id FROM project_rhythm WHERE weekday_only = 1`)
-        .all() as Array<{ project_id: string }>
+      db.prepare(`SELECT project_id FROM project_rhythm WHERE weekday_only = 1`).all() as Array<{
+        project_id: string;
+      }>
     ).map((row) => row.project_id);
 
   const isWeekdayOnlyProject = (projectId: string): boolean => {
@@ -1174,6 +1219,20 @@ export default function plugin(bb: BbPluginApi) {
     return collected;
   };
 
+  const listActiveThreads = async () => {
+    const collected = [];
+    for (let page = 0; page < ARCHIVED_PAGE_LIMIT; page++) {
+      const rows = await bb.sdk.threads.list({
+        archived: false,
+        limit: ARCHIVED_PAGE_SIZE,
+        offset: page * ARCHIVED_PAGE_SIZE,
+      });
+      collected.push(...rows);
+      if (rows.length < ARCHIVED_PAGE_SIZE) break;
+    }
+    return collected;
+  };
+
   const wakeSnoozedForPullUrl = async (url: string, reason: string) => {
     const canonical = canonicalPullRequestUrl(url);
     if (canonical === null) return;
@@ -1286,6 +1345,12 @@ export default function plugin(bb: BbPluginApi) {
   );
 
   bb.rpc.register(gtdSidebarRpcContract, {
+    async listCollapsedThreads() {
+      return { threadIds: await collapsedThreads.list() };
+    },
+    async toggleCollapsedThread({ threadId }) {
+      return { threadIds: await collapsedThreads.toggle(threadId) };
+    },
     async listEnvironmentBranches({ environmentIds }) {
       const environments = await Promise.all(
         [...new Set(environmentIds)].map(async (environmentId) => {
@@ -1299,7 +1364,7 @@ export default function plugin(bb: BbPluginApi) {
               return null;
             }
 
-            const summary = await gitButlerHost.call(
+            const summary = await host.call(
               "branchSummary",
               { cwd: environment.path },
               { hostId: environment.hostId },
@@ -1336,6 +1401,14 @@ export default function plugin(bb: BbPluginApi) {
         rows: readAll(),
         backoff: readAllBackoff(),
         weekdayOnlyProjectIds: readWeekdayOnlyProjectIds(),
+      };
+    },
+    async listPinnedOrder() {
+      const active = await listActiveThreads();
+      return {
+        pins: active.flatMap((thread) =>
+          thread.pinnedAt === null ? [] : [{ threadId: thread.id, pinSortKey: thread.pinSortKey }],
+        ),
       };
     },
     async listThreadPullRequests({ threads }) {
@@ -1455,7 +1528,7 @@ export default function plugin(bb: BbPluginApi) {
         getRepo: async (environmentId) => {
           const environment = await bb.sdk.environments.get({ environmentId });
           if (!environment.isGitRepo || environment.path === null) return null;
-          const context = await gitButlerHost.call(
+          const context = await host.call(
             "githubRepoContext",
             { cwd: environment.path },
             { hostId: environment.hostId },
@@ -1546,32 +1619,14 @@ export default function plugin(bb: BbPluginApi) {
       ensureRepoHooks(listIndexedRepos());
 
       return {
-        pullRequests: [...resolved.entries()].map(([threadId, pullRequest]) => ({
-          threadId,
-          ...pullRequest,
-        })),
+        pullRequests: [...resolved.entries()].map(([threadId, pullRequest]) =>
+          Object.assign({ threadId }, pullRequest),
+        ),
       };
     },
-    /**
-     * The archived threads this plugin settled in the last day, and only
-     * those. A thread the user archived through bb itself has no row here and
-     * stays out of the sidebar, exactly as it did before any of this existed;
-     * one settled longer ago than the window keeps its row and its archive and
-     * simply stops being drawn.
-     *
-     * The window is applied here as well as on the frontend. The frontend's is
-     * the live one — it re-cuts on its own clock, so a row ages off screen
-     * without a refetch — and this one keeps the response proportional to the
-     * shelf instead of to the whole archive.
-     */
+    /** Settled is a direct view of bb's archive for the last day. */
     async listSettledThreads() {
       const now = Date.now();
-      const settledAtById = new Map(
-        readAll()
-          .filter((row) => row.settledAt !== null && isWithinSettledWindow(row.settledAt, now))
-          .map((row) => [row.threadId, row.settledAt as number]),
-      );
-      if (settledAtById.size === 0) return { threads: [] };
       let archived;
       try {
         archived = await listArchivedThreads();
@@ -1583,11 +1638,13 @@ export default function plugin(bb: BbPluginApi) {
       }
       return {
         threads: archived
-          .filter((thread) => settledAtById.has(thread.id))
+          .filter(
+            (thread) => thread.archivedAt !== null && isWithinSettledWindow(thread.archivedAt, now),
+          )
           .map((thread) => ({
             id: thread.id,
-            // Non-null by construction: the id came from this map.
-            settledAt: settledAtById.get(thread.id) ?? 0,
+            // Non-null by the filter above.
+            settledAt: thread.archivedAt ?? 0,
             projectId: thread.projectId,
             title: thread.title,
             titleFallback: thread.titleFallback,
@@ -1773,6 +1830,15 @@ export default function plugin(bb: BbPluginApi) {
       }
       return { tab: browserTab };
     },
+    async reorderProject({ projectId, previousProjectId, nextProjectId }) {
+      try {
+        await bb.sdk.projects.reorder({ projectId, previousProjectId, nextProjectId });
+      } catch (error) {
+        bb.log.warn(`reorder project ${projectId} failed: ${String(error)}`);
+        return { ok: false };
+      }
+      return { ok: true };
+    },
   });
 
   // A deleted thread must not leave a row behind that would park a future
@@ -1797,6 +1863,39 @@ export default function plugin(bb: BbPluginApi) {
   bb.events.on("thread.active", republishIfSettled);
   bb.events.on("thread.idle", republishIfSettled);
   bb.events.on("thread.failed", republishIfSettled);
+
+  // Native archive is the settle mutation in the current sidebar. Relay bb's
+  // authoritative archive and pin changes so every open window refetches the
+  // affected shelf immediately.
+  bb.onDispose(
+    bb.sdk.subscribe({
+      event: "thread:changed",
+      callback: (event) => {
+        if (
+          event.id !== undefined &&
+          (event.changes.includes("archived-changed") ||
+            event.changes.includes("pin-state-changed"))
+        ) {
+          bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId: event.id });
+        }
+      },
+    }),
+  );
+
+  bb.onDispose(
+    bb.sdk.subscribe({
+      event: "system:changed",
+      callback: (event) => {
+        if (event.changes.includes("ui-preferences-changed")) {
+          bb.realtime.publish(LIFECYCLE_CHANNEL, {
+            preference: "sidebar.collapsedThreads",
+          });
+        }
+      },
+    }),
+  );
+
+  subscribeToThreadNaming(bb, threadNamer);
 
   const readRateLimitHint = async (): Promise<{
     remaining: number | null;
@@ -1968,5 +2067,39 @@ export default function plugin(bb: BbPluginApi) {
       remaining: result.remaining,
       skipUntilMs: result.skipUntilMs,
     });
+  });
+
+  bb.cli.register({
+    name: "gtd-sidebar",
+    summary: "Manage GTD Sidebar threads.",
+    commands: [
+      {
+        name: "rename",
+        summary: "Generate a new title for a thread.",
+        usage: "bb gtd-sidebar rename [<threadId>]",
+      },
+    ],
+    async run(argv, context) {
+      const [command, ...args] = argv;
+      if (command !== "rename") {
+        return {
+          exitCode: 2,
+          stderr: `Unknown subcommand "${command ?? ""}". Use "bb gtd-sidebar rename [<threadId>]".\n`,
+        };
+      }
+
+      const threadId = args[0] ?? context.threadId;
+      if (threadId === undefined) {
+        return {
+          exitCode: 2,
+          stderr: "Pass a thread id or run this command from a thread.\n",
+        };
+      }
+
+      const result = await threadNamer.nameThread(threadId, { kind: "forced" });
+      return result.ok
+        ? { exitCode: 0, stdout: `${result.title}\n` }
+        : { exitCode: 1, stderr: `${result.error}\n` };
+    },
   });
 }

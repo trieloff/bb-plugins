@@ -28,10 +28,7 @@ export interface Coalescer<T> {
   forget(key: string): void;
 }
 
-export function createCoalescer<T>(
-  ttlMs: number,
-  now: () => number = Date.now,
-): Coalescer<T> {
+export function createCoalescer<T>(ttlMs: number, now: () => number = Date.now): Coalescer<T> {
   const settled = new Map<string, { at: number; value: T }>();
   const inFlight = new Map<string, Promise<T>>();
   const live = (key: string): T | undefined => {

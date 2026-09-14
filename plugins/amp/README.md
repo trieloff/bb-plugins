@@ -9,18 +9,17 @@
 
 **Run [Amp](https://ampcode.com) in a bb thread, like any built-in provider.**
 
-![bb 0.39+](https://img.shields.io/badge/bb-0.39%2B-88C0D0?style=flat-square)
+![bb 0.40+](https://img.shields.io/badge/bb-0.40%2B-88C0D0?style=flat-square)
 ![macOS · Linux](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-3FA266?style=flat-square)
 ![needs Amp CLI](https://img.shields.io/badge/needs-Amp%20CLI-F1B467?style=flat-square)
 
 </div>
 
-<picture><img src="docs/media/hero.png" alt="Amp in bb: an /orb prompt to run in Amp&#39;s remote sandbox, the Orb session bar with its amp sync command, and an Oracle card" width="100%" /></picture>
+<picture><img src="docs/media/hero.png" alt="Amp in bb: the Orb toggle that runs a thread in Amp&#39;s remote sandbox, the Orb session bar with its amp sync command, and an Oracle card" width="100%" /></picture>
 
-bb talks to coding agents over the [Agent Client Protocol](https://agentclientprotocol.com).
-This plugin makes Amp one of them.
-
-It ships its own ACP bridge, built on the official `@ampcode/sdk`. Amp appears
+This plugin registers Amp as a native bb provider. The executable side is the
+plugin's own provider bridge — its `bb.host` artifact — which spawns the Amp
+CLI directly and drives it over its stream-json execute wire. Amp appears
 in bb's provider list, runs against your bb environment by default, and can run
 in an [Amp Orb](https://ampcode.com) cloud sandbox instead when you ask for one.
 
@@ -59,9 +58,12 @@ bb plugin install ./plugins/amp
 
 ## Requirements
 
-- bb 0.39+, on macOS or Linux
+- bb 0.40+ or a current bb nightly, on macOS or Linux. Amp 0.4.2 starts this
+  compatibility line. The plugin registers its provider through bb's plugin
+  API, which bb 0.39 stable predates
 - The **Amp CLI**, installed ([get started](https://ampcode.com/manual#get-started))
-  and authenticated with `amp login`, or `AMP_API_KEY` set on the provider entry.
+  and authenticated with `amp login`, or `AMP_API_KEY` exported in the
+  environment bb runs in.
   The plugin locates and drives the CLI; it cannot install or sign in to it for you
 - An Amp account
 
@@ -72,16 +74,16 @@ optional.
 
 ### Local and Orb
 
-Amp runs against the bb environment's working directory. To use Amp Orb instead,
-put `/orb` in the **first** prompt of a new thread:
+Amp runs against the bb environment's working directory. To use Amp Orb
+instead, press the **Orb** toggle in the composer, then send the first prompt
+of a new thread. The toggle shows only while Amp is the selected provider.
+Pressing it arms Orb for the next thread and adds nothing to the prompt text.
+An armed toggle expires after 10 minutes if no thread is started.
 
-```
-/orb refactor the payment retry logic
-```
-
-**Local or Orb is fixed for the life of the thread.** A `/orb` in a later prompt
-will not move an existing thread, so start a new one. Later prompts in an Orb
-thread do not need the token.
+**Local or Orb is fixed for the life of the thread.** This matches Amp's own
+model, where the executor is chosen at thread creation and cannot change
+later. To move existing work to Orb, start a new thread with the toggle
+pressed.
 
 An Orb thread shows a bar above the composer with the Amp thread id and a copyable
 `amp sync T-…` command. Run that in a local checkout to mirror the Orb's live
@@ -106,13 +108,13 @@ nothing recorded and are not restored.
 
 ### Modes
 
-Amp's four modes — low, medium, high, ultra — appear in bb's model picker, each
-labelled with the "With ChatGPT Sub" routing as
-`<agent> [<effort>] · <oracle> [<effort>]`.
+bb's picker offers one Amp model. Its reasoning levels — Low, Medium, High,
+Ultra — are Amp's four modes, and the selected level becomes `--mode` on the
+spawned CLI (`src/bridge/options.ts`).
 
 ### Permissions
 
-bb's resolved thread permission controls Local Amp when the ACP session starts:
+bb's resolved thread permission controls Local Amp when the session starts:
 
 - **Full** force-allows every Amp tool call (`amp.dangerouslyAllowAll`).
 - **Accept Edits** explicitly disables Amp's force-all setting and uses Amp's
@@ -124,11 +126,11 @@ Orb permissions stay in the Amp project settings.
 ### Fast
 
 bb **Fast** starts a new Local Amp thread with the CLI's native `--fast`
-feature. The official SDK does not expose that option yet, so the plugin's
-bundled launcher adds the flag only to SDK execute calls that bb marked Fast.
-Standard turns, continued threads, SDK version probes, and Orb executions are
-unchanged. Start a new bb thread after selecting Fast; Amp's CLI cannot add
-Fast to an existing Amp thread.
+feature. The plugin builds the CLI argv itself, so it adds `--fast` to a
+thread's first execution when bb marked that thread Fast. Standard turns,
+continued threads, version probes, and Orb executions are unchanged. Start a
+new bb thread after selecting Fast; Amp's CLI cannot add Fast to an existing
+Amp thread.
 
 ### Skills
 
@@ -139,19 +141,21 @@ workspace, plus Amp's direct user roots under `~/.config/agents`, `~/.agents`,
 `~/.config/amp`, and `~/.claude`.
 
 Amp still loads built-in and hosted skills, the recursive Claude plugin cache,
-and directories configured through `amp.skills.path` itself. bb's static custom
-ACP root registration does not index those sources.
+and directories configured through `amp.skills.path` itself. The static skill
+roots on the provider registration do not cover those sources, so bb does not
+index them.
 
 ### Current transport limits
 
-Two bb controls cannot yet reach the official Amp SDK and are not simulated:
+Two bb controls do not reach Amp's execute wire and are not simulated:
 
-- bb's generated project and host instructions are preserved at the start of
-  the first Amp prompt, but the SDK has no system/developer instruction input.
-- Image input is disabled because the SDK's `UserInputMessage` accepts text only.
+- bb's generated project and host instructions are dropped. The execute wire
+  carries no system or developer instruction input, and the plugin does not
+  fold them into the prompt text either.
+- Image input is disabled. The plugin sends text-only content blocks.
 
-These need upstream bb ACP and Amp SDK transport support before this plugin can
-preserve their native meaning.
+These need the execute wire to carry the input before this plugin can preserve
+their native meaning.
 
 ### The Oracle card
 
@@ -162,46 +166,57 @@ request, the response, and a trace that streams while it runs.
 
 A healthy install does not need this command.
 
-| Command         | What it does                                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `bb amp status` | Print every link in the chain: Amp CLI, bridge bundle, node runtime, config entry, logo, and provider registration |
+Anonymous crash reporting is enabled by default for Amp's server and browser app. Disable it with
+the plugin's telemetry setting. Provider bridges cannot read plugin settings, so bridge crash and
+cold-start performance reporting remain opt-in. Set `SENTRY_DSN` in the environment that runs bb to
+enable both bridge reporters and override the server DSN. `SENTRY_ENVIRONMENT` is optional.
+Otherwise `NODE_ENV=development` labels development reports and all other runtimes use
+`production`. Amp derives the versioned release from built plugin metadata.
+
+The bridge sends one `amp.cli.startup` transaction per actual Amp CLI spawn.
+The trace records numeric elapsed checkpoints from execute entry through
+`system/init` and the first model event. It includes only finite dimensions
+(Local or Orb, fresh or continued, MCP presence, mode, and retry attempt), never
+prompts, paths, thread ids, tool data, argv, or stderr. A lightweight Sentry
+envelope is emitted only after the measured startup finishes; the performance
+path does not load the Sentry SDK.
+
+| Command         | What it does                                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| `bb amp status` | Print every link in the chain: Amp CLI, bridge bundle, provider registration, legacy config entry, and auth |
 
 ```console
 $ bb amp status
 Amp CLI: /Users/you/.local/bin/amp
-bridge bundle: /path/to/plugins/amp/dist/bridge.js
-node runtime: /Applications/bb.app/Contents/MacOS/bb (Electron; entry sets ELECTRON_RUN_AS_NODE=1)
-config entry acp-amp: present
-obsolete config entry acp-amp-orb: absent
-logo: present
+bridge bundle: /path/to/plugins/amp/dist/host.js
 bb provider acp-amp: registered
-auth: handled by the Amp CLI — run `amp login` once, or set AMP_API_KEY in the entry env
+legacy config entry amp: absent
+auth: handled by the Amp CLI — run `amp login` once, or export AMP_API_KEY in your environment
 ```
 
 ## Troubleshooting
 
-| Symptom                            | Fix                                                                                          |
-| ---------------------------------- | -------------------------------------------------------------------------------------------- |
-| Plugin shows "needs configuration" | Install the Amp CLI, run `amp login`, then `bb plugin reload amp`                            |
-| Amp is not in the provider list    | `bb amp status` names the broken link                                                        |
-| Auth errors in a thread            | `amp login`, or add `AMP_API_KEY` to the provider entry's `env`                              |
-| "Could not find a usable Amp CLI"  | The recorded `AMP_CLI_PATH` no longer exists. Reinstall Amp, then run `bb plugin reload amp` |
-| Local tool calls rejected          | Use bb **Full** to force-allow all tools, or adjust Amp's own rules and use **Accept Edits** |
-| Orb tool calls rejected            | Change the permission settings in the Amp project                                            |
-| Orb opens the wrong repository     | Add `AMP_ACP_ORB_PROJECT` to the provider entry and start a new thread with `/orb`           |
-| `/orb` is rejected in a thread     | That Amp thread is already Local. Start a new bb thread with `/orb` in its first prompt      |
-| `Unknown session <id>` on resume   | The session mapping was pruned or removed. Start a new thread                                |
+| Symptom                             | Fix                                                                                             |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Plugin shows "needs configuration"  | Install the Amp CLI, run `amp login`, then `bb plugin reload amp`                               |
+| Amp is not in the provider list     | `bb amp status` names the broken link                                                           |
+| Auth errors in a thread             | `amp login`, or export `AMP_API_KEY` in the environment bb runs in                              |
+| "Could not find a usable Amp CLI"   | The recorded `AMP_CLI_PATH` no longer exists. Reinstall Amp, then run `bb plugin reload amp`    |
+| Local tool calls rejected           | Use bb **Full** to force-allow all tools, or adjust Amp's own rules and use **Accept Edits**    |
+| Orb tool calls rejected             | Change the permission settings in the Amp project                                               |
+| Orb opens the wrong repository      | Orb infers the project from the thread's working directory. Start the thread in that repository |
+| Orb toggle was on, thread ran Local | The armed toggle expires after 10 minutes. Toggle Orb off, then on, then send the first prompt  |
+| `Unknown session <id>` on resume    | The session mapping was pruned or removed. Start a new thread                                   |
 
 ## Develop from source
 
 Install from source as shown under [Install](#install). `bun run build` in
-`plugins/amp` produces `dist/bridge.js` and `dist/amp-cli-shim.js` alongside
-`dist/server.js` and `dist/app.js`.
+`plugins/amp` produces `dist/server.js`, `dist/app.js`, and `dist/host.js`
+(the provider bridge).
 
-Never run `npm install` inside `plugins/amp`. The root `overrides` entry that
-keeps the real `@ampcode/cli` out of the tree only applies at the workspace
-root, and a leaf install makes `@ampcode/sdk` prefer a CLI the plugin did not
-configure.
+Never run `npm install` inside `plugins/amp`. The source checkout is a Bun
+workspace, and a leaf npm install writes a second lockfile and `node_modules`
+that shadow the workspace install.
 
 `bb plugin install .` and `bb plugin dev` rebuild the frontend in place from the
 published manifest entry, which drops the authored rules from `dist/app.css`.
@@ -213,5 +228,6 @@ bun run test                # needs Node ≥ 22.6
 ```
 
 Unit tests drive the bridge with scripted async generators, so they need no Amp
-CLI and no network. The stdio test spawns the real `dist/bridge.js` and does a
-JSON-RPC `initialize` round-trip, skipping itself when the bundle is unbuilt.
+CLI and no network. The parity test replays the recordings under
+`test/recordings/` through the real `dist/host.js` against a deterministic fake
+Amp CLI, skipping itself when the bundle is unbuilt.

@@ -1,5 +1,62 @@
 # @smsunarto/bb-plugin-gtd-sidebar
 
+## Unreleased
+
+### Minor Changes
+
+- Every shelf now groups its threads by project once more than one project is in
+  view. A 26px header names the project, folds the group, and shows
+  `needs-you / total` while folded; hovering it reveals a new-thread button for
+  that project. Shelf headers stick while their rows scroll. The repo
+  chip is gone from every row: the project lives in the group header (and on a
+  card's second line), and a remote thread leads with its machine's globe
+  instead. Pinned threads keep their own shelf above Next Action, grouped like the
+  rest.
+- Shelves now order by arrival instead of last update. A thread enters Pinned,
+  Next Action, or Waiting at the top when it lands there and holds its place
+  while it stays: a turn starting, a read, a rename, or subthread activity no
+  longer reshuffles the list. Snoozed sorts by when you snoozed it and Settled
+  by when it settled, both newest first.
+- Project groups follow bb's own project order in every shelf, with the personal
+  project last, so the same project sits in the same slot everywhere. A group
+  header's right-click menu gains **Move up** and **Move down**, which reorder
+  the project in bb itself rather than in the plugin.
+- The Pinned shelf now follows bb's own pinned order — the same order the
+  built-in sidebar drags by — instead of an arrival stamp. A pin moved in either
+  sidebar ranks identically in both, and the shelf re-reads it when bb reports a
+  pin change. Rows hold their arrival place only until bb's pin keys load.
+- Settle is now bb's archive. The check button, the card menu, and a new
+  **GTD Sidebar: settle thread** row in bb's quick palette archive the thread, and
+  bb's Undo toast brings it back. The Settled shelf is now a view of bb's archive:
+  it lists every thread archived in the last 24 hours, however it was archived, and
+  un-settle unarchives it in bb. The automatic un-settle on new activity is gone;
+  the plugin's database keeps only snoozes, and rows without a snooze are removed on
+  the next start. Snooze is unchanged.
+
+- Folding a family now writes bb's own `sidebar.collapsedThreads` preference
+  instead of session state, so a fold made here shows in bb's built-in sidebar,
+  a fold made there shows here, and both survive a reload. Folded project
+  groups stay session state: bb has no per-shelf project key.
+
+### Patch Changes
+
+- Mobile rows now draw the compact desktop row: the project chip leads the title,
+  and the trailing slot shows status or age with activity counts and the PR number
+  beside it. The agent icon leaves the mobile row, as it already does on compact
+  desktop rows.
+- The browser-side warm-start cache is gone. The shelves wait for the plugin's own
+  rows the same way they already wait for the Settled shelf, and the entries earlier
+  versions left under `gtd-sidebar:v1:*` in `localStorage` are removed the first
+  time this version loads. Provider names and marks now come from bb's own cached
+  roster instead of a plugin round trip.
+
+## 0.4.2
+
+### Patch Changes
+
+- 3da36f5: Support bb 0.40. The engines floor moves to the tested bb release (`>=0.40.0 <1.0.0`) and the plugin is built against plugin SDK 0.4.21.
+- 14254e6: Show the applied GitButler virtual branch instead of `gitbutler/workspace` on thread cards. When several virtual branches are applied, show their count rather than guessing one.
+
 ## 0.4.1
 
 ### Patch Changes

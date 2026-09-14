@@ -98,7 +98,12 @@ describe("classifyProjectRhythm", () => {
  * projects the same way.
  */
 describe("classifyProjectRhythm on observed project shapes", () => {
-  const cases: Array<{ name: string; weekdayPerDay: number; weekendPerDay: number; weekdayOnly: boolean }> = [
+  const cases: Array<{
+    name: string;
+    weekdayPerDay: number;
+    weekendPerDay: number;
+    weekdayOnly: boolean;
+  }> = [
     // Weekday-only in practice: a steady weekday cadence, nothing at weekends.
     { name: "helix-website shaped", weekdayPerDay: 6, weekendPerDay: 0, weekdayOnly: true },
     { name: "skills shaped", weekdayPerDay: 4, weekendPerDay: 0, weekdayOnly: true },

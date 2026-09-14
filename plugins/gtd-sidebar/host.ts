@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
-import { gitButlerHostContract, parseGitButlerBranchSummary } from "./lib/gitbutler.ts";
+import { completeCodexInference } from "@bb-plugins/codex-inference/client";
+import { toAiServiceFailure } from "@bb-plugins/codex-inference/failure";
+import { parseGitButlerBranchSummary } from "./lib/gitbutler.ts";
 import { parseGithubRemote } from "./lib/github-repo.ts";
+import { gtdSidebarHostContract } from "./lib/host-contract.ts";
 
 const execFileAsync = promisify(execFile);
 
 export default experimental_defineHostEntry({
-  contract: gitButlerHostContract,
+  contract: gtdSidebarHostContract,
   handlers: {
     async branchSummary({ cwd }, context) {
       try {
@@ -26,7 +29,7 @@ export default experimental_defineHostEntry({
       } catch {
         // A regular repository, a host without `but`, and a stopped GitButler
         // project all keep bb's own branch label. This probe is an enhancement.
-        return { label: null };
+        return { label: null, branchNames: [] };
       }
     },
     async githubRepoContext({ cwd }, context) {
@@ -42,6 +45,13 @@ export default experimental_defineHostEntry({
         return { owner: parsed?.owner ?? null, repo: parsed?.repo ?? null };
       } catch {
         return { owner: null, repo: null };
+      }
+    },
+    "ai.inference.complete": async (input) => {
+      try {
+        return await completeCodexInference(input);
+      } catch (error) {
+        return toAiServiceFailure(error);
       }
     },
   },

@@ -1,39 +1,39 @@
 // @smsunarto/bb-plugin-gtd-sidebar — an action-oriented replacement for bb's
 // sidebar thread list, and a reference for `app.slots.experimental_threadList`.
 //
-// Active threads are grouped by who acts next. Each section holds entrance
-// order, oldest first, so a new handoff always arrives at the bottom.
+// Active threads are grouped by who acts next. Every section orders by when
+// each thread arrived on it, most recent first.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import "./app.css";
 import { ThreadInbox } from "@/components/inbox/thread-inbox";
-import { ParentChip } from "@/components/inbox/parent-chip";
-import { SubagentsChip } from "@/components/inbox/subagents-chip";
 import { GithubWebhookSettings } from "@/components/github-webhook-settings";
+import { archiveThread, hasSidebarActions } from "@/lib/sidebar-actions-bridge";
 
 export default definePluginApp((app) => {
+  // Versions up to 0.4.x cached the shelves and provider marks in web storage,
+  // which bb's uninstall never clears. Drop those entries on the way in.
+  try {
+    for (const key of ["gtd-sidebar:v1:lifecycle-rows", "gtd-sidebar:v1:providers"]) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // No web storage here, so nothing was ever left behind.
+  }
+
   app.slots.experimental_threadList({
     id: "inbox",
     title: "GTD Sidebar (inbox)",
-    description: "Next Action and Waiting, ordered by section entrance.",
+    description: "Next Action and Waiting, with the newest arrivals first.",
     component: ThreadInbox,
   });
 
-  // Registered first, so it renders on the left of the children chip: the
-  // header then reads up (parent) then down (children).
-  //
-  // The hidden child is otherwise a dead end — it is not in the list, so this
-  // chip is its only route back to the parent.
-  app.slots.experimental_threadHeaderAction({
-    id: "parent",
-    title: "Parent thread",
-    component: ParentChip,
-  });
-
-  // A flat inbox has nowhere to nest child threads, so the list hides them
-  // and this chip gives them a home on their parent's header.
-  app.slots.experimental_threadHeaderAction({
-    id: "children",
-    title: "Child threads",
-    component: SubagentsChip,
+  app.slots.commandPaletteAction({
+    id: "settle-thread",
+    title: "GTD Sidebar: settle thread",
+    isAvailable: ({ threadId }) => threadId !== null && hasSidebarActions(),
+    run: ({ threadId }) => {
+      if (threadId !== null) archiveThread(threadId);
+    },
   });
 
   app.slots.settingsSection({

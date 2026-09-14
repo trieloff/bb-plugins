@@ -2,17 +2,20 @@ import "./app.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   definePluginApp,
+  experimental_useProviders,
   Markdown,
+  useComposer,
   useComposerView,
-  useRealtime,
-  useRealtimeConnectionState,
   useRpc,
   type PluginMessageDirectiveProps,
+  type PluginTimelineRendererProps,
 } from "@get-bb/plugin-sdk/app";
+import { sentryAppTelemetry } from "@bb-kit/sentry/app";
+import { PLUGIN_TELEMETRY } from "./shared/telemetry";
 import { isOracleReportId, ORACLE_DIRECTIVE_ID, type OracleReport } from "./src/oracle-directive";
 import { AMP_LOGO_PATHS, AMP_LOGO_VIEW_BOX } from "./src/amp-brand";
-import { findOrbDirectiveRanges } from "./src/orb-directive";
-import { ORB_USAGE_CHANNEL, type OrbUsageView } from "./src/orb-usage";
+import { AMP_AGENT } from "./src/execution-target";
+import type { OrbUsageView } from "./src/orb-usage";
 import type { rpcContract } from "./server";
 
 type OracleState =
@@ -54,9 +57,11 @@ function TraceList({ report }: { report: OracleReport }) {
   );
 }
 
-function OracleDirective({ attributes }: PluginMessageDirectiveProps) {
+/** The Oracle report card. Two surfaces share it: the `amp/oracle` timeline
+ *  renderer (new threads) and the legacy message directive (ACP-era threads,
+ *  whose directives stay in their message bodies). */
+function OracleCard({ reportId, question }: { reportId: string | undefined; question?: string }) {
   const rpc = useRpc<typeof rpcContract>();
-  const reportId = attributes.reportId;
   const [state, setState] = useState<OracleState>({ kind: "loading" });
 
   useEffect(() => {
@@ -114,7 +119,8 @@ function OracleDirective({ attributes }: PluginMessageDirectiveProps) {
 
   const failed = state.report.status === "error";
   const running = state.report.status === "running";
-  const request = state.report.request?.replaceAll(/\s+/g, " ").trim() || "Oracle response";
+  const request =
+    (state.report.request ?? question)?.replaceAll(/\s+/g, " ").trim() || "Oracle response";
 
   return (
     <details className="group my-2 overflow-hidden rounded-md border border-border bg-card" open>
@@ -163,14 +169,28 @@ function OracleDirective({ attributes }: PluginMessageDirectiveProps) {
   );
 }
 
-function isThreadSignal(value: unknown, threadId: string): boolean {
+function OracleDirective({ attributes }: PluginMessageDirectiveProps) {
+  return <OracleCard reportId={attributes.reportId} />;
+}
+
+/** Body renderer for `amp/oracle` timeline items. The payload is the bridge's
+ *  receipt, validated against the declared schema at ingest. */
+function OracleTimelineItem({ payload }: PluginTimelineRendererProps) {
+  const receipt =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { reportId?: unknown; question?: unknown })
+      : {};
   return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    (value as { threadId?: unknown }).threadId === threadId
+    <OracleCard
+      question={typeof receipt.question === "string" ? receipt.question : undefined}
+      reportId={typeof receipt.reportId === "string" ? receipt.reportId : undefined}
+    />
   );
 }
+
+/** The thread-link state has no push channel to the app, so the banner polls
+ *  `getOrbUsage` while a thread composer is mounted. */
+const ORB_USAGE_POLL_MS = 5_000;
 
 function AmpOrbBanner() {
   const view = useComposerView();
@@ -201,24 +221,11 @@ function AmpOrbBanner() {
     };
   }, [refresh]);
 
-  useRealtime(
-    ORB_USAGE_CHANNEL,
-    useCallback(
-      (payload) => {
-        if (threadId !== null && isThreadSignal(payload, threadId)) void refresh();
-      },
-      [refresh, threadId],
-    ),
-  );
-
-  const connection = useRealtimeConnectionState();
-  const previousConnection = useRef(connection);
   useEffect(() => {
-    if (previousConnection.current === "reconnecting" && connection === "connected") {
-      void refresh();
-    }
-    previousConnection.current = connection;
-  }, [connection, refresh]);
+    if (threadId === null) return;
+    const timer = setInterval(() => void refresh(), ORB_USAGE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refresh, threadId]);
 
   useEffect(
     () => () => {
@@ -294,34 +301,198 @@ function AmpOrbBanner() {
   );
 }
 
-export default definePluginApp((app) => {
-  app.composer.customize({
-    id: "orb-directive-effect",
-    richText: {
-      effects: [
+/** True while this composer's model picker shows the Amp provider. The plugin
+ *  composer view carries no selected-provider signal (SDK 0.4.21), so the gate
+ *  reads the id-bearing markers the host paints into the picker trigger and
+ *  compares them against Amp's directory record (`experimental_useProviders`).
+ *  Two markers cover the trigger's two renders: the selected provider's icon
+ *  as a `data-provider-logo=<logoUrl>` mask span, and the trigger label's
+ *  `title="<displayName>: …"`, which is the only marker left when Fast mode
+ *  swaps the icon for its Zap glyph. Titled nodes inside the toggle's own
+ *  slot are ignored so the button cannot latch itself visible. Scoped to the
+ *  surrounding `[data-app-composer]` so split panes gate independently; the
+ *  picker's popover portals to <body>, so browsing other providers never
+ *  flips the gate. The gate stays hidden until the directory is ready and
+ *  hides outright when Amp has no record, because both mean the gate cannot
+ *  tell which provider is selected and showing Orb on a Claude or Codex
+ *  composer arms the next Amp thread from a button that has nothing to do
+ *  with it. */
+function useAmpComposerGate(): {
+  setAnchor: (node: HTMLElement | null) => void;
+  visible: boolean;
+} {
+  const providersState = experimental_useProviders();
+  const ampProvider =
+    providersState.providers.find((provider) => provider.id === AMP_AGENT.providerId) ?? null;
+  const ampLogoUrl = ampProvider?.logoUrl ?? null;
+  const ampDisplayName = ampProvider?.displayName ?? null;
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (anchor === null) return;
+    // Not ready means the directory cannot say which provider is selected.
+    // Returning without clearing left a previously-true `visible` standing
+    // while the cleanup below had already disconnected the observer, so the
+    // button survived on screen after the picker moved to another provider.
+    if (providersState.status !== "ready") {
+      setVisible(false);
+      return;
+    }
+    // No Amp record means the provider is not registered, so there is no Amp
+    // thread to arm. The old fail-open put the Orb button on a Claude or
+    // Codex composer, and `status` is a three-way enum, so an "error"
+    // directory reached it with Amp installed and registered.
+    if (ampLogoUrl === null && ampDisplayName === null) {
+      setVisible(false);
+      return;
+    }
+    // Past the third plugin group the host portals composer actions into an
+    // overflow popover on <body>, so the anchor has no composer ancestor.
+    // Widen to the document rather than fail open: this action registers for
+    // `new-thread` only and the host keeps at most one new-thread composer,
+    // so the picker found here is still the one the button submits through.
+    const composerRoot: ParentNode = anchor.closest("[data-app-composer]") ?? anchor.ownerDocument;
+    const check = () => {
+      const logoSelected =
+        ampLogoUrl !== null &&
+        Array.from(composerRoot.querySelectorAll("[data-provider-logo]")).some(
+          (mark) => mark.getAttribute("data-provider-logo") === ampLogoUrl,
+        );
+      const titleSelected =
+        ampDisplayName !== null &&
+        Array.from(composerRoot.querySelectorAll("[title]")).some(
+          (node) =>
+            node.closest(".amp-orb-toggle-slot") === null &&
+            (node.getAttribute("title") ?? "").startsWith(`${ampDisplayName}:`),
+        );
+      setVisible(logoSelected || titleSelected);
+    };
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(composerRoot instanceof Document ? composerRoot.body : composerRoot, {
+      attributeFilter: ["data-provider-logo", "title"],
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    return () => observer.disconnect();
+  }, [anchor, ampLogoUrl, ampDisplayName, providersState.status]);
+  return { setAnchor, visible };
+}
+
+/** New-thread composer action, rendered only while Amp is the selected
+ *  provider (useAmpComposerGate); the wrapper span stays mounted as the
+ *  gate's DOM anchor while the button unmounts. Pressing it arms a one-shot
+ *  Orb intent on the server; nothing is typed into the draft. The bridge
+ *  consumes the intent when the next thread starts, so the armed state
+ *  lives server-side, and every remount re-reads it. Nothing here disarms on
+ *  the way off Amp: the read makes a returning armed intent visible before
+ *  the user can send, which is all the removed disarm bought, and it cost
+ *  the arm whenever the host repainted the picker markers. The intent's own
+ *  10-minute expiry bounds the rest. */
+function OrbToggleAction() {
+  const composer = useComposer();
+  const view = useComposerView();
+  const gate = useAmpComposerGate();
+  const rpc = useRpc<typeof rpcContract>();
+  const [pressed, setPressed] = useState(false);
+  const wasVisible = useRef(false);
+  /** Bumped on every press. A `getOrbIntent` answer minted before the press
+   *  describes the state that press replaced, so applying it late would read
+   *  "off" while the server is armed, and the next thread would run on Orb
+   *  with nothing on screen saying so. */
+  const pressSeq = useRef(0);
+  useEffect(() => {
+    const was = wasVisible.current;
+    wasVisible.current = gate.visible;
+    if (gate.visible === was || !gate.visible) return;
+    let cancelled = false;
+    const seq = pressSeq.current;
+    void rpc
+      .call("getOrbIntent", {})
+      .then((result) => {
+        if (!cancelled && seq === pressSeq.current) setPressed(result.armed);
+        return null;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [gate.visible, rpc]);
+  const toggle = () => {
+    const next = !pressed;
+    pressSeq.current += 1;
+    const seq = pressSeq.current;
+    setPressed(next);
+    void rpc.call("setOrbIntent", { armed: next }).catch(() => {
+      // Roll back only while this press is still the latest one. A failure
+      // that lands after two further presses would otherwise restore the
+      // state its own press replaced, undoing what the user last asked for.
+      if (seq === pressSeq.current) setPressed(!next);
+    });
+    composer.focus();
+  };
+  return (
+    <span className="amp-orb-toggle-slot" ref={gate.setAnchor}>
+      {gate.visible ? (
+        <button
+          aria-pressed={pressed}
+          className="amp-orb-toggle"
+          disabled={view.run.isSubmitting}
+          onClick={toggle}
+          title="Run this thread in an Amp Orb cloud sandbox"
+          type="button"
+        >
+          <svg aria-hidden="true" className="amp-orb-toggle-logo" viewBox={AMP_LOGO_VIEW_BOX}>
+            {AMP_LOGO_PATHS.map((path) => (
+              <path d={path} fill="currentColor" key={path} />
+            ))}
+          </svg>
+          Orb
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
+const telemetry = sentryAppTelemetry(PLUGIN_TELEMETRY);
+
+export default definePluginApp(
+  telemetry.instrument((app) => {
+    // The composer-action slot has no selected-provider signal, so the toggle
+    // gates itself on the host DOM (useAmpComposerGate). It stays scoped to new
+    // threads: the Orb flip is first-prompt-only, and the thread-scope banner
+    // above covers the rest.
+    app.composer.customize({
+      id: "orb-toggle",
+      scopes: ["new-thread"],
+      actions: [{ id: "orb-toggle", component: OrbToggleAction }],
+    });
+
+    app.composer.customize({
+      id: "orb-usage-banner",
+      scopes: ["thread"],
+      banners: [
         {
-          id: "orb-directive",
-          className: "amp-orb-directive-highlight",
-          match: findOrbDirectiveRanges,
+          id: "orb-usage",
+          chrome: "bare",
+          component: AmpOrbBanner,
         },
       ],
-    },
-  });
+    });
 
-  app.composer.customize({
-    id: "orb-usage-banner",
-    scopes: ["thread"],
-    banners: [
-      {
-        id: "orb-usage",
-        chrome: "bare",
-        component: AmpOrbBanner,
-      },
-    ],
-  });
+    // AMP_ORACLE_KIND (src/bridge/shapes.ts). The app bundle must stay
+    // node-free, so the literal repeats here rather than importing it.
+    app.slots.experimental_timelineRenderer({
+      kind: "amp/oracle",
+      component: OracleTimelineItem,
+    });
 
-  app.slots.messageDirective({
-    id: ORACLE_DIRECTIVE_ID,
-    component: OracleDirective,
-  });
-});
+    // ACP-era threads carry Oracle results as message directives; keep their
+    // renderer so history stays readable.
+    app.slots.messageDirective({
+      id: ORACLE_DIRECTIVE_ID,
+      component: OracleDirective,
+    });
+  }),
+);

@@ -43,6 +43,13 @@ const palette = {
     // not because a CSS token spends it.
     parameter: "#ff8342",
   },
+  depth: {
+    blue: "#3093f4",
+    magenta: "#c860cf",
+    gold: "#b28b11",
+    teal: "#04a891",
+    violet: "#8a6ae6",
+  },
   contentTint: {
     comment: "#7c7865",
     white: "#adada9",
@@ -59,6 +66,7 @@ const palette = {
 const roleValues = {
   "ground.chrome": palette.ground.chrome,
   "ground.chromeScrim": withAlpha(palette.ground.chrome, 0xeb),
+  "ground.contentScrim": withAlpha(palette.ground.content, 0xeb),
   "ground.content": palette.ground.content,
   "ground.recessed": palette.ground.recessed,
   "ground.raised": palette.ground.raised,
@@ -102,6 +110,11 @@ const roleValues = {
   "code.constant": palette.code.constant,
   "code.constant63": withAlpha(palette.code.constant, 0xa0),
   "code.parameter": palette.code.parameter,
+  "depth.blue": palette.depth.blue,
+  "depth.magenta": palette.depth.magenta,
+  "depth.gold": palette.depth.gold,
+  "depth.teal": palette.depth.teal,
+  "depth.violet": palette.depth.violet,
   "content.comment": palette.contentTint.comment,
   "content.white": palette.contentTint.white,
   "content.blue": palette.contentTint.blue,
@@ -239,6 +252,25 @@ export function renderCodeTheme(rules: readonly CodeThemeRule[]): CodeTheme {
     colors: {
       "editor.background": roleValues["ground.content"],
       "editor.foreground": roleValues["text.ink"],
+      "editorBracketHighlight.foreground1": roleValues["text.ink"],
+      "editorBracketHighlight.foreground2": roleValues["depth.blue"],
+      "editorBracketHighlight.foreground3": roleValues["depth.magenta"],
+      "editorBracketHighlight.foreground4": roleValues["depth.gold"],
+      "editorBracketHighlight.foreground5": roleValues["depth.teal"],
+      "editorBracketHighlight.foreground6": roleValues["depth.violet"],
+      "editorBracketHighlight.unexpectedBracket.foreground": roleValues["feedback.error"],
+      "editorBracketPairGuide.background1": roleValues["text.ink07"],
+      "editorBracketPairGuide.background2": roleValues["text.ink07"],
+      "editorBracketPairGuide.background3": roleValues["text.ink07"],
+      "editorBracketPairGuide.background4": roleValues["text.ink07"],
+      "editorBracketPairGuide.background5": roleValues["text.ink07"],
+      "editorBracketPairGuide.background6": roleValues["text.ink07"],
+      "editorBracketPairGuide.activeBackground1": roleValues["text.ink17"],
+      "editorBracketPairGuide.activeBackground2": roleValues["text.ink17"],
+      "editorBracketPairGuide.activeBackground3": roleValues["text.ink17"],
+      "editorBracketPairGuide.activeBackground4": roleValues["text.ink17"],
+      "editorBracketPairGuide.activeBackground5": roleValues["text.ink17"],
+      "editorBracketPairGuide.activeBackground6": roleValues["text.ink17"],
     },
     tokenColors,
   };
@@ -254,21 +286,34 @@ function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function requiredAt<T>(values: readonly T[], index: number, label: string): T {
+  const value = values[index];
+  if (value === undefined) {
+    throw new Error(`${label}: missing item ${index}`);
+  }
+  return value;
+}
+
 function parseRules(source: string, violations: string[]): CssRule[] {
   const rules: CssRule[] = [];
   const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
   for (const match of source.matchAll(rulePattern)) {
+    const selectors = requiredAt(match, 1, "CSS rule");
+    const body = requiredAt(match, 2, normalize(selectors));
     const declarations = new Map<string, string>();
     const declarationPattern = /([\w-]+)\s*:\s*([^;{}]+);/g;
-    for (const declaration of match[2].matchAll(declarationPattern)) {
-      const name = declaration[1].trim();
+    for (const declaration of body.matchAll(declarationPattern)) {
+      const name = requiredAt(declaration, 1, `${normalize(selectors)} declaration`).trim();
       if (declarations.has(name)) {
-        violations.push(`${normalize(match[1])}: duplicate ${name}`);
+        violations.push(`${normalize(selectors)}: duplicate ${name}`);
       }
-      declarations.set(name, normalize(declaration[2]));
+      declarations.set(
+        name,
+        normalize(requiredAt(declaration, 2, `${normalize(selectors)} ${name}`)),
+      );
     }
     rules.push({
-      selectors: match[1].split(",").map(normalize),
+      selectors: selectors.split(",").map(normalize),
       declarations,
     });
   }
@@ -317,6 +362,8 @@ const ansiForegrounds = [
 // cannot silently inherit an upstream color or borrow a legal color for the
 // wrong role.
 const darkExpected = declarationMap({
+  "--bb-monokai-active": "1",
+  "--bb-monokai-code-entity": palette.code.entity,
   "--canvas": palette.ground.content,
   "--ink": palette.text.ink,
   "--background": palette.ground.content,
@@ -331,7 +378,7 @@ const darkExpected = declarationMap({
   "--surface-recessed-soft-solid": palette.ground.recessed,
   "--surface-raised": roleValues["text.ink08"],
   "--surface-raised-solid": palette.ground.raised,
-  "--surface-scrim": roleValues["ground.chromeScrim"],
+  "--surface-scrim": roleValues["ground.contentScrim"],
   "--agent-surface-background": palette.ground.recessed,
   "--agent-surface-border": roleValues["text.ink07"],
   "--state-hover": roleValues["text.ink08"],
@@ -371,6 +418,10 @@ const darkExpected = declarationMap({
   "--surface-destructive": roleValues["feedback.error08"],
   "--surface-destructive-border": roleValues["feedback.error30"],
   "--surface-attention": roleValues["feedback.warning12"],
+  "--terminal-background": palette.ground.chrome,
+  "--terminal-font-family": '"BerkeleyMono Nerd Font Mono", "Berkeley Mono", monospace',
+  "--terminal-font-size": "13",
+  "--terminal-line-height": "1.4",
   "--sidebar": palette.ground.chrome,
   "--sidebar-foreground": roleValues["text.ink74"],
   "--sidebar-accent": palette.ground.raised,
@@ -388,17 +439,17 @@ const darkExpected = declarationMap({
   "--diffs-deletion-color-override": palette.feedback.error,
   "--diffs-modified-color-override": palette.feedback.warning,
   "--diffs-bg-context-override": palette.ground.content,
-  "--diffs-bg-context-gutter-override": palette.ground.chrome,
-  "--diffs-bg-buffer-override": palette.ground.chrome,
-  "--diffs-bg-separator-override": palette.ground.chrome,
+  "--diffs-bg-context-gutter-override": palette.ground.content,
+  "--diffs-bg-buffer-override": palette.ground.content,
+  "--diffs-bg-separator-override": palette.ground.raised,
   "--diffs-bg-addition-override": roleValues["feedback.success13"],
   "--diffs-bg-addition-emphasis-override": roleValues["feedback.success27"],
   "--diffs-bg-deletion-override": roleValues["feedback.error13"],
   "--diffs-bg-deletion-emphasis-override": roleValues["feedback.error27"],
   "--diffs-bg-hover-override": roleValues["text.ink08"],
   "--diffs-bg-selection-override": roleValues["ground.selection60"],
-  "--diffs-bg-addition-number-override": palette.ground.chrome,
-  "--diffs-bg-deletion-number-override": palette.ground.chrome,
+  "--diffs-bg-addition-number-override": palette.ground.content,
+  "--diffs-bg-deletion-number-override": palette.ground.content,
   "--diffs-bg-selection-number-override": palette.ground.raised,
   "--diffs-fg-number-override": roleValues["text.ink55"],
   "--diffs-fg-number-addition-override": palette.feedback.success,
@@ -425,8 +476,22 @@ const requiredRules: Array<{
   declarations: Record<string, string>;
 }> = [
   {
-    selector: ".dark #thread-detail-secondary-panel",
-    declarations: { "--sidebar": palette.ground.content },
+    selector: '.dark [data-sidebar="panel"]',
+    declarations: { "border-color": "var(--sidebar-border)" },
+  },
+  {
+    selector: ".dark #thread-detail-secondary-panel > aside",
+    declarations: { "border-color": "var(--sidebar-border)" },
+  },
+  {
+    selector:
+      '.dark #thread-detail-secondary-panel-handle[data-panel-resize-handle-enabled="true"]',
+    declarations: { "--border-seam": "var(--sidebar-border)" },
+  },
+  {
+    selector:
+      '.dark #thread-detail-secondary-panel-handle[data-panel-resize-handle-enabled="true"] + #thread-detail-secondary-panel > aside',
+    declarations: { "border-color": "transparent" },
   },
   {
     selector: ".dark .rounded-xl.border.border-border-seam.bg-surface-recessed",
@@ -495,6 +560,7 @@ const requiredRules: Array<{
     // from a chunk that loads after this sheet, so a tie loses.
     selector: ".dark .bb-code-highlight.bb-code-highlight",
     declarations: {
+      "background-color": palette.ground.content,
       "--sh-identifier": palette.text.ink,
       "--sh-property": palette.text.ink,
       "--sh-sign": palette.text.ink,
@@ -511,6 +577,22 @@ const requiredRules: Array<{
     declarations: {
       "--diffs-dark-bg": palette.ground.content,
       "--diffs-dark": palette.text.ink,
+    },
+  },
+  {
+    selector: ".dark .canvas-prose",
+    declarations: {
+      // Headings are display-size text, not code. The syntax entity green is
+      // tuned for dense tokens and reads as neon at 1.5rem, so prose headings
+      // take the strongest ink and leave links as the only colored prose.
+      "--canvas-prose-heading": palette.text.ink,
+      "--canvas-prose-strong": palette.code.type,
+      "--canvas-prose-link": palette.code.type,
+      "--canvas-prose-link-hover": palette.contentTint.cyan,
+      "--canvas-prose-marker": palette.contentTint.comment,
+      "--canvas-prose-quote-rule": palette.code.keyword,
+      "--canvas-prose-rule": roleValues["text.ink07"],
+      "--canvas-prose-code-well": palette.ground.raised,
     },
   },
 ];
@@ -533,20 +615,23 @@ function assertExpected(
 
 function channels(hex: string): [number, number, number] {
   const core = hex.replace("#", "");
-  return [0, 2, 4].map((offset) => parseInt(core.slice(offset, offset + 2), 16)) as [
-    number,
-    number,
-    number,
+  return [
+    parseInt(core.slice(0, 2), 16),
+    parseInt(core.slice(2, 4), 16),
+    parseInt(core.slice(4, 6), 16),
   ];
 }
 
 function flatten(foreground: string, background: string): string {
   const core = foreground.replace("#", "");
   const alpha = core.length === 8 ? parseInt(core.slice(6, 8), 16) / 255 : 1;
-  const front = channels(foreground);
-  const back = channels(background);
-  return `#${front
-    .map((channel, index) => Math.round(alpha * channel + (1 - alpha) * back[index]))
+  const [frontRed, frontGreen, frontBlue] = channels(foreground);
+  const [backRed, backGreen, backBlue] = channels(background);
+  return `#${[
+    Math.round(alpha * frontRed + (1 - alpha) * backRed),
+    Math.round(alpha * frontGreen + (1 - alpha) * backGreen),
+    Math.round(alpha * frontBlue + (1 - alpha) * backBlue),
+  ]
     .map((channel) => channel.toString(16).padStart(2, "0"))
     .join("")}`;
 }
@@ -556,12 +641,19 @@ function srgbToLinear(value: number): number {
 }
 
 function luminance(hex: string): number {
-  const [red, green, blue] = channels(hex).map((channel) => srgbToLinear(channel / 255));
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  const [red, green, blue] = channels(hex);
+  return (
+    0.2126 * srgbToLinear(red / 255) +
+    0.7152 * srgbToLinear(green / 255) +
+    0.0722 * srgbToLinear(blue / 255)
+  );
 }
 
 function contrast(a: string, b: string): number {
-  const [high, low] = [luminance(a), luminance(b)].sort((left, right) => right - left);
+  const left = luminance(a);
+  const right = luminance(b);
+  const high = Math.max(left, right);
+  const low = Math.min(left, right);
   return (high + 0.05) / (low + 0.05);
 }
 
@@ -615,7 +707,7 @@ export function auditTheme(source: string): void {
     }
     assertExpected(
       selector,
-      matches[0].declarations,
+      requiredAt(matches, 0, selector).declarations,
       declarationMap(required.declarations),
       violations,
     );
@@ -655,7 +747,7 @@ export function auditTheme(source: string): void {
   for (const [index, background] of ansi.entries()) {
     requireContrast(
       `--ansi-bg-fg-${index} on --ansi-${index}`,
-      ansiForegrounds[index],
+      requiredAt(ansiForegrounds, index, "ANSI foreground"),
       background,
       index === 8 ? 4 : 4.5,
       violations,

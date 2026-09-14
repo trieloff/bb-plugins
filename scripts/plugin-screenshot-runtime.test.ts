@@ -6,11 +6,17 @@ import type { Page } from "playwright";
 import {
   parseScreenshotArguments,
   prepareBbForScreenshots,
+  routedBbCli,
   SCREENSHOT_PREFLIGHT_PLUGINS,
   SCREENSHOT_ROOT,
   SCREENSHOT_THEME_ID,
   withScreenshotBatch,
 } from "./plugin-screenshot-runtime";
+
+test("screenshot bb commands require the managed BB_CLI", () => {
+  expect(() => routedBbCli({})).toThrow("BB_CLI is not set");
+  expect(routedBbCli({ BB_CLI: "/tmp/managed-bb" })).toBe("/tmp/managed-bb");
+});
 
 function pluginList(
   options: {
@@ -55,7 +61,7 @@ function screenshotPage(result: Buffer | Error): Pick<Page, "screenshot"> {
   return {
     async screenshot(options) {
       if (result instanceof Error) throw result;
-      if (!options.path) throw new Error("test screenshot has no output path");
+      if (!options?.path) throw new Error("test screenshot has no output path");
       await writeFile(options.path, result);
       return result;
     },
@@ -119,7 +125,7 @@ describe("bb screenshot preflight", () => {
       calls.push([...args]);
       if (args.join(" ") === "plugin list --json") {
         return listReads++ === 0
-          ? pluginList({ disabled: ["agentation", "notify"] })
+          ? pluginList({ disabled: ["agentation", "dotfiles"] })
           : pluginList();
       }
       if (args.join(" ") === "theme show --json") return theme();
@@ -130,7 +136,7 @@ describe("bb screenshot preflight", () => {
 
     expect(calls.filter((args) => args[1] === "enable")).toEqual([
       ["plugin", "enable", "agentation", "--json"],
-      ["plugin", "enable", "notify", "--json"],
+      ["plugin", "enable", "dotfiles", "--json"],
     ]);
   });
 
@@ -138,11 +144,11 @@ describe("bb screenshot preflight", () => {
     const calls: string[][] = [];
     const runCommand = async (args: readonly string[]): Promise<string> => {
       calls.push([...args]);
-      return pluginList({ missing: ["pr-walkthrough"] });
+      return pluginList({ missing: ["gtd-sidebar"] });
     };
 
     await expect(prepareBbForScreenshots(runCommand)).rejects.toThrow(
-      "pr-walkthrough: bb plugin install ./plugins/pr-walkthrough",
+      "gtd-sidebar: bb plugin install ./plugins/gtd-sidebar",
     );
     expect(calls).toEqual([["plugin", "list", "--json"]]);
   });
@@ -190,13 +196,13 @@ describe("bb screenshot preflight", () => {
   test("fails when a workspace plugin is enabled but not running", async () => {
     const runCommand = async (args: readonly string[]): Promise<string> => {
       if (args.join(" ") === "plugin list --json") {
-        return pluginList({ notRunning: ["agent-proxy"] });
+        return pluginList({ notRunning: ["agentation"] });
       }
       if (args.join(" ") === "theme show --json") return theme();
       return "{}";
     };
 
-    await expect(prepareBbForScreenshots(runCommand)).rejects.toThrow("not running: agent-proxy");
+    await expect(prepareBbForScreenshots(runCommand)).rejects.toThrow("not running: agentation");
   });
 
   test("fails when final theme verification does not converge", async () => {
@@ -237,8 +243,8 @@ describe("screenshot batch publication", () => {
         { id: "first", width: 20, height: 10 },
         { id: "second", width: 30, height: 15 },
       ]);
-      expect(await readFile(first)).toEqual(png(20, 10));
-      expect(await readFile(second)).toEqual(png(30, 15));
+      expect(Buffer.compare(await readFile(first), png(20, 10))).toBe(0);
+      expect(Buffer.compare(await readFile(second), png(30, 15))).toBe(0);
       expect(await stagedFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });

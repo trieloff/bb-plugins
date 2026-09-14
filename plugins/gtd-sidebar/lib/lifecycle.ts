@@ -1,10 +1,9 @@
 /**
- * The settled / snoozed lifecycle, as pure functions over stored rows.
+ * The snooze lifecycle, as pure functions over stored rows.
  *
  * This state lives in the PLUGIN's own database, never on bb's thread. That
  * keeps a plugin concept out of bb's schema and out of the host-daemon
- * protocol, and uninstalling the plugin takes that database with it — see
- * `lib/warm-start.ts` for the browser-side copy it does not take.
+ * protocol, and uninstalling the plugin takes that database with it.
  */
 
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
@@ -25,29 +24,18 @@ export function isThreadWorking(thread: PluginSidebarThread): boolean {
 
 export interface ThreadLifecycleRow {
   threadId: string;
-  /** When the user settled it; null when it is active. */
-  settledAt: number | null;
   /** Wake time for a snooze; null when it is not snoozed. */
   snoozedUntil: number | null;
   /** When the snooze was set — used to detect activity since. */
   snoozedAt: number | null;
 }
 
-/**
- * The ids a settle's archive took, read back from the store.
- *
- * bb's archive cascades to child threads, so un-settling has to give back more
- * than the one id the user acted on. Rows written before that was recorded
- * hold nothing, and a JSON column is only as good as what wrote it — both
- * cases return an empty list, and the caller falls back to the thread's own
- * id, which is exactly what the old behaviour did.
- */
+/** Parse the legacy list of child ids archived by an old settle mutation. */
 export function parseArchivedThreadIds(value: string | null): string[] {
   if (value === null) return [];
   try {
     const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((id): id is string => typeof id === "string");
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
   } catch {
     return [];
   }
@@ -58,12 +46,11 @@ export interface ThreadActivitySignals {
   hasPendingInteraction: boolean;
   /** Any live work: runtime, workflows, background agents, plan, goals. */
   isWorking: boolean;
-  isUnread: boolean;
   /** Newest attention timestamp bb reports for the thread. */
   latestAttentionAt: number;
 }
 
-export type ThreadShelf = "active" | "snoozed" | "settled";
+export type ThreadShelf = "active" | "snoozed";
 
 /**
  * Whether a thread may be parked at all.
@@ -80,72 +67,31 @@ export function canPark(signals: ThreadActivitySignals): boolean {
 /**
  * Which shelf a thread belongs on right now.
  *
- * Order matters. Live work and a raised hand always win, so a parked thread
- * that starts working or asks a question comes straight back. Then snooze,
- * because a wake time is a stronger statement than a settle. Then settled.
+ * Live work and a raised hand always win, so a snoozed thread that starts
+ * working or asks a question comes straight back.
  */
 export function resolveShelf(
   row: ThreadLifecycleRow | undefined,
   signals: ThreadActivitySignals,
   now: number,
 ): ThreadShelf {
-  if (row === undefined) return "active";
+  if (row === undefined || row.snoozedUntil === null) return "active";
   if (!canPark(signals)) return "active";
 
-  if (row.snoozedUntil !== null) {
-    // A timer that has elapsed wakes the thread; so does anything that
-    // happened after the snooze was set.
-    const wokeOnTimer = row.snoozedUntil <= now;
-    const wokeOnActivity = row.snoozedAt !== null && signals.latestAttentionAt > row.snoozedAt;
-    if (!wokeOnTimer && !wokeOnActivity) return "snoozed";
-    return "active";
-  }
-
-  if (row.settledAt !== null) {
-    // New attention since the settle un-settles it: the thread has more to
-    // say than it did when the user filed it away.
-    if (signals.latestAttentionAt > row.settledAt) return "active";
-    return "settled";
-  }
-
-  return "active";
-}
-
-/**
- * The settled rows that have come back on their own, so the store can let
- * them go — and, with them, bb's archive.
- *
- * `resolveShelf` un-settles a thread the moment it has something new to say,
- * but that is a reading of the row, not a change to it. Without this the row
- * would sit there settled forever while the thread is back in the inbox, and
- * bb would still call it archived.
- *
- * `signalsFor` returns undefined for a thread bb no longer reports; those
- * rows belong to the `thread.deleted` cleanup instead.
- */
-export function wokenSettledThreadIds(
-  rows: Iterable<ThreadLifecycleRow>,
-  signalsFor: (threadId: string) => ThreadActivitySignals | undefined,
-  now: number,
-): string[] {
-  const woken: string[] = [];
-  for (const row of rows) {
-    if (row.settledAt === null) continue;
-    const signals = signalsFor(row.threadId);
-    if (signals === undefined) continue;
-    if (resolveShelf(row, signals, now) !== "settled") woken.push(row.threadId);
-  }
-  return woken;
+  // A timer that has elapsed wakes the thread; so does anything that
+  // happened after the snooze was set.
+  const wokeOnTimer = row.snoozedUntil <= now;
+  const wokeOnActivity = row.snoozedAt !== null && signals.latestAttentionAt > row.snoozedAt;
+  return wokeOnTimer || wokeOnActivity ? "active" : "snoozed";
 }
 
 /**
  * Whether a fresh list says exactly what the rows already on screen say.
  *
- * Once the shelves are seeded from a cache, most responses agree with what is
- * already rendered — the mount read, and every realtime publish any window
- * makes. Swapping the map in anyway would hand out a new `parkedThreadIds`
- * set, re-partition and re-sort every thread, and re-run the reconcile effect,
- * all to arrive back where the screen already was.
+ * Most responses do: every realtime publish any window makes re-reads the
+ * list, and most of those reads change nothing. Swapping the map in anyway
+ * would re-partition and re-sort every thread, all to arrive back where the
+ * screen already was.
  */
 export function rowsMatch(
   current: ReadonlyMap<string, ThreadLifecycleRow>,
@@ -156,7 +102,6 @@ export function rowsMatch(
     const existing = current.get(row.threadId);
     return (
       existing !== undefined &&
-      existing.settledAt === row.settledAt &&
       existing.snoozedUntil === row.snoozedUntil &&
       existing.snoozedAt === row.snoozedAt
     );
@@ -181,25 +126,9 @@ export function snoozeWakeLabel(snoozedUntil: number, now: number): string {
   return `${Math.ceil(remaining / DAY_MS)}d`;
 }
 
-export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
-
-export interface SnoozePreset {
-  id: SnoozePresetId;
-  label: string;
-  snoozedUntil: number;
-}
-
-const EVENING_HOUR = 18;
 export const MORNING_HOUR = 9;
 
-/**
- * Calendar-day arithmetic, not fixed millisecond offsets: adding 24 hours
- * lands on the wrong local day across a daylight-saving change, because a
- * spring-forward day is 23 hours long.
- *
- * Exported for `lib/snooze-plan.ts`, which walks a wake time forward off a
- * weekend and must land on the same 09:00 the presets promise.
- */
+/** Calendar-day arithmetic shared by presets and the adaptive snooze plan. */
 export function atHour(base: Date, hour: number, addDays = 0): Date {
   const next = new Date(base);
   next.setDate(next.getDate() + addDays);
@@ -207,35 +136,13 @@ export function atHour(base: Date, hour: number, addDays = 0): Date {
   return next;
 }
 
-/** "This evening" only appears while it is meaningfully before evening. */
-export function resolveSnoozePresets(now: Date): SnoozePreset[] {
-  const presets: SnoozePreset[] = [
-    { id: "hour", label: "In 1 hour", snoozedUntil: now.getTime() + HOUR_MS },
-  ];
-
-  const evening = atHour(now, EVENING_HOUR);
-  if (evening.getTime() - now.getTime() > HOUR_MS) {
-    presets.push({
-      id: "evening",
-      label: "This evening",
-      snoozedUntil: evening.getTime(),
-    });
-  }
-
-  presets.push({
-    id: "tomorrow",
-    label: "Tomorrow",
-    snoozedUntil: atHour(now, MORNING_HOUR, 1).getTime(),
-  });
-
-  const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
-  presets.push({
-    id: "next-week",
-    label: "Next week",
-    snoozedUntil: atHour(now, MORNING_HOUR, daysUntilMonday).getTime(),
-  });
-
-  return presets;
+/**
+ * 09:00 on the next calendar day. Calendar arithmetic, not a fixed 24-hour
+ * offset: a spring-forward day is 23 hours long, so the offset would land on
+ * the wrong local day across a daylight-saving change.
+ */
+export function snoozeUntilTomorrow(now: Date): number {
+  return atHour(now, MORNING_HOUR, 1).getTime();
 }
 
 /**
@@ -270,5 +177,5 @@ export const REFRESH_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000];
 
 export function refreshRetryDelayMs(attempt: number): number | null {
   if (attempt < 0 || attempt >= REFRESH_RETRY_DELAYS_MS.length) return null;
-  return REFRESH_RETRY_DELAYS_MS[attempt];
+  return REFRESH_RETRY_DELAYS_MS[attempt] ?? null;
 }

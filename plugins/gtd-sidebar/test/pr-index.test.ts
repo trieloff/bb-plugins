@@ -312,10 +312,7 @@ describe("isReleasedPull", () => {
   });
 
   it("leaves a merge the newest release predates alone", () => {
-    assert.equal(
-      isReleasedPull(merged({ mergedAt: "2026-09-04T13:00:00Z" }), release()),
-      false,
-    );
+    assert.equal(isReleasedPull(merged({ mergedAt: "2026-09-04T13:00:00Z" }), release()), false);
   });
 
   it("says no for an unmerged pull, and for a repo with no release", () => {

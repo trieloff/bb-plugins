@@ -55,28 +55,14 @@ Two files carry third-party brand artwork. **No licence above grants trademark
 rights**, and none is claimed here. Both are used only to identify the product a
 user has chosen to install, which is nominative use.
 
-| Mark                                                 | Where                                                                                                                                                                                                           | Owner                   |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| Amp                                                  | `plugins/amp/assets/*.svg` and `plugins/amp/src/amp-brand.ts`, used for plugin branding, rendered in the Orb banner, and written to `<bb data dir>/logos/amp.svg` when the plugin provisions its provider entry | Sourcegraph             |
-| OpenAI, Claude, Cursor, Grok, opencode, Pi, oh-my-pi | `plugins/gtd-sidebar/lib/provider-marks.ts`                                                                                                                                                                     | their respective owners |
+| Mark                                                 | Where                                                                                                                  | Owner                   |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Amp                                                  | `plugins/amp/assets/*.svg` and `plugins/amp/src/amp-brand.ts`, used for plugin branding and rendered in the Orb banner | Sourcegraph             |
+| OpenAI, Claude, Cursor, Grok, opencode, Pi, oh-my-pi | `plugins/gtd-sidebar/lib/provider-marks.ts`                                                                            | their respective owners |
 
 In bb provider chrome, a host-served logo always takes precedence over vendored
 geometry and is rendered as a muted silhouette. The Amp Orb banner uses the
 vendored Amp mark as an Amp-red status accent.
-
----
-
-## `@ampcode/sdk`
-
-`plugins/amp` depends on `@ampcode/sdk`, published by Sourcegraph under the **Amp
-Commercial License**, and bundles it into `dist/bridge.js`. That code is
-Sourcegraph's and stays under the Amp Commercial License, not MIT; the licence
-permits the redistribution `@smsunarto/bb-plugin-amp` performs.
-
-`plugins/amp/vendor/ampcode-cli-stub` is a local, empty stand-in for
-`@ampcode/cli` written for this repository. It contains none of Sourcegraph's
-code; it exists so `@ampcode/sdk` falls through to the `AMP_CLI_PATH` the plugin
-configures, instead of resolving a bundled CLI.
 
 ---
 
@@ -98,26 +84,11 @@ Source: <https://github.com/benjitaylor/agentation>
 
 ---
 
-## CLIProxyAPI
-
-`plugins/agent-proxy` **downloads and runs** CLIProxyAPI
-(<https://github.com/router-for-me/CLIProxyAPI>) at install time. No CLIProxyAPI
-source or binary is vendored in this repository, so its licence applies to what
-lands on the user's machine, not to anything distributed here.
-
----
-
 ## Fonts
 
 The documentation screenshot renderer loads **Inter** and **IBM Plex Mono** from
 the `@fontsource-variable/inter` and `@fontsource/ibm-plex-mono` development
 dependencies. Both fonts use the SIL Open Font License 1.1. Their binaries are
 not committed to this repository or shipped in a plugin tarball.
-
-The PR Walkthrough site template asks for **Berkeley Mono** through `local()`
-sources only, so it is used only where the reader has already licensed and
-installed it, and otherwise falls back to the system monospace stack. Berkeley
-Mono is a commercial font from Berkeley Graphics; a licence is required to
-install it, and none is required to use this template.
 
 Sources: <https://github.com/rsms/inter>, <https://github.com/IBM/plex>

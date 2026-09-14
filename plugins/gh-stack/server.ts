@@ -495,15 +495,6 @@ async function readStackView(cwd: string): Promise<ParsedStackView> {
 // untracked tree cannot blow up the command line.
 const MAX_UNTRACKED_COUNTS = 50;
 
-// The remote's default branch ("origin/main" → "main"), used as the rail's
-// base label when the branch is not in a stack yet.
-async function defaultBranchName(cwd: string): Promise<string | null> {
-  const result = await runGit(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd);
-  if (result.code !== 0) return null;
-  const name = result.stdout.trim().replace(/^origin\//, "");
-  return name || null;
-}
-
 // Branch namespace ("scott/") the workspace already uses: the one every
 // stack branch shares, else the current branch's own. Returns null when
 // branches are unprefixed.
@@ -642,12 +633,13 @@ async function inspectBranchPostcondition(
     };
   }
   const matches = view.stack.branches.filter((candidate) => candidate.name === branch);
+  const [match] = matches;
   const top = view.stack.branches.at(-1);
   return {
     complete:
       branchExists === true &&
       matches.length === 1 &&
-      matches[0].isCurrent &&
+      match?.isCurrent === true &&
       currentBranch === branch &&
       top?.name === branch,
     branchExists: branchExists === true,
@@ -1133,8 +1125,10 @@ export default async function plugin(bb: BbPluginApi) {
     });
   }
 
+  // defaultBranch is bb's view of the repository default branch, used as the
+  // rail's base label before a stack exists (a stack reports its own trunk).
   type Workspace =
-    | { cwd: string; key: string; error: null }
+    | { cwd: string; key: string; defaultBranch: string | null; error: null }
     | { cwd: null; key: null; error: { kind: StackErrorKind; message: string } };
 
   type ValidWorkspace = Extract<Workspace, { error: null }>;
@@ -1196,7 +1190,7 @@ export default async function plugin(bb: BbPluginApi) {
       };
     }
     threadWorkspaceKeys.set(threadId, resolvedKey.key);
-    return { cwd, key: resolvedKey.key, error: null };
+    return { cwd, key: resolvedKey.key, defaultBranch: environment.defaultBranch, error: null };
   }
 
   function invalidateWorkspaceCaches(workspaceKey: string): void {
@@ -1489,20 +1483,19 @@ export default async function plugin(bb: BbPluginApi) {
       mutationVersion: workspaceMutationVersions.get(workspace.key) ?? 0,
     });
 
-    const [result, pending, defaultBranch, headPrefix, stashOwners, stashCounts] =
-      await Promise.all([
-        runGh(["stack", "view", "--json"], cwd, 30_000),
-        pendingChangeSet(cwd),
-        defaultBranchName(cwd),
-        currentBranchPrefix(cwd),
-        activeAutoStashOwners({
-          runGit: (args, timeoutMs) => runGit(args, cwd, timeoutMs),
-          blockedStashOids: blockedAutoStashOids,
-        }),
-        stashCountsByBranch({
-          runGit: (args, timeoutMs) => runGit(args, cwd, timeoutMs),
-        }),
-      ]);
+    const defaultBranch = workspace.defaultBranch;
+    const [result, pending, headPrefix, stashOwners, stashCounts] = await Promise.all([
+      runGh(["stack", "view", "--json"], cwd, 30_000),
+      pendingChangeSet(cwd),
+      currentBranchPrefix(cwd),
+      activeAutoStashOwners({
+        runGit: (args, timeoutMs) => runGit(args, cwd, timeoutMs),
+        blockedStashOids: blockedAutoStashOids,
+      }),
+      stashCountsByBranch({
+        runGit: (args, timeoutMs) => runGit(args, cwd, timeoutMs),
+      }),
+    ]);
     const inspected = parseStackViewResult(result);
     if (inspected.error) {
       return {
@@ -1543,7 +1536,11 @@ export default async function plugin(bb: BbPluginApi) {
     const branches = await Promise.all(
       // oxlint-disable-next-line oxc/no-map-spread -- copy-on-write over zod-parsed data
       rawBranches.map(async (branch, index) => {
-        const parent = index === 0 ? rawStack.trunk : rawBranches[index - 1].name;
+        const previous = index === 0 ? null : rawBranches[index - 1];
+        if (index > 0 && previous === undefined) {
+          throw new Error(`Stack branch ${branch.name} has no parent at index ${index - 1}`);
+        }
+        const parent = previous?.name ?? rawStack.trunk;
         const diffPromise = branchChangeSet(cwd, parent, branch.name);
         const remote = `refs/remotes/origin/${branch.name}`;
         const remoteExists = remoteFresh
@@ -2258,8 +2255,8 @@ export default async function plugin(bb: BbPluginApi) {
         // Recompute and authorize directly immediately before the irreversible request.
         const fresh = await readStackView(cwd);
         if (fresh.error) return { ok: false, message: fresh.error.message, detail: null };
-        for (let index = 0; index < prefix.selected.length; index++) {
-          const selected = prefix.selected[index];
+        let expectedBase = fresh.stack.trunk;
+        for (const selected of prefix.selected) {
           const stackBranch = fresh.stack.branches.find(
             (branch) => branch.name === selected.name && branch.pr?.number === selected.pr?.number,
           );
@@ -2291,7 +2288,6 @@ export default async function plugin(bb: BbPluginApi) {
               detail: outputTail(direct),
             };
           }
-          const expectedBase = index === 0 ? fresh.stack.trunk : prefix.selected[index - 1].name;
           const authorized =
             direct.code === 0 &&
             state.headRefName === selected.name &&
@@ -2306,6 +2302,7 @@ export default async function plugin(bb: BbPluginApi) {
               detail: null,
             };
           }
+          expectedBase = selected.name;
         }
         const top = prefix.selected.at(-1)?.pr;
         if (!top) {

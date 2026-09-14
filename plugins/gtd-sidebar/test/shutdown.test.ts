@@ -24,9 +24,7 @@ describe("isReloadCancellation", () => {
   // text, which is how this one reached the log in the first place.
   it("recognises a stale-handle rejection that arrived as text", () => {
     assert.equal(
-      isReloadCancellation(
-        'PluginContextStaleError: plugin "gtd-sidebar" used a stale API handle',
-      ),
+      isReloadCancellation('PluginContextStaleError: plugin "gtd-sidebar" used a stale API handle'),
       true,
     );
   });

@@ -3,10 +3,11 @@ import process from "node:process";
 import { runAdd } from "./add.ts";
 import { runCheck } from "./check.ts";
 import { runCreate } from "./create.ts";
+import { DEV_USAGE, runDev } from "./dev/command.ts";
 import type { BinResult } from "./shared.ts";
 
 /**
- * The bb-kit bin (§7): `create <name>`, `add <kind> <name>`, `check`.
+ * The bb-kit bin (§8): `create <name>`, `add <kind> <name>`, `check`.
  * Dispatch only — every command lives in its own module and returns a
  * BinResult, so tests drive the commands without executing this file.
  * Usage mistakes exit 2; command failures exit 1.
@@ -15,9 +16,10 @@ import type { BinResult } from "./shared.ts";
 const USAGE = [
   "usage:",
   "  bb-kit create <package-name>        scaffold a new plugin directory",
-  "  bb-kit add <query|mutation|command> <kebab-name>",
+  "  bb-kit add <query|mutation|command|tool> <kebab-name>",
   "                                      generate one unit + sibling test",
   "  bb-kit check                        verify wiring, naming, and manifest",
+  "  bb-kit dev-instance <command>       manage an isolated bb dev instance",
   "",
 ].join("\n");
 
@@ -49,6 +51,16 @@ async function main(argv: readonly string[]): Promise<BinResult> {
       return usageError("check takes no arguments — run it at the plugin root");
     }
     return runCheck({ cwd: process.cwd() });
+  }
+  if (command === "dev-instance") {
+    if (rest.length === 0) {
+      return { exitCode: 2, stdout: "", stderr: DEV_USAGE };
+    }
+    return runDev(rest, {
+      cwd: process.cwd(),
+      environment: process.env,
+      progress: (message) => process.stderr.write(`${message}\n`),
+    });
   }
   return usageError(`unknown command "${command}"`);
 }

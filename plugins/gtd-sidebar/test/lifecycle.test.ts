@@ -5,10 +5,9 @@ import {
   nextWakeDelayMs,
   refreshRetryDelayMs,
   resolveShelf,
-  resolveSnoozePresets,
   rowsMatch,
+  snoozeUntilTomorrow,
   snoozeWakeLabel,
-  wokenSettledThreadIds,
   MAX_TIMEOUT_MS,
   REFRESH_RETRY_DELAYS_MS,
   type ThreadActivitySignals,
@@ -18,13 +17,11 @@ import {
 const quiet: ThreadActivitySignals = {
   hasPendingInteraction: false,
   isWorking: false,
-  isUnread: false,
   latestAttentionAt: 0,
 };
 
 const row = (overrides: Partial<ThreadLifecycleRow> = {}): ThreadLifecycleRow => ({
   threadId: "thr_1",
-  settledAt: null,
   snoozedUntil: null,
   snoozedAt: null,
   ...overrides,
@@ -51,29 +48,8 @@ describe("resolveShelf", () => {
     assert.equal(resolveShelf(undefined, quiet, 1_000), "active");
   });
 
-  it("settles a parked, quiet thread", () => {
-    assert.equal(resolveShelf(row({ settledAt: 500 }), quiet, 1_000), "settled");
-  });
-
-  it("brings a settled thread back when it starts working", () => {
-    assert.equal(
-      resolveShelf(row({ settledAt: 500 }), { ...quiet, isWorking: true }, 1_000),
-      "active",
-    );
-  });
-
-  it("brings a settled thread back when it asks a question", () => {
-    assert.equal(
-      resolveShelf(row({ settledAt: 500 }), { ...quiet, hasPendingInteraction: true }, 1_000),
-      "active",
-    );
-  });
-
-  it("un-settles on new attention after the settle", () => {
-    assert.equal(
-      resolveShelf(row({ settledAt: 500 }), { ...quiet, latestAttentionAt: 900 }, 1_000),
-      "active",
-    );
+  it("keeps a row with no snooze active", () => {
+    assert.equal(resolveShelf(row(), quiet, 1_000), "active");
   });
 
   it("keeps a snoozed thread hidden until its wake time", () => {
@@ -120,53 +96,6 @@ describe("resolveShelf", () => {
   });
 });
 
-describe("wokenSettledThreadIds", () => {
-  const signals = (overrides: Partial<ThreadActivitySignals> = {}): ThreadActivitySignals => ({
-    ...quiet,
-    ...overrides,
-  });
-
-  it("leaves a thread that is still settled alone", () => {
-    assert.deepEqual(
-      wokenSettledThreadIds([row({ threadId: "a", settledAt: 500 })], () => signals(), 1_000),
-      [],
-    );
-  });
-
-  // The row is what holds bb's archive, so a thread the shelf has already put
-  // back in the inbox has to give the row up too.
-  it("reports a settled thread that has come back", () => {
-    assert.deepEqual(
-      wokenSettledThreadIds(
-        [row({ threadId: "a", settledAt: 500 }), row({ threadId: "b", settledAt: 500 })],
-        (threadId) => (threadId === "b" ? signals({ latestAttentionAt: 900 }) : signals()),
-        1_000,
-      ),
-      ["b"],
-    );
-  });
-
-  it("ignores snoozed rows", () => {
-    assert.deepEqual(
-      wokenSettledThreadIds(
-        [row({ threadId: "a", snoozedUntil: 900, snoozedAt: 500 })],
-        () => signals(),
-        1_000,
-      ),
-      [],
-    );
-  });
-
-  // A thread bb no longer reports is the deletion cleanup's job, not this
-  // one's: unsettling a row for a thread that is gone archives nothing.
-  it("skips a thread bb no longer reports", () => {
-    assert.deepEqual(
-      wokenSettledThreadIds([row({ threadId: "a", settledAt: 500 })], () => undefined, 1_000),
-      [],
-    );
-  });
-});
-
 describe("rowsMatch", () => {
   const asMap = (rows: readonly ThreadLifecycleRow[]) =>
     new Map(rows.map((entry) => [entry.threadId, entry]));
@@ -175,14 +104,17 @@ describe("rowsMatch", () => {
   // publish any window makes afterwards. Recognising that is what keeps a
   // no-op refresh from re-partitioning the whole sidebar.
   it("matches a list that says what the rows already say", () => {
-    const rows = [row({ threadId: "a", settledAt: 500 }), row({ threadId: "b" })];
+    const rows = [
+      row({ threadId: "a", snoozedUntil: 9_000, snoozedAt: 500 }),
+      row({ threadId: "b" }),
+    ];
     assert.equal(rowsMatch(asMap(rows), [...rows].reverse()), true);
   });
 
   it("notices a timestamp that moved", () => {
     assert.equal(
-      rowsMatch(asMap([row({ threadId: "a", settledAt: 500 })]), [
-        row({ threadId: "a", settledAt: 900 }),
+      rowsMatch(asMap([row({ threadId: "a", snoozedUntil: 9_000, snoozedAt: 500 })]), [
+        row({ threadId: "a", snoozedUntil: 9_000, snoozedAt: 900 }),
       ]),
       false,
     );
@@ -210,38 +142,14 @@ describe("snoozeWakeLabel", () => {
   });
 });
 
-describe("resolveSnoozePresets", () => {
-  it("offers this evening while it is still well before evening", () => {
-    const presets = resolveSnoozePresets(new Date(2026, 0, 5, 9, 0, 0));
-    assert.deepEqual(
-      presets.map((preset) => preset.id),
-      ["hour", "evening", "tomorrow", "next-week"],
-    );
-  });
-
-  it("drops this evening once evening is near", () => {
-    const presets = resolveSnoozePresets(new Date(2026, 0, 5, 17, 30, 0));
-    assert.deepEqual(
-      presets.map((preset) => preset.id),
-      ["hour", "tomorrow", "next-week"],
-    );
-  });
-
+describe("snoozeUntilTomorrow", () => {
   // Calendar arithmetic, not +24h: a fixed offset lands on the wrong local
   // day across a daylight-saving change.
-  it("puts tomorrow at 9am on the next calendar day", () => {
-    const presets = resolveSnoozePresets(new Date(2026, 0, 5, 23, 30, 0));
-    const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
+  it("lands at 9am on the next calendar day", () => {
+    const tomorrow = new Date(snoozeUntilTomorrow(new Date(2026, 0, 5, 23, 30, 0)));
     assert.equal(tomorrow.getDate(), 6);
     assert.equal(tomorrow.getHours(), 9);
-  });
-
-  it("puts next week on the coming Monday", () => {
-    // 2026-01-05 is a Monday, so "next week" is the following Monday.
-    const presets = resolveSnoozePresets(new Date(2026, 0, 5, 10, 0, 0));
-    const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
-    assert.equal(nextWeek.getDay(), 1);
-    assert.equal(nextWeek.getDate(), 12);
+    assert.equal(tomorrow.getMinutes(), 0);
   });
 });
 

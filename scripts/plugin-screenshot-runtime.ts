@@ -2,11 +2,14 @@ import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { workspacePlugins } from "./plugin-package";
+import { loadWorkspaceDefinition } from "../packages/bb-kit-core/src/bin/dev/workspace.ts";
 
 export const SCREENSHOT_ROOT = fileURLToPath(new URL("..", import.meta.url));
-export const SCREENSHOT_THEME_ID = "plugin:monokai:bb-monokai";
-export const SCREENSHOT_PREFLIGHT_PLUGINS = workspacePlugins(SCREENSHOT_ROOT).map(
+const SCREENSHOT_WORKSPACE = loadWorkspaceDefinition(SCREENSHOT_ROOT);
+export const SCREENSHOT_THEME_ID = SCREENSHOT_WORKSPACE.profile.theme;
+export const SIDEBAR_PROVIDER_KEY = "bb.sidebar.threadListProvider";
+export const SIDEBAR_PROVIDER = "gtd-sidebar/inbox";
+export const SCREENSHOT_PREFLIGHT_PLUGINS = SCREENSHOT_WORKSPACE.plugins.map(
   ({ id, directory }) => ({ id, directory }),
 );
 
@@ -51,6 +54,16 @@ export interface ScreenshotBatch {
 }
 
 export type BbCommandRunner = (args: readonly string[]) => Promise<string>;
+
+export function routedBbCli(environment: NodeJS.ProcessEnv = process.env): string {
+  const executable = environment.BB_CLI;
+  if (!executable) {
+    throw new Error(
+      "BB_CLI is not set. Run bb-kit dev-instance workspace, then route this command through bb-kit dev-instance run.",
+    );
+  }
+  return executable;
+}
 
 export function parseScreenshotArguments(args: readonly string[]): ScreenshotOptions {
   const plugins: string[] = [];
@@ -148,7 +161,7 @@ function activeTheme(output: string, args: readonly string[]): string {
 }
 
 export async function runBbCommand(args: readonly string[]): Promise<string> {
-  const executable = process.env.BB_CLI ?? "bb";
+  const executable = routedBbCli();
   const child = Bun.spawn([executable, ...args], {
     cwd: SCREENSHOT_ROOT,
     stdout: "pipe",
@@ -252,7 +265,7 @@ export async function createScreenshotContext(
   browser: Browser,
   options: { viewport: ScreenshotSize; dpr: number },
 ): Promise<BrowserContext> {
-  return browser.newContext({
+  const context = await browser.newContext({
     viewport: options.viewport,
     deviceScaleFactor: options.dpr,
     colorScheme: "dark",
@@ -261,6 +274,11 @@ export async function createScreenshotContext(
     timezoneId: "UTC",
     serviceWorkers: "block",
   });
+  await context.addInitScript(
+    ({ key, provider }) => localStorage.setItem(key, JSON.stringify(provider)),
+    { key: SIDEBAR_PROVIDER_KEY, provider: SIDEBAR_PROVIDER },
+  );
+  return context;
 }
 
 export async function createScreenshotPage(

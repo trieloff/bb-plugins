@@ -1,10 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { hostContext, type Context, type HostSeam, type HostCLISeam, type HostRPCSeam } from "./host.ts";
+import {
+  hostContext,
+  type Context,
+  type HostAgentsSeam,
+  type HostCLISeam,
+  type HostRPCSeam,
+  type HostSeam,
+} from "./host.ts";
 
-// THE load-bearing §2/§6 check: the real host API assigns to the
-// structural seam CAST-FREE against SDK 0.4.8 declarations. Kept inside
+// THE load-bearing §2/§7 check: the real host API assigns to the
+// structural seam CAST-FREE against the installed SDK declarations. Kept inside
 // a never-invoked function — there is no runtime BbPluginApi value.
 function assertSeamAssignable(bb: BbPluginApi): HostSeam {
   return bb;
@@ -16,17 +23,24 @@ function assertContext(bb: BbPluginApi): Context {
 }
 void assertContext;
 
-function assertContextFields(context: Context): void {
-  void context.bb.pluginId;
-  void context.bb.sdk.threads;
-  void context.bb.storage.kv.get;
+function assertContextFields(ctx: Context): void {
+  void ctx.bb.pluginId;
+  void ctx.bb.sdk.threads;
+  void ctx.bb.storage.kv.get;
 }
 void assertContextFields;
 
+function assertAgentsSeamFields(bb: HostSeam): void {
+  void bb.agents.registerTool;
+  void bb.agents.configure;
+  void bb.agents.contributeInstructions;
+}
+void assertAgentsSeamFields;
+
 type Expect<T extends true> = T;
 type _composition = Expect<
-  [HostSeam] extends [HostRPCSeam & HostCLISeam]
-    ? [HostRPCSeam & HostCLISeam] extends [HostSeam]
+  [HostSeam] extends [HostRPCSeam & HostCLISeam & HostAgentsSeam]
+    ? [HostRPCSeam & HostCLISeam & HostAgentsSeam] extends [HostSeam]
       ? true
       : false
     : false
@@ -38,12 +52,12 @@ test("the seam file stays type-only (nothing to run)", () => {
 
 test("hostContext freezes { bb } and keeps bb live", () => {
   const bb = { sdk: { tag: 1 }, storage: { tag: 2 } } as unknown as BbPluginApi;
-  const context = hostContext(bb);
-  assert.equal(context.bb, bb);
-  assert.equal("sdk" in context, false);
-  assert.equal("storage" in context, false);
-  assert.equal(Object.isFrozen(context), true);
+  const ctx = hostContext(bb);
+  assert.equal(ctx.bb, bb);
+  assert.equal("sdk" in ctx, false);
+  assert.equal("storage" in ctx, false);
+  assert.equal(Object.isFrozen(ctx), true);
   assert.throws(() => {
-    Object.assign(context, { extra: true });
+    Object.assign(ctx, { extra: true });
   });
 });

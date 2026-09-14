@@ -33,7 +33,7 @@ export const FRESH_REST_BUDGET: RestBudgetState = { skipUntilMs: null, strikes: 
 
 export function backoffMs(strikes: number): number {
   const index = Math.min(Math.max(strikes, 1), REST_BACKOFF_MS.length) - 1;
-  return REST_BACKOFF_MS[index];
+  return REST_BACKOFF_MS[index] ?? REST_BACKOFF_MS[REST_BACKOFF_MS.length - 1] ?? MINUTE_MS;
 }
 
 /** A refusal: take the next step up the ladder. */

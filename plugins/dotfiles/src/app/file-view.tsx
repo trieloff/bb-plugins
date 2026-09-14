@@ -1,0 +1,156 @@
+import { useDeferredValue, useMemo, useState } from "react";
+import type { ReactElement } from "react";
+import { Button } from "@/components/ui/button";
+import { buildDiff } from "./diff.ts";
+import {
+  experimental_Diff as Diff,
+  experimental_SourceCode as SourceCode,
+} from "@get-bb/plugin-sdk/app";
+import type { RepoPath } from "./route.ts";
+import { useTasks, type Tasks } from "./tasks.ts";
+import { useFileEditor, type ReadyFileEditor } from "./use-file-editor.ts";
+import { WorkingFileEditor } from "./working-file-editor.tsx";
+
+export interface FileViewProps {
+  readonly path: RepoPath;
+}
+
+export function FileView({ path }: FileViewProps): ReactElement {
+  const editor = useFileEditor(path);
+  const tasks = useTasks();
+
+  if (editor.status === "loading") {
+    // A read takes a moment. A message that flashes for it costs more attention
+    // than the wait does, so the pane stays quiet until the file arrives.
+    return <div className="flex-1" aria-busy="true" aria-label={`Loading ${path}`} />;
+  }
+  if (editor.status === "error") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm text-destructive">{editor.message}</p>
+        <Button variant="outline" onClick={editor.retry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  return <ReadyFileView path={path} editor={editor} tasks={tasks} />;
+}
+
+function saveStatusLabel(editor: ReadyFileEditor): string {
+  if (editor.conflict) return "Conflict";
+  if (editor.saving) return "Saving…";
+  if (editor.dirty) return "Unsaved changes";
+  return "Saved";
+}
+
+function ReadyFileView({
+  path,
+  editor,
+  tasks,
+}: {
+  readonly path: RepoPath;
+  readonly editor: ReadyFileEditor;
+  readonly tasks: Tasks;
+}): ReactElement {
+  const [view, setView] = useState<"source" | "diff">("source");
+  const deferredContent = useDeferredValue(editor.content);
+  const diff = useMemo(
+    () => (view === "diff" ? buildDiff(path, editor.headContent, deferredContent) : null),
+    [deferredContent, editor.headContent, path, view],
+  );
+
+  return (
+    <div
+      role="presentation"
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={(event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "s") {
+          event.preventDefault();
+          editor.flush();
+        }
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+        <div className="min-w-48 flex-1 basis-64">
+          <div className="truncate font-mono text-sm text-foreground">{path}</div>
+        </div>
+        <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
+          <div className="flex rounded-md border border-border p-0.5">
+            <Button
+              size="sm"
+              variant={view === "source" ? "secondary" : "ghost"}
+              aria-pressed={view === "source"}
+              onClick={() => setView("source")}
+            >
+              Source
+            </Button>
+            <Button
+              size="sm"
+              variant={view === "diff" ? "secondary" : "ghost"}
+              aria-pressed={view === "diff"}
+              onClick={() => setView("diff")}
+            >
+              Diff
+            </Button>
+          </div>
+          <Button size="sm" variant="outline" onClick={editor.reload} disabled={editor.saving}>
+            Reload
+          </Button>
+          <span aria-live="polite" className="text-xs text-muted-foreground">
+            {saveStatusLabel(editor)}
+          </span>
+        </div>
+      </div>
+
+      {editor.conflict && (
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-destructive">
+          <span className="flex-1">Changed on disk.</span>
+          <Button size="sm" variant="outline" onClick={editor.reload}>
+            Reload
+          </Button>
+          <Button size="sm" variant="destructive" onClick={editor.overwrite}>
+            Overwrite
+          </Button>
+        </div>
+      )}
+      {tasks.renderStale && (
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-amber-500">
+          <span className="flex-1">Rendered files are stale.</span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={tasks.current?.status === "running"}
+            onClick={() => tasks.run("render")}
+          >
+            Run render
+          </Button>
+        </div>
+      )}
+      {editor.saveError !== null && (
+        <div className="border-b border-border px-4 py-2 text-xs text-destructive">
+          Save failed: {editor.saveError}
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        <section className={`flex min-h-0 flex-1 flex-col ${view === "source" ? "" : "hidden"}`}>
+          <WorkingFileEditor
+            path={path}
+            value={editor.content}
+            onChange={editor.setContent}
+            onSave={editor.flush}
+          />
+        </section>
+        <section className={`min-h-0 flex-1 overflow-auto ${view === "diff" ? "" : "hidden"}`}>
+          {view === "diff" &&
+            (diff ? (
+              <Diff {...diff} path={path} view="split" overflow="wrap" />
+            ) : (
+              <SourceCode content={deferredContent} path={path} overflow="wrap" />
+            ))}
+        </section>
+      </div>
+    </div>
+  );
+}

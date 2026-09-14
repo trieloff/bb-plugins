@@ -1,13 +1,13 @@
 import { createRequire } from "node:module";
 
-/** Public surface of `@bb-kit/core/testing` (§1, §8). */
+/** Public surface of `@bb-kit/core/testing` (§1, §9). */
 
 /** Re-export — for tests that still build an in-process RPC client. */
 export { stubClient } from "./stub-client.ts";
 export { stubHostContext } from "./stub-context.ts";
 
 /**
- * Install a jsdom document onto `globalThis` for tier-3 tests (§8).
+ * Install a jsdom document onto `globalThis` for tier-3 tests (§9).
  * Idempotent — the first call wins, later calls are no-ops (including
  * when some other harness already installed a DOM). Call it BEFORE
  * importing anything that touches the DOM at module scope. Throws a
@@ -28,6 +28,7 @@ export function installDom(): void {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       `installDom() could not resolve jsdom. Add "jsdom" to your plugin's devDependencies and install it. (${message})`,
+      { cause: error },
     );
   }
 

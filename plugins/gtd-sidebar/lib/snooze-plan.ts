@@ -35,7 +35,7 @@ export const SNOOZE_LADDER_DAYS: readonly number[] = [1, 2, 3, 5, 8, 13, 21, 30]
 
 export function ladderDays(step: number): number {
   const index = Math.min(Math.max(step, 0), SNOOZE_LADDER_DAYS.length - 1);
-  return SNOOZE_LADDER_DAYS[index];
+  return SNOOZE_LADDER_DAYS[index] ?? 1;
 }
 
 export interface QuickSnoozeInputs {
@@ -129,7 +129,9 @@ const WEEKDAY_NAMES = [
  */
 export function quickSnoozeLabel(plan: QuickSnoozePlan, now: number): string {
   const target = new Date(plan.snoozedUntil);
-  const elapsedDays = Math.round((plan.snoozedUntil - atHour(new Date(now), MORNING_HOUR).getTime()) / (24 * 60 * 60 * 1000));
+  const elapsedDays = Math.round(
+    (plan.snoozedUntil - atHour(new Date(now), MORNING_HOUR).getTime()) / (24 * 60 * 60 * 1000),
+  );
   if (elapsedDays <= 1) return "Snooze until tomorrow";
   if (elapsedDays <= 6) return `Snooze until ${WEEKDAY_NAMES[target.getDay()]}`;
   return `Snooze for ${elapsedDays} days`;

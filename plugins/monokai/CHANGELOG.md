@@ -1,5 +1,63 @@
 # @smsunarto/bb-plugin-monokai
 
+## Unreleased
+
+### Minor Changes
+
+- Add a UI font setting with Inter as the default and SF Pro as the alternative.
+  The selection updates every open mobile and desktop bb client without a
+  plugin reload. Code and terminal typography remain on Berkeley Mono.
+
+### Patch Changes
+
+- Style bb's in-app notification center with Monokai surfaces, selected and
+  hover states, controls, dividers, and a rounded desktop card. Refine desktop
+  transient toasts with a compact Codex-inspired layout. Compact layouts keep
+  bb's native drawer and toast geometry.
+
+- Keep Monaco on the Cursor code contract. JavaScript and TypeScript lexical
+  fallbacks no longer spend VS Dark teal or pale green on ambiguous identifiers
+  and numbers. A syntax-derived token layer now recovers declaration keywords,
+  types, function declarations and calls, plus parameter declarations and
+  references without loading TypeScript language services. Bracket depth uses
+  the Cursor palette instead of VS Dark. Existing Monokai pages activate the
+  token layer immediately after a plugin reload. Desktop clients retain a DOM
+  token fallback when Electron cannot attach the Monaco provider.
+
+- Keep the page header on the editor ground. bb paints the header with its
+  scrim surface, which the theme had pinned to the darker chrome ground, so
+  on phones the header rendered one step darker than the status-bar strip
+  above it and the content below it.
+
+- Keep SF Pro composer placeholders at regular weight on mobile layouts.
+
+- Gate every theme hover fill behind `@media (hover: hover)`, matching bb's
+  own Tailwind hover utilities, so a tapped button on a phone no longer keeps
+  its raised hover fill until the next tap.
+
+- Tighten `diagram` and `patch` fence leading to 1.2 on compact
+  coarse-pointer layouts, where bb raises thread code to 14px and the 1.3
+  leading splits box-drawing connectors again.
+
+- Keep the composer editor, the thread search field, and other text fields at
+  16px on compact coarse-pointer layouts so iOS Safari does not zoom the page
+  when a field takes focus.
+
+- Set fenced code block leading in the thread to 1.5 instead of the host's
+  prose leading, and tighten `diagram` and `patch` fences to 1.3 so
+  box-drawing glyphs in file trees and tree diffs connect between rows.
+
+- Frame inline images so they no longer blend into the panel. Markdown images,
+  attachment thumbnails, and timeline previews share the theme's standard
+  border; markdown images also pick up the rounded corner radius and extra
+  block margin against the surrounding prose.
+
+## 0.3.2
+
+### Patch Changes
+
+- 3da36f5: Support bb 0.40. The engines floor moves to the tested bb release (`>=0.40.0 <1.0.0`) and the plugin is built against plugin SDK 0.4.21.
+
 ## 0.3.1
 
 ### Patch Changes

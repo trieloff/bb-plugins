@@ -141,7 +141,10 @@ type BrowserTabCandidate = {
   url?: string;
 };
 
-function asInAppBrowserTab(candidate: BrowserTabCandidate, fallback: InAppBrowserTab): InAppBrowserTab {
+function asInAppBrowserTab(
+  candidate: BrowserTabCandidate,
+  fallback: InAppBrowserTab,
+): InAppBrowserTab {
   if (candidate.kind !== "browser" || typeof candidate.url !== "string") return fallback;
   const title = candidate.title;
   const environmentId = candidate.environmentId;

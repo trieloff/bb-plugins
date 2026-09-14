@@ -134,7 +134,8 @@ export function classifyProjectRhythm(
   const { weekendDays, weekdayDays } = countDaysBetween(earliest, now);
   const observedDays = weekendDays + weekdayDays;
 
-  if (observedDays < MIN_WINDOW_DAYS) return { ...unclassified, weekendTurns, weekdayTurns, observedDays };
+  if (observedDays < MIN_WINDOW_DAYS)
+    return { ...unclassified, weekendTurns, weekdayTurns, observedDays };
   if (weekendTurns + weekdayTurns < MIN_CAPPED_TURNS) {
     return { ...unclassified, weekendTurns, weekdayTurns, observedDays };
   }

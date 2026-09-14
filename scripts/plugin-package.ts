@@ -57,7 +57,9 @@ export interface PluginManifest {
   peerDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   bb?: {
+    name?: string;
     server?: string;
+    host?: string;
     app?: string;
     skills?: string[];
     commands?: string[] | string;
@@ -105,4 +107,8 @@ export function workspacePlugins(root: string): WorkspacePlugin[] {
     });
   }
   return plugins;
+}
+
+export function publishableWorkspacePlugins(root: string): WorkspacePlugin[] {
+  return workspacePlugins(root).filter((plugin) => plugin.manifest.private !== true);
 }

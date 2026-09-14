@@ -130,7 +130,10 @@ export function parseRestPull(raw: unknown): RestPull | null {
       : null;
   const baseRef = base === null ? null : base.ref;
   const baseRepo =
-    base !== null && typeof base.repo === "object" && base.repo !== null && !Array.isArray(base.repo)
+    base !== null &&
+    typeof base.repo === "object" &&
+    base.repo !== null &&
+    !Array.isArray(base.repo)
       ? (base.repo as Record<string, unknown>)
       : null;
   const defaultBranch = baseRepo === null ? null : baseRepo.default_branch;

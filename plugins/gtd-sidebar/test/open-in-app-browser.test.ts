@@ -41,14 +41,8 @@ describe("shouldDeferToSystemBrowser", () => {
 
 describe("panelStorageKey", () => {
   it("matches bb's per-thread panel blob key", () => {
-    assert.equal(
-      panelStorageKey("thr_1"),
-      "bb.thread.fixedPanelTabsState-thr_1-1",
-    );
-    assert.equal(
-      panelStorageKey("thr/1"),
-      "bb.thread.fixedPanelTabsState-thr%2F1-1",
-    );
+    assert.equal(panelStorageKey("thr_1"), "bb.thread.fixedPanelTabsState-thr_1-1");
+    assert.equal(panelStorageKey("thr/1"), "bb.thread.fixedPanelTabsState-thr%2F1-1");
   });
 });
 

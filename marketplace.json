@@ -6,26 +6,6 @@
   "description": "Plugins for bb: agents, GitHub stacks, notifications, themes.",
   "plugins": [
     {
-      "id": "agent-proxy",
-      "displayName": "Agent Proxy",
-      "description": "Run CLIProxyAPI as a persistent macOS or Linux service with OAuth accounts, providers, usage, and agent wiring.",
-      "icon": {
-        "url": "plugins/agent-proxy/assets/icon.svg"
-      },
-      "author": {
-        "name": "Scott Sunarto",
-        "github": "smsunarto"
-      },
-      "source": {
-        "git": {
-          "url": "https://github.com/smsunarto/bb-plugins",
-          "subdir": "plugins/agent-proxy",
-          "range": "*",
-          "tagPrefix": "agent-proxy/"
-        }
-      }
-    },
-    {
       "id": "agentation",
       "displayName": "Agentation",
       "description": "Point at any part of the bb UI \u2014 including plugin surfaces \u2014 and turn it into structured AFS 1.1 feedback that bb agents can read, answer, and resolve.",
@@ -48,7 +28,7 @@
     {
       "id": "amp",
       "displayName": "Amp",
-      "description": "Runs Amp locally or in an Orb as one bb provider through a bundled ACP bridge built on the official @ampcode/sdk.",
+      "description": "Runs Amp locally or in an Orb as one bb provider through the plugin's own provider bridge, which spawns the Amp CLI directly.",
       "icon": {
         "url": "plugins/amp/assets/icon.svg"
       },
@@ -62,6 +42,26 @@
           "subdir": "plugins/amp",
           "range": "*",
           "tagPrefix": "amp/"
+        }
+      }
+    },
+    {
+      "id": "cloudflare",
+      "displayName": "Cloudflare",
+      "description": "Share development servers through Cloudflare Tunnel with Zero Trust access controls.",
+      "icon": {
+        "url": "plugins/cloudflare/assets/icon.svg"
+      },
+      "author": {
+        "name": "Scott Sunarto",
+        "github": "smsunarto"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/smsunarto/bb-plugins",
+          "subdir": "plugins/cloudflare",
+          "range": "*",
+          "tagPrefix": "cloudflare/"
         }
       }
     },
@@ -126,11 +126,11 @@
       }
     },
     {
-      "id": "notify",
-      "displayName": "Notify",
-      "description": "Native macOS notifications when a BB thread finishes or fails, plus a notify_user agent tool and a `bb notify` command.",
+      "id": "traces",
+      "displayName": "Traces",
+      "description": "Explore Claude Code and Codex sessions, agent context, and tool activity with keyboard navigation.",
       "icon": {
-        "url": "plugins/notify/assets/icon.svg"
+        "url": "plugins/traces/assets/icon.svg"
       },
       "author": {
         "name": "Scott Sunarto",
@@ -139,9 +139,29 @@
       "source": {
         "git": {
           "url": "https://github.com/smsunarto/bb-plugins",
-          "subdir": "plugins/notify",
+          "subdir": "plugins/traces",
           "range": "*",
-          "tagPrefix": "notify/"
+          "tagPrefix": "traces/"
+        }
+      }
+    },
+    {
+      "id": "vimium",
+      "displayName": "Vimium",
+      "description": "Vimium-style f-key link hints: press f, type the hint, click without the mouse.",
+      "icon": {
+        "url": "plugins/vimium/assets/icon.svg"
+      },
+      "author": {
+        "name": "Scott Sunarto",
+        "github": "smsunarto"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/smsunarto/bb-plugins",
+          "subdir": "plugins/vimium",
+          "range": "*",
+          "tagPrefix": "vimium/"
         }
       }
     }

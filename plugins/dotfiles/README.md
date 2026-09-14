@@ -10,7 +10,7 @@
 **Browse, edit, and sync one dotfiles repo from a bb panel.**
 
 ![personal](https://img.shields.io/badge/status-personal%20%C2%B7%20unsupported-E34671?style=flat-square)
-![bb 0.39+](https://img.shields.io/badge/bb-0.39%2B-88C0D0?style=flat-square)
+![bb 0.40+](https://img.shields.io/badge/bb-0.40%2B-88C0D0?style=flat-square)
 ![macOS · Linux](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-3FA266?style=flat-square)
 
 </div>
@@ -37,13 +37,13 @@ run validation checks, preview an apply, pull published changes, or publish loca
 
 ## Requirements
 
-* bb 0.39+
-* macOS or Linux. There is no Windows path
-* `git` and `mise` on `PATH` inside the bb server host's login shell
-* A dotfiles repository matching the layout this plugin expects, with the matching
+- bb 0.40+
+- macOS or Linux. There is no Windows path
+- `git` and `mise` on `PATH` inside the bb server host's login shell
+- A dotfiles repository matching the layout this plugin expects, with the matching
   `mise` task set
-* `npx` and network access, only for the Remove-skill control
-* Bun, to build the plugin from the checkout
+- `npx` and network access, only for the Remove-skill control
+- Bun, to build the plugin from the checkout
 
 ## Install
 
@@ -74,17 +74,17 @@ groups and every task name are fixed, so a differently shaped repo still reads
 
 Open the **Dotfiles** panel in bb, or run `bb dotfiles`.
 
-* **File list.** Five fixed groups — agent config, settings overlays, shell, mise, repo
+- **File list.** Five fixed groups — agent config, settings overlays, shell, mise, repo
   policy — plus a Skills group scanned from the repo, so a new skill appears with no
   code change. Dirty files get an amber dot; absent files get a red `missing` badge.
-* **Text editor and live diff.** The editor owns the working file while the diff compares
+- **Text editor and live diff.** The editor owns the working file while the diff compares
   it with `git show HEAD:<path>`. Unified and Split views update while you type, and a
   view toggle does not lose unsaved edits.
-* **Compare-and-swap saves.** The sha256 recorded when the file was opened is passed to
+- **Compare-and-swap saves.** The sha256 recorded when the file was opened is passed to
   the write. If the file changed on disk, the save is refused instead of merged.
-* **Stale-render warning.** Saving a file that feeds a generated consumer shows an amber
+- **Stale-render warning.** Saving a file that feeds a generated consumer shows an amber
   line. Use the header's **render** action; render or publish clears the warning.
-* **Task runner.** Fourteen tasks, five of them header buttons. Output is capped at
+- **Task runner.** Fourteen tasks, five of them header buttons. Output is capped at
   200,000 characters, and a task is killed after 300 seconds.
 
 Symlinked sources are live as soon as you save them. Settings overlays, MCP config, and
@@ -139,15 +139,15 @@ bun run build      # bb plugin build . — needs the bb CLI on PATH
 bun run verify     # lint + typecheck + tests + check + build + pack dry-run
 ```
 
-The plugin is written on `@bb-kit/core`. `server/server.ts` is the
-composition root: it declares the plugin id, the RPC, and the CLI. `server/`
-holds shared domain values and `git.ts`. `server/rpc/` and `server/cli/` hold one unit
+The plugin is written on `@bb-kit/core`. `src/server/server.ts` is the
+composition root: it declares the plugin id, the RPC, and the CLI. `src/server/`
+holds shared domain values and `git.ts`. `src/server/rpc/` and `src/server/command/` hold one unit
 per file, with a test file beside each unit; the six RPC names are the
-procedures keys and are a stable public contract. `app/` holds the panel
+procedures keys and are a stable public contract. `src/app/` holds the panel
 app. The repository watcher builds and reloads the plugin after each source change.
 
 The build and verify scripts call the bb CLI directly (`bb plugin build .`), so a
-bb 0.39 checkout must be on PATH. Run the query and UI checklist against the dev
+bb 0.40 checkout must be on PATH. Run the query and UI checklist against the dev
 instance after the plugin is installed and running.
 
 BB supplies the read-only Pierre diff runtime. The text editor is plugin-owned because

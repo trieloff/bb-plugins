@@ -15,10 +15,22 @@ MIT License, Copyright (c) 2026 Michael Yong.
 | What                                                                                                                         | Where it ships                                  |
 | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | The whole plugin, forked from `examples/plugins/t3sidebar` at commit `f13c2d35f96540012b305f3b555839b30e1b6163` (2026-08-07) | `dist/app.js`, `dist/server.js`, `dist/app.css` |
+| Codex structured-inference transport from `plugins/provider-codex/src/ai`                                                    | `dist/host.js`                                  |
 | Provider brand-mark geometry, lifted from bb's own icon components                                                           | `dist/app.js`                                   |
 | shadcn/ui-derived components, vendored through bb's plugin component registry                                                | `dist/app.js`                                   |
 
 Source: <https://github.com/get-bb/bb>
+
+---
+
+## bb-plugin-thread-namer — `suiramdev/bb-plugin-thread-namer`
+
+MIT License, Copyright (c) 2026 Marius Nouchet.
+
+The thread naming lifecycle is adapted from commit
+`023d1229db020330a940e4bff060e23bd4b278d8`. It ships in `dist/server.js`.
+
+Source: <https://github.com/suiramdev/bb-plugin-thread-namer>
 
 ---
 
@@ -46,26 +58,6 @@ Source: <https://github.com/hugeicons/hugeicons-react>
 
 ---
 
-## clsx
-
-MIT License, Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com).
-
-Compiled into `dist/app.js`.
-
-Source: <https://github.com/lukeed/clsx>
-
----
-
-## tailwind-merge
-
-MIT License, Copyright (c) 2021 Dany Castillo.
-
-Compiled into `dist/app.js`.
-
-Source: <https://github.com/dcastil/tailwind-merge>
-
----
-
 ## zod
 
 MIT License, Copyright (c) 2025 Colin McDonnell.
@@ -76,9 +68,33 @@ Source: <https://github.com/colinhacks/zod>
 
 ---
 
+## ios-haptics — `tijnjh/ios-haptics`
+
+MIT License, Copyright (c) 2025 tijn.
+
+`hapticTrigger` and `isIos` from v3.1.1 are copied verbatim into
+`lib/ios-haptics.ts` and compiled into `dist/app.js`. Vendored rather than
+depended on so the switch overlay can be reasoned about next to the menu it
+serves.
+
+Source: <https://github.com/tijnjh/ios-haptics>
+
+---
+
+## @uidotdev/usehooks
+
+MIT License, Copyright (c) 2023 ui.dev.
+
+`useLongPress` times the compact row's long press. Compiled into `dist/app.js`.
+
+Source: <https://github.com/uidotdev/usehooks>
+
+---
+
 ## Not shipped here
 
-React, `@radix-ui/react-select`, `@radix-ui/react-context-menu` and `@get-bb/plugin-sdk`
+React, `clsx`, `tailwind-merge`, `@radix-ui/react-select`,
+`@radix-ui/react-context-menu`, `@radix-ui/react-dropdown-menu` and `@get-bb/plugin-sdk`
 are **not** bundled in this package. The bb app provides them at run time, so their
 licences travel with bb, not with this plugin.
 

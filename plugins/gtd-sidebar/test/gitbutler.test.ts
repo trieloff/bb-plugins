@@ -1,10 +1,37 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  gitButlerBranchNamesFor,
+  gitButlerLabelsMatch,
   parseGitButlerBranchSummary,
   resolveSidebarBranchLabel,
 } from "../lib/gitbutler.ts";
+
+describe("gitButlerLabelsMatch", () => {
+  it("matches identical labels regardless of insertion order", () => {
+    const current = new Map([
+      ["env_1", "scott/api"],
+      ["env_2", "scott/ui"],
+    ]);
+    assert.equal(gitButlerLabelsMatch(current, new Map([...current].reverse())), true);
+    assert.equal(gitButlerLabelsMatch(current, current), true);
+    assert.equal(gitButlerLabelsMatch(new Map(), new Map()), true);
+  });
+
+  it("detects changed labels and replaced environments", () => {
+    const current = new Map([["env_1", "scott/api"]]);
+    assert.equal(gitButlerLabelsMatch(current, new Map([["env_1", "scott/ui"]])), false);
+    assert.equal(gitButlerLabelsMatch(current, new Map([["env_2", "scott/api"]])), false);
+  });
+
+  it("detects added and removed labels, including a cleared map", () => {
+    const current = new Map([["env_1", "scott/api"]]);
+    const expanded = new Map([...current, ["env_2", "scott/ui"]]);
+    assert.equal(gitButlerLabelsMatch(current, expanded), false);
+    assert.equal(gitButlerLabelsMatch(expanded, current), false);
+    assert.equal(gitButlerLabelsMatch(current, new Map()), false);
+    assert.equal(gitButlerLabelsMatch(new Map(), current), false);
+  });
+});
 
 describe("parseGitButlerBranchSummary", () => {
   it("uses the real name when one virtual branch is applied", () => {
@@ -70,31 +97,5 @@ describe("resolveSidebarBranchLabel", () => {
       resolveSidebarBranchLabel("gitbutler/workspace", "env_unknown", labels),
       "gitbutler/workspace",
     );
-  });
-});
-
-describe("gitButlerBranchNamesFor", () => {
-  it("uses the host's virtual branch names, not the count label", () => {
-    const branches = new Map([["env_local", ["scott/api", "scott/ui", "scott/docs"]]]);
-    assert.deepEqual(
-      gitButlerBranchNamesFor("gitbutler/workspace", "env_local", branches),
-      ["scott/api", "scott/ui", "scott/docs"],
-    );
-    assert.deepEqual(
-      gitButlerBranchNamesFor("3 GitButler branches", "env_local", branches),
-      ["scott/api", "scott/ui", "scott/docs"],
-    );
-  });
-
-  it("drops GitButler workspace refs when the host has not answered", () => {
-    assert.deepEqual(
-      gitButlerBranchNamesFor("gitbutler/workspace", "env_unknown", new Map()),
-      [],
-    );
-    assert.deepEqual(gitButlerBranchNamesFor("3 GitButler branches", "env_x", new Map()), []);
-  });
-
-  it("keeps a real git branch when GitButler is not in play", () => {
-    assert.deepEqual(gitButlerBranchNamesFor("feat/ship", "env_x", new Map()), ["feat/ship"]);
   });
 });

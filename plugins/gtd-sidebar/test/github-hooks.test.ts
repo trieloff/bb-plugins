@@ -4,10 +4,7 @@ import { describe, it } from "node:test";
 import { ensureGithubRepoHook } from "../lib/github-hooks.ts";
 import { githubHttpStatus, type GhRunner } from "../lib/gh-cli.ts";
 
-function runner(
-  hooks: unknown,
-  onPatch?: (body: unknown) => void,
-): GhRunner {
+function runner(hooks: unknown, onPatch?: (body: unknown) => void): GhRunner {
   return {
     async run(args) {
       const path = args.at(-1) ?? "";

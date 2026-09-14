@@ -9,7 +9,7 @@
 
 **A dark Monokai palette for bb, terminal included.**
 
-![bb 0.39+](https://img.shields.io/badge/bb-0.39%2B-88C0D0?style=flat-square)
+![bb 0.40+](https://img.shields.io/badge/bb-0.40%2B-88C0D0?style=flat-square)
 ![platform: any](https://img.shields.io/badge/platform-any-3FA266?style=flat-square)
 ![dark only](https://img.shields.io/badge/appearance-dark%20only-E3E3DD?style=flat-square)
 
@@ -65,15 +65,39 @@ what selects it. You can also switch in bb under
 
 Disabling or removing the plugin returns bb to the default palette.
 
+Choose **Inter (Default)** or **SF Pro** under **Settings → bb Monokai → UI
+font**. The choice applies to the full interface at desktop and mobile widths.
+Code, diffs, and file paths keep the Berkeley Mono stack. The terminal uses
+BerkeleyMono Nerd Font Mono at size 13 with 1.4 line height and a #141414
+background, matching the Ghostty cursor-monokai setup. A plugin content script applies these settings to existing and new
+xterm terminals, including the WebGL renderer, without a BB core update. It
+restores the previous typography when Monokai is deselected or unloaded. The
+adapter uses guarded React-ref and xterm-addon discovery. If a future BB
+version changes those private attachments, it leaves the terminal untouched.
+
+The in-app notification center now uses the same Monokai surfaces and states as
+the rest of bb, including its selected row, controls, dividers, and desktop
+card. On desktop, transient toasts also use a compact Codex-inspired layout at
+the top center of the focused conversation: rounded cards, a subtle border,
+quiet icons, and an inline dismiss button. Compact layouts keep bb's native
+drawer and toast geometry. Undo, links, dismissal, and stacking keep bb's
+existing behavior. This is a theme-only CSS override. Switching palettes
+restores bb's placement. Desktop browsers without CSS anchor positioning center
+toasts over the viewport instead. Native browser and operating-system banners
+from bb's push-notifications plugin are system-owned and cannot be restyled by a
+bb theme.
+
 ## Requirements
 
-- bb 0.39+ — the line that lets a theme declare its own code theme
+- bb 0.40+ (code themes arrived in bb 0.39)
 - bb set to **dark** appearance. The palette only restyles `.dark`; light mode
   keeps bb's defaults.
 - Optional: **Berkeley Mono**. It is _not_ bundled. Install it yourself and the
   type stack picks it up. Without it the
   stack falls back to `ui-monospace`, Menlo, then `monospace`. The terminal
   additionally prefers `BerkeleyMono Nerd Font Mono` when present.
+- Optional: **SF Pro**. bb uses the Apple system font on Apple platforms. Other
+  platforms need SF Pro installed or use the generic sans-serif fallback.
 
 ## The palette
 
@@ -112,6 +136,7 @@ ratio against the ground it sits on.
 | File tree            | the git-status column — added, untracked, renamed, modified, deleted, ignored         |
 | Inline code          | the sugar-high token set, measured on the `#1E1E1E` well                              |
 | Composer stop button | repainted to the danger hue                                                           |
+| Notifications        | in-app history center and desktop transient toasts                                    |
 
 ### Syntax tokens
 
@@ -140,8 +165,7 @@ mode the palette contributes fonts only.
 
 - **File-type icons.** Their 13 source swatches are declared on `:host`, so all
   48 language icons collapse to a single color.
-- **Terminal font size and cursor blink.** Both are xterm constructor
-  arguments, not tokens. Terminal selection alpha is clamped by the host.
+- **Terminal cursor blink and selection alpha** remain controlled by the host.
 - **Mermaid diagrams** keep a hardcoded Inter font. Colors follow the palette
   on the next render.
 - **The favicon tint** comes from a fixed list, with no CSS involved.

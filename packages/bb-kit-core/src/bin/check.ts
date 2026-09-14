@@ -1,23 +1,29 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { createRequire } from "node:module";
-import { isAbsolute, join, normalize, posix } from "node:path";
+import { builtinModules, createRequire } from "node:module";
+import { isAbsolute, join, normalize, posix, relative as pathRelative } from "node:path";
 import { pathToFileURL } from "node:url";
 import type * as TS from "typescript";
 import type { BinResult } from "./shared.ts";
+import { UNIT_NAME_PATTERN, camelName, pluginRelative, resolveImport } from "./shared.ts";
 import {
-  UNIT_NAME_PATTERN,
-  camelName,
-  compositionRootFromPkg,
-  resolveImport,
+  classifyRootEntry,
+  isLegacySdkPlugin,
+  isTypeEdge,
+  locate,
+  parseLayout,
   unitDir,
-} from "./shared.ts";
+  type SrcLayout,
+} from "./layout.ts";
 import { derivePluginID } from "./derive-plugin-id.ts";
+import { TOOL_KEY_PATTERN, toolName } from "../tools/tools.ts";
 
 /**
- * `bb-kit check` (§7): static verification of the six rules — wiring
+ * `bb-kit check` (§8): static verification of the eight rules — wiring
  * bijection and naming (1), definePlugin id = derived plugin id (2), the name
  * table (3), manifest paths and engines (4),
- * composition and host CLI policy (5), sibling tests (warn-only, 6).
+ * composition and host CLI policy (5), sibling tests (warn-only, 6),
+ * agent tool names and skills selection against the host policy (7), and
+ * runtime ownership boundaries (8).
  *
  * check EXECUTES no plugin code. Parsing goes through the plugin's own
  * TypeScript — the plugin's `typescript` package (a plain CJS library;
@@ -37,6 +43,8 @@ type Project = {
   ts: TSModule;
   program: TS.Program;
 };
+
+const NODE_BUILTINS = new Set(builtinModules);
 
 function loadProject(
   cwd: string,
@@ -103,9 +111,184 @@ function lineOfNode(sourceFile: TS.SourceFile, node: TS.Node): number {
   return lineAt(sourceFile, node.getStart(sourceFile));
 }
 
+function isTestPath(relativePath: string): boolean {
+  return (
+    relativePath.startsWith("test/") ||
+    relativePath.includes("/testing/") ||
+    /\.test\.tsx?$/.test(relativePath)
+  );
+}
+
+function isNodeBuiltin(specifier: string): boolean {
+  return specifier.startsWith("node:") || NODE_BUILTINS.has(specifier);
+}
+
+function importIsTypeOnly(ts: TSModule, declaration: TS.ImportDeclaration): boolean {
+  const clause = declaration.importClause;
+  if (clause?.isTypeOnly === true) return true;
+  if (clause?.name !== undefined || clause?.namedBindings === undefined) return false;
+  return (
+    ts.isNamedImports(clause.namedBindings) &&
+    clause.namedBindings.elements.length > 0 &&
+    clause.namedBindings.elements.every((element) => element.isTypeOnly)
+  );
+}
+
+function containsTypeScriptSource(directory: string): boolean {
+  if (!existsSync(directory)) return false;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const path = join(directory, entry.name);
+    if (entry.isDirectory() && containsTypeScriptSource(path)) return true;
+    if (entry.isFile() && /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function listPluginTypeScript(directory: string, prefix: string): string[] {
+  if (!existsSync(directory)) {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) {
+      continue;
+    }
+    const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) {
+      files.push(...listPluginTypeScript(join(directory, entry.name), relative));
+      continue;
+    }
+    if (entry.isFile() && /\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+function manifestEntry(
+  pkg: Record<string, unknown> | undefined,
+  key: "app" | "host" | "server",
+): string | undefined {
+  const bb = pkg?.["bb"];
+  if (bb === undefined || bb === null || typeof bb !== "object" || Array.isArray(bb)) {
+    return undefined;
+  }
+  const value = (bb as Record<string, unknown>)[key];
+  return typeof value === "string" && value !== "" ? pluginRelative(value) : undefined;
+}
+
 function unitBasename(relativePath: string): string {
   const file = relativePath.split("/").pop() ?? relativePath;
   return file.replace(/\.tsx?$/, "");
+}
+
+function checkRuntimeBoundaries(
+  cwd: string,
+  project: Project,
+  layout: SrcLayout,
+  fail: (message: string, file?: string, line?: number) => void,
+  warn: (message: string, file?: string, line?: number) => void,
+): void {
+  const { ts } = project;
+
+  const warnBoundary = (
+    sourceFile: TS.SourceFile,
+    relativePath: string,
+    node: TS.Node,
+    message: string,
+  ): void => {
+    warn(`${message} — rule 8`, relativePath, lineOfNode(sourceFile, node));
+  };
+
+  for (const sourceFile of project.program.getSourceFiles()) {
+    const relativePath = pluginRelative(
+      pathRelative(cwd, sourceFile.fileName).replaceAll("\\", "/"),
+    );
+    if (
+      relativePath.startsWith("../") ||
+      isTestPath(relativePath) ||
+      sourceFile.isDeclarationFile
+    ) {
+      continue;
+    }
+    const located = locate(layout, relativePath);
+    if (located.kind === "loose-src") {
+      continue;
+    }
+    if (located.kind === "displaced") {
+      fail(`runtime code belongs under ${layout.sourceRoot}/ — rule 8`, relativePath);
+      continue;
+    }
+    if (located.kind !== "owned") {
+      continue;
+    }
+    const sourceZone = located.zone;
+
+    const checkSpecifier = (node: TS.Node, specifier: string, typeOnly: boolean): void => {
+      if ((sourceZone === "app" || sourceZone === "shared") && isNodeBuiltin(specifier)) {
+        warnBoundary(
+          sourceFile,
+          relativePath,
+          node,
+          `${sourceZone}/ must remain browser-safe and cannot import ${JSON.stringify(specifier)}`,
+        );
+      }
+      if (!specifier.startsWith(".")) return;
+
+      const targetPath = pluginRelative(resolveImport(relativePath, specifier));
+      if (isTestPath(targetPath)) {
+        warnBoundary(
+          sourceFile,
+          relativePath,
+          node,
+          `production code cannot import test support ${JSON.stringify(targetPath)}`,
+        );
+        return;
+      }
+
+      const targetLocated = locate(layout, targetPath);
+      if (targetLocated.kind !== "owned" || targetLocated.zone === sourceZone) return;
+      const targetZone = targetLocated.zone;
+      if (isTypeEdge(layout, relativePath, targetPath, typeOnly)) return;
+
+      const allowed =
+        targetZone === "shared" ||
+        (targetZone === "shared-node" && (sourceZone === "server" || sourceZone === "host"));
+      if (!allowed) {
+        warnBoundary(
+          sourceFile,
+          relativePath,
+          node,
+          `${sourceZone}/ cannot import ${targetZone}/ through ${JSON.stringify(specifier)}`,
+        );
+      }
+    };
+
+    const visit = (node: TS.Node): void => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        checkSpecifier(node, node.moduleSpecifier.text, importIsTypeOnly(ts, node));
+      } else if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier !== undefined &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        checkSpecifier(node, node.moduleSpecifier.text, node.isTypeOnly);
+      } else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
+      ) {
+        const [argument] = node.arguments;
+        if (argument !== undefined && ts.isStringLiteralLike(argument)) {
+          checkSpecifier(node, argument.text, false);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+  }
 }
 
 export async function runCheck(options: CheckOptions): Promise<BinResult> {
@@ -147,15 +330,66 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
     }
   }
 
-  // ---- rule 4: manifest paths + engines (filesystem only) -----------
+  if (pkg && isLegacySdkPlugin(pkg)) {
+    return { exitCode: 0, stdout: "check skipped: legacy SDK plugin\n", stderr: "" };
+  }
+
+  let layout: SrcLayout | undefined;
   if (pkg) {
+    const parsed = parseLayout(pkg);
+    if (!parsed.ok) {
+      fail(parsed.message, parsed.path ?? "package.json");
+      return finishCheck(errors, warnings, table);
+    }
+    layout = parsed.value;
+  }
+
+  // ---- rule 4: manifest paths + engines (filesystem only) -----------
+  if (pkg && layout) {
     checkManifest(pkg, cwd, fail);
+    const hostEntry = manifestEntry(pkg, "host");
+    if (hostEntry !== undefined && hostEntry !== layout.hostEntry) {
+      warn(
+        `bb.host should use ${layout.hostEntry}, not ${JSON.stringify(hostEntry)} — rule 8`,
+        "package.json",
+      );
+    }
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      if (
+        classifyRootEntry(layout, entry.name) === "displaced-runtime" &&
+        containsTypeScriptSource(join(cwd, entry.name))
+      ) {
+        fail(
+          `${entry.name}/ is displaced. move it under ${layout.sourceRoot}/ — rule 8`,
+          `${entry.name}/`,
+        );
+      }
+    }
+    for (const relativePath of listPluginTypeScript(
+      join(cwd, layout.sourceRoot),
+      layout.sourceRoot,
+    )) {
+      if (isTestPath(relativePath)) {
+        continue;
+      }
+      if (locate(layout, relativePath).kind === "loose-src") {
+        fail("no runtime owner — rule 8", relativePath);
+      }
+    }
+  }
+
+  if (layout === undefined) {
+    return finishCheck(errors, warnings, table);
   }
 
   // ---- unit inventory, rule 1 basenames, rule 6 sibling tests -------
-  const compositionRoot = compositionRootFromPkg(pkg) ?? "server/server.ts";
-  const rpcDir = unitDir(compositionRoot, "rpc");
-  const cliDir = unitDir(compositionRoot, "cli");
+  const compositionRoot = layout.compositionRoot;
+  const rpcDir = unitDir(layout, "rpc");
+  const commandDir = unitDir(layout, "command");
+  const toolsDir = unitDir(layout, "tools");
   const listUnits = (dir: string): string[] => {
     const absolute = join(cwd, dir);
     if (!existsSync(absolute)) {
@@ -171,8 +405,9 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
       .map((name) => `${dir}/${name}`);
   };
   const rpcUnits = listUnits(rpcDir);
-  const cliUnits = listUnits(cliDir);
-  const unitFiles = new Set([...rpcUnits, ...cliUnits]);
+  const commandUnits = listUnits(commandDir);
+  const toolsUnits = listUnits(toolsDir);
+  const unitFiles = new Set([...rpcUnits, ...commandUnits, ...toolsUnits]);
   for (const unit of unitFiles) {
     const base = unitBasename(unit);
     if (!UNIT_NAME_PATTERN.test(base)) {
@@ -190,8 +425,12 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
   if (failure !== undefined) {
     fail(`${failure} (parse-dependent rules skipped)`);
   }
+  if (project !== undefined) {
+    checkRuntimeBoundaries(cwd, project, layout, fail, warn);
+  }
 
   let pluginId: string | undefined;
+  const derivedToolNames: { name: string; line: number }[] = [];
   if (project) {
     const ts = project.ts;
     const stringText = (node: TS.Node | undefined): string | undefined =>
@@ -223,6 +462,7 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
     };
 
     // ---- rule 1 per unit: exactly one value export, camel(filename)
+    let gatedToolUnit: string | undefined;
     for (const unit of unitFiles) {
       const sourceFile = parseChecked(unit);
       if (!sourceFile) {
@@ -279,28 +519,64 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
           found[0]?.line,
         );
       }
-      if (unit.startsWith(`${cliDir}/`)) {
-        warnConfigureAction(unit, sourceFile);
+      if (unit.startsWith(`${commandDir}/`)) {
+        failCommanderImport(unit, sourceFile);
+        failInnerOptionalBinding(unit, sourceFile);
+      }
+      if (
+        unit.startsWith(`${toolsDir}/`) &&
+        gatedToolUnit === undefined &&
+        declaresEnabled(sourceFile)
+      ) {
+        gatedToolUnit = unit;
       }
     }
 
-    // ---- rule 5 warn: `.action(` inside a configure body
-    function warnConfigureAction(relativePath: string, sourceFile: TS.SourceFile): void {
+    // Unsupported argv (encoded here, not as a second syntax): short flags,
+    // renames, --no-*, repeatable options, nested objects as flags, more
+    // than one rest, rest that is not last. Runtime rejects missing
+    // bindings and a non-final words field.
+    function failCommanderImport(relativePath: string, sourceFile: TS.SourceFile): void {
+      for (const statement of sourceFile.statements) {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+          continue;
+        }
+        if (statement.moduleSpecifier.text === "commander") {
+          fail(
+            "command units must not import commander — declare argv bindings on the input object",
+            relativePath,
+            lineOfNode(sourceFile, statement),
+          );
+        }
+      }
+    }
+
+    function isArgvHelperCall(node: TS.Expression): boolean {
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
+        return false;
+      }
+      const helpers = new Set(["argument", "optionalArgument", "words", "option", "flag"]);
+      if (!helpers.has(node.expression.name.text)) {
+        return false;
+      }
+      return (
+        ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "argv"
+      );
+    }
+
+    function failInnerOptionalBinding(relativePath: string, sourceFile: TS.SourceFile): void {
       const visit = (node: TS.Node): undefined => {
         if (
-          (ts.isPropertyAssignment(node) || ts.isMethodDeclaration(node)) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === "configure"
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "optional" &&
+          isArgvHelperCall(node.expression.expression)
         ) {
-          const slice = sourceFile.text.slice(node.pos, node.end);
-          const index = slice.indexOf(".action(");
-          if (index !== -1) {
-            warn(
-              "`.action(` inside a configure body — return a CLIResult from run instead; a commander action bypasses the CLI result contract",
-              relativePath,
-              lineAt(sourceFile, node.pos + index),
-            );
-          }
+          fail(
+            "argv binding must be outermost — wrap the schema in .optional() before argv.option/optionalArgument (bind then .optional() strips the brand)",
+            relativePath,
+            lineOfNode(sourceFile, node),
+          );
         }
         node.forEachChild(visit);
         return undefined;
@@ -310,12 +586,40 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
       }
     }
 
-    // ---- composition root (rules 1, 2, 3, 5) ----------------------
-    const serverRelative = compositionRootFromPkg(pkg);
+    // ---- rule 7b gating: any `enabled` property in a tools unit ----
+    // The runtime keys configure synthesis on the same field; a static
+    // property scan is the parse-only twin.
+    function declaresEnabled(sourceFile: TS.SourceFile): boolean {
+      let found = false;
+      const visit = (node: TS.Node): undefined => {
+        if (
+          (ts.isPropertyAssignment(node) ||
+            ts.isShorthandPropertyAssignment(node) ||
+            ts.isMethodDeclaration(node)) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === "enabled"
+        ) {
+          found = true;
+        }
+        node.forEachChild(visit);
+        return undefined;
+      };
+      for (const statement of sourceFile.statements) {
+        visit(statement);
+      }
+      return found;
+    }
+
+    // ---- composition root (rules 1, 2, 3, 5, 7) --------------------
+    const serverRelative = layout.compositionRoot;
     let proceduresRead = false;
     let commandsRead = false;
+    let toolsRead = false;
+    let agentsPresent = false;
+    let skillsProperty: TS.ObjectLiteralElementLike | undefined;
     const procedureEntries: { key: string; line: number; valueName?: string }[] = [];
     const commandEntries: { key: string; line: number; valueName?: string }[] = [];
+    const toolEntries: { key: string; line: number; valueName?: string }[] = [];
     const imports = new Map<string, { specifier: string; imported: string; line: number }>();
     const wired = new Set<string>();
 
@@ -484,7 +788,11 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
               valueName = key;
             } else if (ts.isPropertyAssignment(property)) {
               const value = unwrap(property.initializer);
-              if (value !== undefined && ts.isObjectLiteralExpression(value) && what === "cli") {
+              if (
+                value !== undefined &&
+                ts.isObjectLiteralExpression(value) &&
+                what === "command"
+              ) {
                 fail(
                   "commands must be flat — nesting is not supported (rule 5)",
                   serverRelative,
@@ -541,12 +849,12 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
               collectEntries(rpcObject, procedureEntries, "rpc");
               proceduresRead = true;
             }
-            // cli → object literal (inline or `const cli = { ... }`)
-            const cliProperty = getProperty(argument, "cli");
-            if (cliProperty === undefined) {
-              if (cliUnits.length > 0) {
+            // command → object literal (inline or `const command = { ... }`)
+            const commandProperty = getProperty(argument, "command");
+            if (commandProperty === undefined) {
+              if (commandUnits.length > 0) {
                 fail(
-                  `${cliDir}/ has unit files but definePlugin has no cli entry — rule 5`,
+                  `${commandDir}/ has unit files but definePlugin has no command entry — rule 5`,
                   serverRelative,
                   exportLine,
                 );
@@ -554,16 +862,64 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
                 commandsRead = true;
               }
             } else {
-              const cliObject = resolveObjectLiteral(propertyValue(cliProperty));
-              if (cliObject === undefined) {
+              const commandObject = resolveObjectLiteral(propertyValue(commandProperty));
+              if (commandObject === undefined) {
                 fail(
-                  'the "cli" entry must resolve to an object literal',
+                  'the "command" entry must resolve to an object literal',
                   serverRelative,
-                  lineOfNode(sourceFile, cliProperty),
+                  lineOfNode(sourceFile, commandProperty),
                 );
               } else {
-                collectEntries(cliObject, commandEntries, "cli");
+                collectEntries(commandObject, commandEntries, "command");
                 commandsRead = true;
+              }
+            }
+            // agents → tools object literal (inline or hoisted)
+            const agentsProperty = getProperty(argument, "agents");
+            if (agentsProperty === undefined) {
+              if (toolsUnits.length > 0) {
+                fail(
+                  `${toolsDir}/ has unit files but definePlugin has no agents entry — rule 5`,
+                  serverRelative,
+                  exportLine,
+                );
+              } else {
+                toolsRead = true;
+              }
+            } else {
+              agentsPresent = true;
+              const agentsObject = resolveObjectLiteral(propertyValue(agentsProperty));
+              if (agentsObject === undefined) {
+                fail(
+                  'the "agents" entry must resolve to an object literal',
+                  serverRelative,
+                  lineOfNode(sourceFile, agentsProperty),
+                );
+              } else {
+                const toolsProperty = getProperty(agentsObject, "tools");
+                const toolsObject = resolveObjectLiteral(propertyValue(toolsProperty));
+                if (toolsObject === undefined) {
+                  fail(
+                    'the agents "tools" entry must resolve to an object literal',
+                    serverRelative,
+                    lineOfNode(sourceFile, toolsProperty ?? agentsObject),
+                  );
+                } else {
+                  collectEntries(toolsObject, toolEntries, "tools");
+                  toolsRead = true;
+                }
+                skillsProperty = getProperty(agentsObject, "skills");
+              }
+              // bb-kit synthesizes the plugin's single configure from
+              // `enabled` and `agents.skills` (ADR-0017); a hand
+              // registration beside the agents entry overrides it.
+              const configureIndex = sourceFile.text.indexOf(".agents.configure(");
+              if (configureIndex !== -1) {
+                warn(
+                  "`.agents.configure(` beside an agents entry — bb-kit synthesizes configure, and a second registration overrides the synthesized selection (ADR-0017)",
+                  serverRelative,
+                  lineAt(sourceFile, configureIndex),
+                );
               }
             }
           }
@@ -573,15 +929,38 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
         const resolveEntryFile = (
           valueName: string,
           line: number,
-          expectDir: "rpc" | "cli",
+          expectDir: "rpc" | "command" | "tools",
         ): string | undefined => {
           const binding = imports.get(valueName);
           if (binding === undefined) {
-            fail(`"${valueName}" is not imported in ${serverRelative} — rule 1`, serverRelative, line);
+            fail(
+              `"${valueName}" is not imported in ${serverRelative} — rule 1`,
+              serverRelative,
+              line,
+            );
             return undefined;
           }
-          const relative = resolveImport(serverRelative, binding.specifier);
-          const expectedDir = unitDir(serverRelative, expectDir);
+          const expectedDir = unitDir(layout, expectDir);
+          // resolveImport joins against the composition root's directory, so a
+          // bare specifier shaped like the unit path ("rpc/ping") resolves to
+          // the same string a relative one would. TypeScript does not resolve
+          // it that way, and a tsconfig `paths` alias can point it at a
+          // different module entirely, so the bijection below would pass while
+          // naming the wrong file. Only a relative specifier is checkable.
+          if (!binding.specifier.startsWith("./") && !binding.specifier.startsWith("../")) {
+            fail(
+              `"${valueName}" imports "${binding.specifier}" — a relative ${expectedDir}/ unit file was expected (rule 1)`,
+              serverRelative,
+              line,
+            );
+            return undefined;
+          }
+          const unresolved = resolveImport(serverRelative, binding.specifier);
+          const relative = /\.tsx?$/.test(unresolved)
+            ? unresolved
+            : ([`${unresolved}.ts`, `${unresolved}.tsx`].find((candidate) =>
+                unitFiles.has(candidate),
+              ) ?? unresolved);
           if (posix.dirname(relative) !== expectedDir || !/\.tsx?$/.test(relative)) {
             fail(
               `"${valueName}" imports "${binding.specifier}" — a ${expectedDir}/ unit file was expected (rule 1)`,
@@ -625,13 +1004,37 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
           if (entry.valueName === undefined) {
             continue;
           }
-          const relative = resolveEntryFile(entry.valueName, entry.line, "cli");
+          const relative = resolveEntryFile(entry.valueName, entry.line, "command");
           if (relative !== undefined) {
             wired.add(relative);
             const base = unitBasename(relative);
             if (entry.key !== base) {
               fail(
                 `commands key "${entry.key}" must equal the unit's kebab basename "${base}" — rule 1`,
+                serverRelative,
+                entry.line,
+              );
+            }
+          }
+        }
+        for (const entry of toolEntries) {
+          if (!TOOL_KEY_PATTERN.test(entry.key)) {
+            fail(
+              `agents.tools key "${entry.key}" must match ${TOOL_KEY_PATTERN} — rule 1`,
+              serverRelative,
+              entry.line,
+            );
+          }
+          if (entry.valueName === undefined) {
+            continue;
+          }
+          const relative = resolveEntryFile(entry.valueName, entry.line, "tools");
+          if (relative !== undefined) {
+            wired.add(relative);
+            const expectedKey = unitBasename(relative).replaceAll("-", "_");
+            if (entry.key !== expectedKey) {
+              fail(
+                `agents.tools key "${entry.key}" must equal the unit's underscored basename "${expectedKey}" — rule 1`,
                 serverRelative,
                 entry.line,
               );
@@ -647,9 +1050,16 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
           }
         }
         if (commandsRead) {
-          for (const unit of cliUnits) {
+          for (const unit of commandUnits) {
             if (!wired.has(unit)) {
-              fail(`not wired into ${serverRelative} cli — rule 1`, unit);
+              fail(`not wired into ${serverRelative} command — rule 1`, unit);
+            }
+          }
+        }
+        if (toolsRead) {
+          for (const unit of toolsUnits) {
+            if (!wired.has(unit)) {
+              fail(`not wired into ${serverRelative} agents — rule 1`, unit);
             }
           }
         }
@@ -665,6 +1075,96 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
           const rows = procedureEntries.map((entry) => `  ${entry.key}`);
           if (rows.length > 0) {
             table = `RPC names:\n${rows.join("\n")}\n`;
+          }
+        }
+        // rule 3: tool names — derived by the same toolName the factory
+        // registers with, so the printed contract IS the registered name.
+        const namePluginId = pluginId ?? id;
+        if (toolsRead && namePluginId !== undefined && toolEntries.length > 0) {
+          for (const entry of toolEntries) {
+            derivedToolNames.push({ name: toolName(namePluginId, entry.key), line: entry.line });
+          }
+          const rows = derivedToolNames.map((row) => `  ${row.name}`);
+          table += `${table === "" ? "" : "\n"}Tool names:\n${rows.join("\n")}\n`;
+        }
+        // rule 7b (ADR-0017 fail-closed): a gated tool synthesizes
+        // configure, and with agents.skills absent that configure sends
+        // skills: [] — every manifest skill silently unloads.
+        const enumeratedSkills = manifestSkills(pkg, cwd);
+        if (
+          agentsPresent &&
+          gatedToolUnit !== undefined &&
+          skillsProperty === undefined &&
+          enumeratedSkills !== undefined &&
+          enumeratedSkills.length > 0
+        ) {
+          fail(
+            `${gatedToolUnit} declares \`enabled\`, so the synthesized configure sends skills: [] — declare agents.skills or the manifest's skills never load (rule 7)`,
+            serverRelative,
+          );
+        }
+        // rule 7c: a static skills selection must be a SUBSET of what
+        // the manifest enumerates — an unknown name makes the host
+        // reject the plugin's ENTIRE selection, tools included.
+        if (skillsProperty !== undefined) {
+          const resolveExpression = (node: TS.Node | undefined, depth = 0): TS.Node | undefined => {
+            const expression = unwrap(node);
+            if (expression === undefined || depth > 5) {
+              return undefined;
+            }
+            if (ts.isIdentifier(expression)) {
+              const initializer = topInitializers.get(expression.text);
+              return initializer !== undefined
+                ? resolveExpression(initializer, depth + 1)
+                : expression;
+            }
+            return expression;
+          };
+          const value = resolveExpression(propertyValue(skillsProperty));
+          // A function-valued selector resolves per session — nothing
+          // static to check.
+          if (value !== undefined && ts.isArrayLiteralExpression(value)) {
+            const names: { text: string; line: number }[] = [];
+            let readable = true;
+            for (const element of value.elements) {
+              const text = stringText(unwrap(element));
+              if (text === undefined) {
+                fail(
+                  "an agents.skills entry must be a string literal for check to verify it — rule 7",
+                  serverRelative,
+                  lineOfNode(sourceFile, element),
+                );
+                readable = false;
+                continue;
+              }
+              names.push({ text, line: lineOfNode(sourceFile, element) });
+            }
+            if (names.length > 256) {
+              // PLUGIN_AGENT_SELECTION_MAX_IDS in the host policy.
+              fail(
+                `agents.skills lists ${names.length} entries — the host caps a selection at 256 ids (rule 7)`,
+                serverRelative,
+                lineOfNode(sourceFile, skillsProperty),
+              );
+            } else if (readable) {
+              const seen = new Set<string>();
+              for (const { text, line } of names) {
+                if (seen.has(text)) {
+                  fail(`agents.skills repeats "${text}" — rule 7`, serverRelative, line);
+                  continue;
+                }
+                seen.add(text);
+                if (enumeratedSkills !== undefined && !enumeratedSkills.includes(text)) {
+                  const known =
+                    enumeratedSkills.length > 0 ? ` (${enumeratedSkills.join(", ")})` : "";
+                  fail(
+                    `agents.skills "${text}" is not a skill the manifest enumerates${known} — an unknown name makes the host reject the plugin's whole selection (rule 7)`,
+                    serverRelative,
+                    line,
+                  );
+                }
+              }
+            }
           }
         }
       }
@@ -696,7 +1196,40 @@ export async function runCheck(options: CheckOptions): Promise<BinResult> {
     }
   }
 
-  // ---- report -------------------------------------------------------
+  // ---- rule 7a: host agent-tool policy, from the plugin's own SDK ---
+  if (derivedToolNames.length > 0) {
+    try {
+      const policyPath = requireFromPlugin.resolve("@get-bb/plugin-sdk/internal/host-policy");
+      const policy = (await import(pathToFileURL(policyPath).href)) as {
+        AGENT_TOOL_NAME_PATTERN?: RegExp;
+        RESERVED_AGENT_TOOL_NAMES?: readonly string[];
+      };
+      const pattern = policy.AGENT_TOOL_NAME_PATTERN;
+      const reserved = policy.RESERVED_AGENT_TOOL_NAMES;
+      for (const { name, line } of derivedToolNames) {
+        if (pattern instanceof RegExp && !pattern.test(name)) {
+          fail(
+            `agent tool name "${name}" does not match the host's ${String(pattern)} — rule 7`,
+            compositionRoot,
+            line,
+          );
+        }
+        if (Array.isArray(reserved) && reserved.includes(name)) {
+          fail(`agent tool name "${name}" is reserved by bb — rule 7`, compositionRoot, line);
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      fail(
+        `could not load the host agent-tool policy from the plugin's SDK (@get-bb/plugin-sdk/internal/host-policy): ${message} — rule 7 skipped`,
+      );
+    }
+  }
+
+  return finishCheck(errors, warnings, table);
+}
+
+function finishCheck(errors: Finding[], warnings: Finding[], table: string): BinResult {
   const format = (finding: Finding, label: string): string => {
     const location =
       finding.file !== undefined
@@ -766,6 +1299,7 @@ function checkManifest(
     const manifest = bb as Record<string, unknown>;
     checkPath("bb.server", manifest["server"], true);
     checkPath("bb.app", manifest["app"], false);
+    checkPath("bb.host", manifest["host"], false);
     checkPath("bb.theme", manifest["theme"], false);
     const branding = manifest["branding"];
     if (branding === undefined || branding === null || typeof branding !== "object") {
@@ -819,6 +1353,49 @@ function checkManifest(
       }
     }
   }
+}
+
+/**
+ * The manifest's skill enumeration (rule 7): every top-level directory
+ * holding a SKILL.md under the `bb.skills` roots (default ["skills"],
+ * a trailing "/*" stripped, plugin-root-relative). The identifier is
+ * the directory basename — the host requires the skill's name
+ * byte-identical to it. An unreadable manifest returns undefined
+ * (rule 4 already reported it).
+ */
+function manifestSkills(
+  pkg: Record<string, unknown> | undefined,
+  cwd: string,
+): string[] | undefined {
+  const bb = pkg?.["bb"];
+  if (bb === undefined || bb === null || typeof bb !== "object" || Array.isArray(bb)) {
+    return undefined;
+  }
+  const declared = (bb as Record<string, unknown>)["skills"];
+  let roots: string[];
+  if (declared === undefined) {
+    roots = ["skills"];
+  } else if (
+    Array.isArray(declared) &&
+    declared.every((root): root is string => typeof root === "string")
+  ) {
+    roots = declared.map((root) => pluginRelative(root.replace(/\/\*$/, "")));
+  } else {
+    return undefined;
+  }
+  const names: string[] = [];
+  for (const root of roots) {
+    const absolute = join(cwd, root);
+    if (!existsSync(absolute)) {
+      continue;
+    }
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      if (entry.isDirectory() && existsSync(join(absolute, entry.name, "SKILL.md"))) {
+        names.push(entry.name);
+      }
+    }
+  }
+  return names;
 }
 
 /**

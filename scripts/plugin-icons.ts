@@ -3,12 +3,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  BellIcon,
+  Activity01Icon,
+  ArtboardIcon,
   ChatFeedbackIcon,
-  GitPullRequestIcon,
+  CloudServerIcon,
+  Doc01Icon,
+  KeyboardIcon,
+  KitchenUtensilsIcon,
   Layers01Icon,
   PanelLeftIcon,
-  ServerStack01Icon,
   Settings01Icon,
 } from "@hugeicons/core-free-icons";
 import { workspacePlugins } from "./plugin-package";
@@ -123,13 +126,13 @@ const paletteIcon: readonly IconNode[] = [
 ];
 
 const customIcons = {
-  "agent-proxy": {
-    name: "Server",
-    nodes: ServerStack01Icon,
-  },
   agentation: {
     name: "ChatFeedback",
     nodes: ChatFeedbackIcon,
+  },
+  canvas: {
+    name: "Artboard",
+    nodes: ArtboardIcon,
   },
   // Amp ships its own wordmark glyph, so this entry renders Sourcegraph's mark
   // rather than a stand-in from the icon set. `src/amp-brand.ts` is the single
@@ -137,6 +140,14 @@ const customIcons = {
   amp: {
     name: "Amp (brand mark)",
     brand: { paths: AMP_LOGO_PATHS, viewBox: AMP_LOGO_VIEW_BOX },
+  },
+  cloudflare: {
+    name: "CloudServer",
+    nodes: CloudServerIcon,
+  },
+  docs: {
+    name: "Doc",
+    nodes: Doc01Icon,
   },
   dotfiles: {
     name: "Settings",
@@ -146,13 +157,17 @@ const customIcons = {
     name: "Layers",
     nodes: Layers01Icon,
   },
-  notify: {
-    name: "Bell",
-    nodes: BellIcon,
+  traces: {
+    name: "Activity",
+    nodes: Activity01Icon,
   },
-  "pr-walkthrough": {
-    name: "GitPullRequest",
-    nodes: GitPullRequestIcon,
+  vimium: {
+    name: "Keyboard",
+    nodes: KeyboardIcon,
+  },
+  "kitchen-sink": {
+    name: "KitchenUtensils",
+    nodes: KitchenUtensilsIcon,
   },
   // Upstream t3sidebar, which this plugin was forked from, declares BB's named
   // "PanelLeft" icon; Hugeicons ships the same glyph, so the rename keeps that
