@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
+import { toast } from "sonner";
 import type { gtdSidebarRpcContract } from "@/server";
 import {
   canPark,
@@ -12,7 +13,10 @@ import {
   type ThreadLifecycleRow,
   type ThreadShelf,
 } from "@/lib/lifecycle";
+import { planQuickSnooze, quickSnoozeLabel } from "@/lib/snooze-plan";
 import { useLifecycleChannelList } from "@/hooks/use-lifecycle-channel-list";
+
+const LIFECYCLE_REFRESHES = ["deleted", "lifecycle"] as const;
 
 function signalsFor(thread: PluginSidebarThread): ThreadActivitySignals {
   return {
@@ -35,6 +39,8 @@ export interface LifecycleApi {
   /** When the current snooze began; null while the thread is not snoozed. */
   snoozedAtFor(thread: PluginSidebarThread): number | null;
   snooze(threadId: string, snoozedUntil: number): void;
+  quickSnooze(threadId: string, projectId: string, pullRequestUrl?: string | null): void;
+  quickSnoozeLabel(thread: PluginSidebarThread): string;
   unsnooze(threadId: string): void;
 }
 
@@ -48,6 +54,12 @@ export interface LifecycleApi {
 export function useLifecycle(): LifecycleApi {
   const rpc = useRpc<typeof gtdSidebarRpcContract>();
   const [rows, setRows] = useState<ReadonlyMap<string, ThreadLifecycleRow>>(() => new Map());
+  const [backoff, setBackoff] = useState<
+    ReadonlyMap<string, { ladderStep: number; snoozedAt: number }>
+  >(() => new Map());
+  const [weekdayOnlyProjectIds, setWeekdayOnlyProjectIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [now, setNow] = useState(() => Date.now());
   const shelvesReady = useLifecycleChannelList(
     useCallback(() => rpc.call("listLifecycle", {}), [rpc]),
@@ -59,7 +71,10 @@ export function useLifecycle(): LifecycleApi {
           ? current
           : new Map(result.rows.map((row) => [row.threadId, row])),
       );
+      setBackoff(new Map(result.backoff.map((row) => [row.threadId, row])));
+      setWeekdayOnlyProjectIds(new Set(result.weekdayOnlyProjectIds));
     }, []),
+    LIFECYCLE_REFRESHES,
   );
 
   // Arm one timer for the soonest wake instead of polling: the shelf empties
@@ -88,20 +103,45 @@ export function useLifecycle(): LifecycleApi {
 
   // No read after a mutation: the write publishes on the realtime channel, and
   // that subscription already triggers a refresh for every client.
-  return useMemo<LifecycleApi>(
-    () => ({
+  return useMemo<LifecycleApi>(() => {
+    const planFor = (thread: PluginSidebarThread) => {
+      const previous = backoff.get(thread.id);
+      return planQuickSnooze({
+        now: Date.now(),
+        previousStep: previous?.ladderStep ?? null,
+        lastSnoozedAt: previous?.snoozedAt ?? null,
+        latestAttentionAt: thread.latestAttentionAt,
+        weekdayOnlyProject: weekdayOnlyProjectIds.has(thread.projectId),
+      });
+    };
+    return {
       shelfFor: (thread) => resolveShelf(rows.get(thread.id), signalsFor(thread), now),
       shelvesReady,
       canPark: (thread) => canPark(signalsFor(thread)),
       wakeAtFor: (thread) => rows.get(thread.id)?.snoozedUntil ?? null,
       snoozedAtFor: (thread) => rows.get(thread.id)?.snoozedAt ?? null,
       unsnooze: (threadId) => {
-        void rpc.call("unsnooze", { threadId });
+        void rpc.call("unsnooze", { threadId }).catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : "Couldn’t wake the thread.");
+        });
       },
       snooze: (threadId, snoozedUntil) => {
-        void rpc.call("snooze", { threadId, snoozedUntil });
+        void rpc.call("snooze", { threadId, snoozedUntil }).catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : "Couldn’t snooze the thread.");
+        });
       },
-    }),
-    [now, rows, rpc, shelvesReady],
-  );
+      quickSnooze: (threadId, projectId, pullRequestUrl) => {
+        void rpc
+          .call("quickSnooze", {
+            threadId,
+            projectId,
+            ...(pullRequestUrl ? { pullRequestUrl } : {}),
+          })
+          .catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : "Couldn’t snooze the thread.");
+          });
+      },
+      quickSnoozeLabel: (thread) => quickSnoozeLabel(planFor(thread), Date.now()),
+    };
+  }, [backoff, now, rows, rpc, shelvesReady, weekdayOnlyProjectIds]);
 }

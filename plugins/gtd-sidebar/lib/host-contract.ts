@@ -1,10 +1,10 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import { defineRpcContract, type ExperimentalHostClient } from "@get-bb/plugin-sdk";
 import type { z } from "zod";
 import {
   aiInferenceCompleteInputSchema,
   aiInferenceCompleteOutputSchema,
 } from "@bb-plugins/codex-inference/contract";
-import { gitButlerHostContract } from "./gitbutler.ts";
+import { gitButlerHostContract } from "./gitbutler-contract.ts";
 
 /**
  * The plugin's own host entry. Thread naming runs on the host because that is
@@ -19,5 +19,6 @@ export const gtdSidebarHostContract = defineRpcContract({
   },
 });
 
+export type GtdSidebarHostClient = ExperimentalHostClient<typeof gtdSidebarHostContract>;
 export type GtdSidebarAiInferenceCompleteInput = z.infer<typeof aiInferenceCompleteInputSchema>;
 export type GtdSidebarAiInferenceCompleteOutput = z.infer<typeof aiInferenceCompleteOutputSchema>;

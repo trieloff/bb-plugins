@@ -9,10 +9,18 @@ export type RowCommand =
       shelf: ActiveThreadShelf | "snoozed" | "settled";
       split: boolean;
     }
+  | { kind: "open-in-split"; threadId: string }
   | { kind: "settle"; threadId: string }
   | { kind: "snooze"; threadId: string; until: number }
+  | {
+      kind: "quick-snooze";
+      threadId: string;
+      projectId: string;
+      pullRequestUrl: string | null;
+    }
   | { kind: "restore"; threadId: string; shelf: "snoozed" | "settled" }
   | { kind: "pin"; threadId: string; pinned: boolean }
+  | { kind: "set-read"; threadId: string; read: boolean }
   | { kind: "request-delete"; threadId: string };
 
 export type DispatchRowCommand = (command: RowCommand) => void;
@@ -21,7 +29,8 @@ export type RowLifecycleState =
   | {
       kind: "active";
       canPark: boolean;
-      snoozeUntilTomorrow: () => void;
+      quickSnooze: () => void;
+      quickSnoozeLabel: string;
       settle: () => void;
     }
   | { kind: "snoozed"; wakeNow: () => void }
@@ -29,7 +38,7 @@ export type RowLifecycleState =
 
 export type ThreadActionId =
   | "settle"
-  | "snooze-tomorrow"
+  | "quick-snooze"
   | "wake-now"
   | "unsettle"
   | "toggle-pin"
@@ -44,9 +53,9 @@ export interface ThreadAction {
 }
 
 /**
- * A row's menu in the order iOS would list it: the lifecycle move, then pin,
- * then delete. The phone sheet and the desktop right-click menu both show it
- * whole; the card's hover buttons pick single entries out of it.
+ * GTD lifecycle actions, then pin and delete. The phone sheet shows this plan;
+ * the desktop context menu inserts BB's navigation and organization actions.
+ * The card's hover buttons pick single entries out of it.
  */
 export type ThreadActionPlan = readonly ThreadAction[];
 
@@ -67,10 +76,10 @@ function lifecycleActions(lifecycle: RowLifecycleState): ThreadAction[] {
       ];
       if (lifecycle.canPark) {
         actions.push({
-          id: "snooze-tomorrow",
-          label: "Snooze",
+          id: "quick-snooze",
+          label: lifecycle.quickSnoozeLabel,
           icon: "Clock",
-          execute: lifecycle.snoozeUntilTomorrow,
+          execute: lifecycle.quickSnooze,
         });
       }
       return actions;

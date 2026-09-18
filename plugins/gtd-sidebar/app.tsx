@@ -5,6 +5,8 @@
 // each thread arrived on it, most recent first.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import "./app.css";
+import "./thread-row-alignment.css";
+import "./naming.css";
 import { ThreadInbox } from "@/components/inbox/thread-inbox";
 import { GithubWebhookSettings } from "@/components/github-webhook-settings";
 import { archiveThread, hasSidebarActions } from "@/lib/sidebar-actions-bridge";

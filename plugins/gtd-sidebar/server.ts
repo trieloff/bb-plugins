@@ -14,6 +14,8 @@ import { z } from "zod";
 import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
 import { gtdSidebarHostContract } from "./lib/host-contract.ts";
 import { createCollapsedThreadsStore } from "./lib/collapsed-threads.ts";
+import { createThreadNester } from "./lib/nest-thread.ts";
+import { isWithinSettledWindow } from "./lib/settled-threads.ts";
 import { createThreadNamer, subscribeToThreadNaming } from "./thread-namer.ts";
 import { createThreadTitleInference } from "./thread-title-inference.ts";
 import { classifyProjectRhythm } from "./lib/work-rhythm.ts";
@@ -27,7 +29,6 @@ import {
   type RestBudgetState,
 } from "./lib/rest-budget.ts";
 import { planQuickSnooze } from "./lib/snooze-plan.ts";
-import { isWithinSettledWindow } from "./lib/settled-threads.ts";
 import {
   createGhRunner,
   githubGraphql,
@@ -74,6 +75,7 @@ import {
   WEBHOOK_TUNNEL_STATUS_OFF,
   type WebhookTunnelStatus,
 } from "./lib/github-webhook-tunnel.ts";
+import { RETIRED_PROJECT_MIGRATIONS } from "./lib/retired-project-migrations.ts";
 
 const baseMigrations = [
   `CREATE TABLE IF NOT EXISTS thread_lifecycle (
@@ -150,8 +152,24 @@ const forkMigrations = [
 // already used migration index 2 for `snoozed_pr_watch`. Both histories are in
 // use, so each must keep its own immutable prefix and append the other's work.
 const retirePluginSettlesMigration = `DELETE FROM thread_lifecycle WHERE snoozed_until IS NULL`;
-const forkMigrationOrder = [...baseMigrations, ...forkMigrations, retirePluginSettlesMigration];
-const upstreamMigrationOrder = [...baseMigrations, retirePluginSettlesMigration, ...forkMigrations];
+const forkMigrationOrder = [
+  ...baseMigrations,
+  ...forkMigrations,
+  retirePluginSettlesMigration,
+  ...RETIRED_PROJECT_MIGRATIONS,
+];
+const upstreamMigrationOrder = [
+  ...baseMigrations,
+  retirePluginSettlesMigration,
+  ...forkMigrations,
+  ...RETIRED_PROJECT_MIGRATIONS,
+];
+const currentUpstreamMigrationOrder = [
+  ...baseMigrations,
+  retirePluginSettlesMigration,
+  ...RETIRED_PROJECT_MIGRATIONS,
+  ...forkMigrations,
+];
 
 function migrationHash(statement: string): string {
   return createHash("sha256").update(statement).digest("hex");
@@ -167,6 +185,18 @@ export function migrationsForDatabase(db: {
     if (migration === undefined) return forkMigrationOrder;
 
     if (migration.statement_hash === migrationHash(retirePluginSettlesMigration)) {
+      const next = db.prepare(`SELECT statement_hash FROM _bb_migrations WHERE id = 3`).get() as
+        | { statement_hash: string | null }
+        | undefined;
+      if (next?.statement_hash === migrationHash(forkMigrations[0]!)) {
+        return upstreamMigrationOrder;
+      }
+      if (next?.statement_hash === migrationHash(RETIRED_PROJECT_MIGRATIONS[0]!)) {
+        return currentUpstreamMigrationOrder;
+      }
+      // A pure upstream database that has only reached the archive migration
+      // should continue on upstream's current order before gaining fork data.
+      if (next === undefined) return currentUpstreamMigrationOrder;
       return upstreamMigrationOrder;
     }
     if (migration.statement_hash === migrationHash(forkMigrations[0]!)) {
@@ -179,7 +209,8 @@ export function migrationsForDatabase(db: {
       const forkTable = db
         .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'snoozed_pr_watch'`)
         .get();
-      return forkTable === undefined ? upstreamMigrationOrder : forkMigrationOrder;
+      if (forkTable !== undefined) return forkMigrationOrder;
+      return currentUpstreamMigrationOrder;
     }
 
     // Preserve bb's fail-closed mismatch check for any unknown history.
@@ -239,6 +270,10 @@ function asPersistedBrowserTab(
 }
 
 export const gtdSidebarRpcContract = defineRpcContract({
+  listNamingThreads: {
+    input: z.object({}),
+    output: z.array(z.string()),
+  },
   listEnvironmentBranches: {
     input: z.object({ environmentIds: z.array(z.string().trim().min(1)).max(100) }),
     output: z.object({
@@ -475,7 +510,23 @@ export const gtdSidebarRpcContract = defineRpcContract({
       previousProjectId: z.string().nullable(),
       nextProjectId: z.string().nullable(),
     }),
-    output: z.object({ ok: z.boolean() }),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), projectIds: z.array(z.string()) }),
+      z.object({ ok: z.literal(false) }),
+    ]),
+  },
+  /**
+   * bb's own re-parent, made by dropping one row onto another (nest) or onto
+   * a project header (`parentThreadId: null`, back to the top level). The
+   * sidebar hears the move through bb's thread feed, so nothing is published
+   * here. `reason` names the check a refused drop failed.
+   */
+  nestThread: {
+    input: z.object({
+      threadId: z.string().trim().min(1),
+      parentThreadId: z.string().trim().min(1).nullable(),
+    }),
+    output: z.object({ ok: z.boolean(), reason: z.string().optional() }),
   },
 });
 
@@ -485,7 +536,7 @@ const LATEST_RELEASE_CACHE_MS = 30 * 60 * 1000;
 const WEBHOOK_SECRET_KEY = "github-webhook-secret";
 const WEBHOOK_LAST_URL_KEY = "github-webhook-last-url";
 
-export default function plugin(bb: BbPluginApi) {
+export default async function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: gtdSidebarHostContract });
   const pluginSettings = bb.settings.define({
     localMachineId: {
@@ -493,6 +544,12 @@ export default function plugin(bb: BbPluginApi) {
       label: "Local machine",
       description: "Machine ID whose threads show no machine globe.",
       default: "",
+    },
+    groupThreadsByProject: {
+      type: "boolean",
+      label: "Group threads by project",
+      description: "Organize each sidebar shelf into project groups.",
+      default: true,
     },
     compactThreads: {
       type: "boolean",
@@ -505,8 +562,8 @@ export default function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Show the agent icon on each card",
       description:
-        "The trailing glyph naming the agent a thread runs on. Turn it off to give the branch that space back.",
-      default: true,
+        "Show icons on two-line cards. Compact rows use tooltips; mobile rows use the long-press menu.",
+      default: false,
     },
     debugPullRequests: {
       type: "boolean",
@@ -531,13 +588,27 @@ export default function plugin(bb: BbPluginApi) {
     automaticallyNameThreads: {
       type: "boolean",
       label: "Automatically name threads",
-      description: "Name new threads and rename only when you start different work.",
-      default: true,
+      description:
+        "Opt in to Codex inference on user prompts. Sends request context and naming rules to generate titles. Manual CLI rename remains available.",
+      default: false,
+    },
+    mobileHaptics: {
+      type: "boolean",
+      label: "Enable mobile haptics",
+      description: "Opt in to tactile feedback on iOS menu taps. Long-press menus work without it.",
+      default: false,
+    },
+    gitButlerBranches: {
+      type: "boolean",
+      label: "Show GitButler branches",
+      description:
+        "Opt in to periodic host GitButler CLI reads for primary checkouts. Otherwise use BB's native branch labels.",
+      default: false,
     },
   });
   const threadNamer = createThreadNamer(bb, {
     automaticallyNameThreads: async () => (await pluginSettings.get()).automaticallyNameThreads,
-    inference: createThreadTitleInference(bb),
+    inference: createThreadTitleInference(bb, host),
   });
 
   const db = bb.storage.database();
@@ -931,13 +1002,13 @@ export default function plugin(bb: BbPluginApi) {
       row.snoozedAt,
       row.archivedThreadIds.length === 0 ? null : JSON.stringify(row.archivedThreadIds),
     );
-    bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId: row.threadId });
+    bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "lifecycle", threadId: row.threadId });
   };
 
-  const clear = (threadId: string): void => {
+  const clear = (threadId: string, kind: "deleted" | "lifecycle" = "lifecycle"): void => {
     db.prepare(`DELETE FROM thread_lifecycle WHERE thread_id = ?`).run(threadId);
     db.prepare(`DELETE FROM snoozed_pr_watch WHERE thread_id = ?`).run(threadId);
-    bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId });
+    bb.realtime.publish(LIFECYCLE_CHANNEL, { kind, threadId });
   };
 
   interface BackoffRow {
@@ -1383,8 +1454,10 @@ export default function plugin(bb: BbPluginApi) {
     },
     { auth: "none" },
   );
+  const threadNester = createThreadNester(bb.sdk.threads);
 
   bb.rpc.register(gtdSidebarRpcContract, {
+    listNamingThreads: threadNamer.listNamingThreads,
     async listCollapsedThreads() {
       return { threadIds: await collapsedThreads.list() };
     },
@@ -1392,6 +1465,7 @@ export default function plugin(bb: BbPluginApi) {
       return { threadIds: await collapsedThreads.toggle(threadId) };
     },
     async listEnvironmentBranches({ environmentIds }) {
+      if (!(await pluginSettings.get()).gitButlerBranches) return { environments: [] };
       const environments = await Promise.all(
         [...new Set(environmentIds)].map(async (environmentId) => {
           try {
@@ -1870,64 +1944,67 @@ export default function plugin(bb: BbPluginApi) {
       }
       return { tab: browserTab };
     },
-    async reorderProject({ projectId, previousProjectId, nextProjectId }) {
-      try {
-        await bb.sdk.projects.reorder({ projectId, previousProjectId, nextProjectId });
-      } catch (error) {
-        bb.log.warn(`reorder project ${projectId} failed: ${String(error)}`);
-        return { ok: false };
+    async nestThread({ threadId, parentThreadId }) {
+      const result = await threadNester.nest(threadId, parentThreadId);
+      if (!result.ok) {
+        bb.log.warn(
+          `nest thread ${threadId} under ${parentThreadId ?? "top level"} refused: ${result.reason}`,
+        );
+        return { ok: false, reason: result.reason };
       }
       return { ok: true };
+    },
+    async reorderProject({ projectId, previousProjectId, nextProjectId }) {
+      try {
+        const projects = await bb.sdk.projects.reorder({
+          projectId,
+          previousProjectId,
+          nextProjectId,
+        });
+        // The response is bb's canonical order even when the write resolves as
+        // unchanged (which emits no project-order-changed event). Returning it
+        // lets the sidebar settle its optimistic order on every success path.
+        return { ok: true as const, projectIds: projects.map((project) => project.id) };
+      } catch (error) {
+        bb.log.warn(`reorder project ${projectId} failed: ${String(error)}`);
+        return { ok: false as const };
+      }
     },
   });
 
   // A deleted thread must not leave a row behind that would park a future
   // thread reusing the id, and stale rows accumulate otherwise.
   bb.events.on("thread.deleted", ({ thread }) => {
-    clear(thread.id);
+    clear(thread.id, "deleted");
   });
 
-  /**
-   * The settled shelf's heartbeat.
-   *
-   * An archived thread is invisible to the host's sidebar view, so no host
-   * update can tell the frontend that a settled thread started working or
-   * finished a turn. Without this the un-settle rule — new attention brings a
-   * thread back — would never fire again for anything on the shelf. A publish
-   * only asks the frontend to re-read; the decision stays where it was.
-   */
-  const republishIfSettled = ({ thread }: { thread: { id: string } }) => {
-    if (readOne(thread.id)?.settledAt == null) return;
-    bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId: thread.id });
-  };
-  bb.events.on("thread.active", republishIfSettled);
-  bb.events.on("thread.idle", republishIfSettled);
-  bb.events.on("thread.failed", republishIfSettled);
-
-  // Native archive is the settle mutation in the current sidebar. Relay bb's
-  // authoritative archive and pin changes so every open window refetches the
-  // affected shelf immediately.
+  // One native feed routes pin and archive changes to only the client list
+  // that owns them. A snooze, pin, archive, or fold no longer fans out across
+  // every lifecycle-backed RPC in every open window.
   bb.onDispose(
     bb.sdk.subscribe({
       event: "thread:changed",
       callback: (event) => {
-        if (
-          event.id !== undefined &&
-          (event.changes.includes("archived-changed") ||
-            event.changes.includes("pin-state-changed"))
-        ) {
-          bb.realtime.publish(LIFECYCLE_CHANNEL, { threadId: event.id });
+        if (event.id === undefined) return;
+        if (event.changes.includes("pin-state-changed")) {
+          bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "pin", threadId: event.id });
+        }
+        if (event.changes.includes("archived-changed")) {
+          bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "archive", threadId: event.id });
         }
       },
     }),
   );
 
+  // A fold made in bb's own sidebar lands here through the same preference;
+  // the publish is so every window re-reads it.
   bb.onDispose(
     bb.sdk.subscribe({
       event: "system:changed",
       callback: (event) => {
         if (event.changes.includes("ui-preferences-changed")) {
           bb.realtime.publish(LIFECYCLE_CHANNEL, {
+            kind: "collapsed",
             preference: "sidebar.collapsedThreads",
           });
         }

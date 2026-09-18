@@ -9,7 +9,7 @@
 
 **A dark Monokai palette for bb, terminal included.**
 
-![bb 0.40+](https://img.shields.io/badge/bb-0.40%2B-88C0D0?style=flat-square)
+![bb 0.42+](https://img.shields.io/badge/bb-0.42%2B-88C0D0?style=flat-square)
 ![platform: any](https://img.shields.io/badge/platform-any-3FA266?style=flat-square)
 ![dark only](https://img.shields.io/badge/appearance-dark%20only-E3E3DD?style=flat-square)
 
@@ -68,7 +68,7 @@ Disabling or removing the plugin returns bb to the default palette.
 Choose **Inter (Default)** or **SF Pro** under **Settings → bb Monokai → UI
 font**. The choice applies to the full interface at desktop and mobile widths.
 Code, diffs, and file paths keep the Berkeley Mono stack. The terminal uses
-BerkeleyMono Nerd Font Mono at size 13 with 1.4 line height and a #141414
+BerkeleyMono Nerd Font Mono at size 13 with 1.4 line height and a #181818
 background, matching the Ghostty cursor-monokai setup. A plugin content script applies these settings to existing and new
 xterm terminals, including the WebGL renderer, without a BB core update. It
 restores the previous typography when Monokai is deselected or unloaded. The
@@ -89,7 +89,7 @@ bb theme.
 
 ## Requirements
 
-- bb 0.40+ (code themes arrived in bb 0.39)
+- bb 0.42+. The live UI-font setting uses the app overlay added in bb 0.42.
 - bb set to **dark** appearance. The palette only restyles `.dark`; light mode
   keeps bb's defaults.
 - Optional: **Berkeley Mono**. It is _not_ bundled. Install it yourself and the
@@ -103,23 +103,32 @@ bb theme.
 
 <picture><img src="docs/media/palette.svg" alt="bb Monokai swatches" width="100%" /></picture>
 
-| Role                | Value                 | Where it lands                                                                 |
-| ------------------- | --------------------- | ------------------------------------------------------------------------------ |
-| Chrome ground       | `#141414`             | cards, popovers, sidebars, terminal ground                                     |
-| Editor ground       | `#181818`             | the main pane                                                                  |
-| Sidebar divider     | `#2B2B2B`             | solid 1px boundary between navigation and content                              |
-| User message bubble | `#1E1E1E`             | right-aligned user requests                                                    |
-| Composer            | `#1E1E1E`             | prompt input and controls                                                      |
-| Well                | `#1E1E1E`             | recessed and code wells, text fields, selectors; controls use a `#3C3C3C` edge |
-| Raised              | `#262626`             | hover and active fills                                                         |
-| Filled buttons      | `#363635` / `#1E1E1E` | borderless primary / `#3C3C3C`-bordered secondary buttons                      |
-| Selection           | `#404040`             | text selection, chips                                                          |
-| Ink                 | `#E3E3DD`             | the one white; every text tier is an alpha of it                               |
-| Accent              | `#88C0D0`             | the only chroma in the chrome — always means interactive                       |
-| Success / added     | `#3FA266`             |                                                                                |
-| Warning / attention | `#F1B467`             |                                                                                |
-| Danger / removed    | `#E34671`             |                                                                                |
-| Merged              | `#B267E6`             |                                                                                |
+| Role                | Value            | Where it lands                            |
+| ------------------- | ---------------- | ----------------------------------------- |
+| Chrome / content    | `#181818`        | sidebars, terminal, code, diffs           |
+| Conversation        | `#151515`        | main agent conversation                   |
+| Elevated surface    | `#1D1D1D` opaque | popovers and tooltips                     |
+| Subtle layer        | ink at 4%        | cards, inputs, dropdown triggers          |
+| Control layer       | ink at 6%        | user messages, composer, headers, actions |
+| Hover layer         | ink at 8%        | controls, rows, inline code               |
+| Selected layer      | ink at 14%       | primary actions and selected rows         |
+| Active layer        | ink at 20%       | pressed controls and primary hover        |
+| Control edge        | ink at 12%       | fields, buttons, pane boundaries          |
+| Ink                 | `#E3E3DD`        | text and neutral layer source             |
+| Accent              | `#88C0D0`        | links, mentions, search matches           |
+| Success / added     | `#3FA266`        | feedback                                  |
+| Warning / attention | `#F1B467`        | feedback                                  |
+| Danger / removed    | `#E34671`        | feedback                                  |
+| Merged              | `#B267E6`        | feedback                                  |
+
+In-flow components composite the same alpha layer over their actual parent.
+A field in a card therefore remains distinct without a card-specific color.
+Borders clip the fill to the padding box, so two alpha layers do not stack
+under the edge. Menus, code, terminals, and explicit solid fallbacks remain
+opaque where they must hide content beneath them.
+
+[Cursor measurements and token mapping](docs/alpha-surfaces.md) explain the
+reference and how to rerun the browser composition audit.
 
 **One meaning per hue.** A color never does two jobs. Text is one white at four
 alphas (100 / 74 / 55 / 30 %), each annotated inline with its measured contrast
@@ -130,6 +139,7 @@ ratio against the ground it sits on.
 | Surface              | Notes                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------- |
 | App chrome           | panes, panels, sidebar, menus, buttons, mention pills, focus rings                    |
+| Conversation links   | accent text with an alpha-derived rounded hover surface                               |
 | Terminal             | all 16 ANSI colors plus 16 companion foreground tokens, one per ANSI background       |
 | Diff viewer          | addition / deletion / modified colors, gutter number grounds and role-colored numbers |
 | Syntax tokens        | the Cursor Monokai TextMate layer, in diffs and file previews                         |

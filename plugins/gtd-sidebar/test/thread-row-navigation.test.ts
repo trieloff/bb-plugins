@@ -29,7 +29,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       },
     );
     assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`);
-  });
+  }, 30_000);
 } else {
   const { JSDOM } = createRequire(import.meta.url)("jsdom") as {
     JSDOM: new (
@@ -65,6 +65,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
   const sdk = { ...(await import("@get-bb/plugin-sdk/app")) };
 
   interface HostState {
+    naming?: ReadonlySet<string>;
     sidebar: PluginSidebarThreadsState;
     actions: Partial<PluginSidebarThreadActions>;
     navigate: Partial<BbNavigate>;
@@ -126,6 +127,9 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
   }));
   mock.module("../hooks/use-pinned-order.ts", () => ({
     usePinnedOrder: () => useHost().pinned,
+  }));
+  mock.module("../hooks/use-naming-threads.ts", () => ({
+    useNamingThreads: () => useHost().naming ?? new Set(),
   }));
   const rowBodyRender = spyOn(
     await import("../components/inbox/row-context-menu.tsx"),
@@ -189,6 +193,8 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       snoozedAtFor: (row: PluginSidebarThread) =>
         snoozedIds.includes(row.id) ? wakeAt - 3_600_000 : null,
       snooze: mock<LifecycleApi["snooze"]>(() => {}),
+      quickSnooze: mock<LifecycleApi["quickSnooze"]>(() => {}),
+      quickSnoozeLabel: () => "Snooze until tomorrow",
       unsnooze: mock<LifecycleApi["unsnooze"]>(() => {}),
     } satisfies LifecycleApi;
   }
@@ -198,6 +204,8 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       open: mock<PluginSidebarThreadActions["open"]>(() => {}),
       archive: mock<PluginSidebarThreadActions["archive"]>(() => {}),
       setPinned: mock<PluginSidebarThreadActions["setPinned"]>(async () => {}),
+      setRead: mock<PluginSidebarThreadActions["setRead"]>(async () => {}),
+      rename: mock<PluginSidebarThreadActions["rename"]>(async () => {}),
       requestDelete: mock<PluginSidebarThreadActions["requestDelete"]>(() => {}),
     };
   }
@@ -251,11 +259,14 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
         ...inbox,
       },
     };
-    const slot = renderSlot({ component: Inbox }, current, {
-      settings: { compactThreads, localMachineId },
-    });
+    const settings = { compactThreads, localMachineId, groupThreadsByProject: true };
+    const slot = renderSlot({ component: Inbox }, current, { settings });
     return {
       slot,
+      setGrouping(enabled: boolean) {
+        settings.groupThreadsByProject = enabled;
+        slot.lifecycle.rerender(createElement(Inbox, current));
+      },
       update(next: Partial<InboxProps>) {
         current = { ...current, ...next };
         slot.lifecycle.rerender(createElement(Inbox, current));
@@ -293,6 +304,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
 
   beforeEach(() => {
     configure({ reactStrictMode: false });
+    localStorage.clear();
     rowBodyRender.mockClear();
     useActions.mockClear();
   });
@@ -357,6 +369,28 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
 
   describe("row render isolation", () => {
     it.each([false, true])(
+      "marks only naming titles busy, including parked rows, with mobile=%s",
+      (isCompactViewport) => {
+        const host = hostState([thread("a"), thread("b"), thread("snoozed")]);
+        host.lifecycle = lifecycle(["snoozed"]);
+        host.naming = new Set(["a", "snoozed"]);
+        const view = mount(host, { isCompactViewport });
+        fireEvent.click(view.slot.getByRole("button", { name: "Snoozed (1)" }));
+        for (const id of ["a", "snoozed"]) {
+          assert.equal(
+            row(view.slot, id)
+              .parentElement!.querySelector('[data-gtd-naming="true"]')
+              ?.getAttribute("aria-busy"),
+            "true",
+          );
+        }
+        assert.equal(row(view.slot, "b").parentElement!.querySelector("[data-gtd-naming]"), null);
+        view.update({ host: { ...host, naming: new Set() } });
+        assert.equal(view.slot.container.querySelector("[data-gtd-naming]"), null);
+      },
+    );
+
+    it.each([false, true])(
       "only redraws selection changes with compact=%s",
       (isCompactViewport) => {
         const host = hostState([
@@ -375,6 +409,9 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
           settledAtFor: () => 50,
         };
         const view = mount(host, { activeThreadId: "a", isCompactViewport });
+        assert.ok(view.slot.container.querySelector("[data-gtd-sidebar-thread-list]"));
+        assert.equal(row(view.slot, "a").parentElement!.dataset.sidebarThreadActive, "true");
+        assert.equal(row(view.slot, "b").parentElement!.dataset.sidebarThreadActive, undefined);
         expandParked(view.slot);
         const order = rowIds(view.slot);
         assert.deepEqual(order, ["pinned", "a", "b", "c", "waiting", "snoozed", "settled"]);
@@ -386,6 +423,8 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
         assert.equal(useActions.mock.calls.length, 1);
         view.updateInbox({ activeThreadId: "b", onNavigate: () => {} });
         assert.equal(rowBodyRender.mock.calls.length, 2);
+        assert.equal(row(view.slot, "a").parentElement!.dataset.sidebarThreadActive, undefined);
+        assert.equal(row(view.slot, "b").parentElement!.dataset.sidebarThreadActive, "true");
         assert.deepEqual(rowIds(view.slot), order);
         order.forEach((id, index) => assert.equal(row(view.slot, id), retained[index]));
         rowBodyRender.mockClear();
@@ -588,7 +627,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.ok(within(waiting as HTMLElement).getByRole("button", { name: "Two project (1)" }));
     });
 
-    it("indents grouped mobile rows past the disclosure their group adds", () => {
+    it("aligns grouped mobile parent, child, and leaf rows to their repo columns", () => {
       const view = mount(
         hostState([
           thread("root"),
@@ -597,12 +636,12 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
         ]),
         { isCompactViewport: true },
       );
-      // The disclosure slides right by --gtd-group-indent inside a group; a
-      // row that does not pay it back leaves the chevron on the title.
+      // Parent and child rows carry a disclosure/tree slot. Compact leaves
+      // omit that slot unless their repository header establishes the column.
       const paddingLeft = (id: string) => row(view.slot, id).parentElement!.style.paddingLeft;
       assert.match(paddingLeft("root"), /var\(--gtd-group-indent/);
       assert.match(paddingLeft("child"), /var\(--gtd-group-indent/);
-      assert.match(paddingLeft("other"), /var\(--gtd-group-indent/);
+      assert.match(paddingLeft("other"), /var\(--gtd-leaf-group-indent/);
     });
 
     it("keeps group order put when the open thread changes", () => {
@@ -770,11 +809,45 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
         trigger.querySelector<HTMLElement>("[data-machine-id]")?.style.color,
         chipGlobe.style.color,
       );
+      assert.ok(view.slot.getByRole("combobox", { name: "Project scope: All projects" }));
+      view.setGrouping(false);
       fireEvent.keyDown(view.slot.getByRole("combobox", { name: "Project scope: All projects" }), {
         key: "ArrowDown",
       });
       fireEvent.click(screen.getByRole("option", { name: "One" }));
       assert.deepEqual(rowIds(view.slot), ["a"]);
+      view.setGrouping(true);
+      assert.ok(view.slot.getByRole("combobox", { name: /Project scope:/ }));
+      assert.ok(view.slot.getByRole("combobox", { name: "Project scope: One" }));
+      assert.deepEqual(rowIds(view.slot), ["a"]);
+    });
+
+    it("keeps repository context under a machine filter and lets plugin settings hide groups", () => {
+      const host = hostState([
+        thread("studio", { host: { id: "host-a", name: "Studio" } }),
+        thread("server", {
+          projectId: "two",
+          host: { id: "host-b", name: "Server" },
+        }),
+      ]);
+      const view = mount(host);
+      fireEvent.keyDown(view.slot.getByRole("combobox", { name: "Machine scope: All machines" }), {
+        key: "ArrowDown",
+      });
+      fireEvent.click(screen.getByRole("option", { name: "Studio" }));
+
+      assert.deepEqual(rowIds(view.slot), ["studio"]);
+      assert.ok(view.slot.getByRole("button", { name: "One project" }));
+      assert.equal(view.slot.queryByRole("button", { name: "Hide repository groups" }), null);
+      assert.ok(view.slot.getByRole("combobox", { name: /Project scope:/ }));
+
+      view.setGrouping(false);
+      assert.equal(view.slot.container.querySelector(".gtd-project-group"), null);
+      assert.ok(view.slot.getByRole("combobox", { name: "Project scope: All projects" }));
+
+      view.setGrouping(true);
+      assert.ok(view.slot.getByRole("button", { name: "One project" }));
+      assert.ok(view.slot.getByRole("combobox", { name: /Project scope:/ }));
     });
 
     it("opens and drags with current host callbacks without redrawing an unchanged row", () => {
@@ -827,6 +900,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       const navigate = mock(() => {});
       const view = mount(host, { activeThreadId: "c", onNavigate: oldNavigate });
       view.updateInbox({ activeThreadId: "a", onNavigate: navigate });
+      view.setGrouping(false);
       fireEvent.keyDown(view.slot.getByRole("combobox", { name: "Project scope: All projects" }), {
         key: "ArrowDown",
       });
@@ -987,6 +1061,89 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.equal(oldNavigate.mock.calls.length, 0);
     });
 
+    it("keeps GTD actions first and restores native actions for the clicked row", async () => {
+      const currentActions = actions();
+      const host = { ...hostState([thread("a"), thread("b")]), actions: currentActions };
+      const view = mount(host, { activeThreadId: "b" });
+      fireEvent.contextMenu(row(view.slot, "a"));
+      await act(async () => {});
+      assert.deepEqual(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+        [
+          "Settle",
+          "Snooze until tomorrow",
+          "Open in split",
+          "Copy thread link",
+          "Mark unread",
+          "Pin",
+          "Rename",
+          "Delete",
+        ],
+      );
+      assert.equal(screen.queryByRole("menuitem", { name: /archive/i }), null);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Open in split" }));
+      assert.deepEqual(currentActions.open.mock.calls, [["a", { split: true }]]);
+      fireEvent.contextMenu(row(view.slot, "a"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Mark unread" }));
+      assert.deepEqual(currentActions.setRead.mock.calls, [["a", false]]);
+
+      const writeText = mock(async (_text: string) => {});
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+      fireEvent.contextMenu(row(view.slot, "a"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy thread link" }));
+      await act(async () => {});
+      assert.deepEqual(writeText.mock.calls, [["http://localhost/projects/one/threads/a"]]);
+
+      fireEvent.contextMenu(row(view.slot, "a"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+      const title = await screen.findByRole("textbox", { name: "Thread title" });
+      fireEvent.change(title, { target: { value: "  New title  " } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      });
+      assert.equal(screen.queryByRole("dialog"), null);
+      assert.deepEqual(currentActions.rename.mock.calls, [["a", "New title"]]);
+    });
+
+    it("marks an unread row read without acting on the selected thread", async () => {
+      const currentActions = actions();
+      const view = mount(
+        { ...hostState([thread("a", { isUnread: true }), thread("b")]), actions: currentActions },
+        { activeThreadId: "b" },
+      );
+      fireEvent.contextMenu(row(view.slot, "a"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Mark read" }));
+      assert.deepEqual(currentActions.setRead.mock.calls, [["a", true]]);
+      await act(async () => {});
+    });
+
+    it("opens settled threads in a split from the menu and cancels rename without saving", async () => {
+      const currentActions = actions();
+      const host = hostState([thread("selected")]);
+      host.actions = currentActions;
+      host.settled = {
+        threads: [thread("settled", { isArchived: true })],
+        ready: true,
+        unsettle: () => {},
+        settledAtFor: () => 1,
+      };
+      const view = mount(host, { activeThreadId: "selected" });
+      fireEvent.click(view.slot.getByRole("button", { name: "Settled (1)" }));
+      fireEvent.contextMenu(row(view.slot, "settled"));
+      assert.equal(screen.getAllByRole("menuitem")[0]?.textContent, "Un-settle");
+      assert.equal(screen.queryByRole("menuitem", { name: /archive/i }), null);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Open in split" }));
+      assert.deepEqual(currentActions.open.mock.calls, [["settled", { split: true }]]);
+      fireEvent.contextMenu(row(view.slot, "settled"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Thread title" }), {
+        target: { value: "Unsaved title" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      assert.equal(screen.queryByRole("dialog"), null);
+      assert.equal(currentActions.rename.mock.calls.length, 0);
+    });
+
     it("routes snooze, pin and delete through the current dispatcher", async () => {
       const oldLifecycle = lifecycle();
       const oldActions = actions();
@@ -995,9 +1152,8 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       const currentLifecycle = lifecycle();
       const currentActions = actions();
       view.update({ host: { ...host, lifecycle: currentLifecycle, actions: currentActions } });
-      fireEvent.pointerDown(rowButton(view.slot, "a", "Snooze"));
-      assert.equal(currentLifecycle.snooze.mock.calls[0]?.[0], "a");
-      assert.ok(currentLifecycle.snooze.mock.calls[0]![1] > Date.now());
+      fireEvent.pointerDown(rowButton(view.slot, "a", "Snooze until tomorrow"));
+      assert.deepEqual(currentLifecycle.quickSnooze.mock.calls, [["a", "one", null]]);
       fireEvent.contextMenu(row(view.slot, "a"));
       fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
       await act(async () => {});
@@ -1005,7 +1161,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       fireEvent.contextMenu(row(view.slot, "a"));
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
       assert.deepEqual(currentActions.requestDelete.mock.calls, [["a"]]);
-      assert.equal(oldLifecycle.snooze.mock.calls.length, 0);
+      assert.equal(oldLifecycle.quickSnooze.mock.calls.length, 0);
       assert.equal(oldActions.setPinned.mock.calls.length, 0);
       assert.equal(oldActions.requestDelete.mock.calls.length, 0);
     });

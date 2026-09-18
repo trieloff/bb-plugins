@@ -42,6 +42,186 @@
  *      this palette automatically.
  */
 
+/* BB keeps the right-panel diff disclosure outside Pierre's shadow tree.
+ * Mirror the Diffs.com built-in-slots header shell and controls while retaining
+ * BB's collapse state, file actions, sticky positioning, and non-text fallbacks.
+ * Color stays on this theme's surface, ink, state, and feedback roles. */
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .overflow-clip.rounded-lg.border.border-border.bg-background:has(
+    > .h-0 + .rounded-lg.bg-background button[aria-expanded]
+  ) {
+  overflow: hidden;
+  border-color: var(--border);
+  border-radius: 10px;
+  background-color: {{ground.content}};
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
+  min-height: 44px;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-top: 0;
+  border-radius: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  > .flex {
+  height: 100%;
+  gap: 8px;
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  > .flex
+  > span:first-child {
+  gap: 8px;
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  button[aria-expanded] {
+  width: 24px;
+  height: 24px;
+  margin-left: -5px;
+  padding: 0;
+  border-radius: 8px;
+  background-color: transparent;
+  color: var(--muted-foreground);
+  transition:
+    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  button[aria-expanded]
+  svg {
+  width: 10px;
+  height: 16px;
+}
+
+@media (hover: hover) {
+  .dark
+    :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+      [data-testid="git-diff-toolbar-layout"]
+    )
+    .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+    button[aria-expanded]:hover {
+    background-color: var(--state-hover);
+    color: var(--foreground);
+  }
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  button[aria-expanded]
+  + span {
+  padding-left: 0;
+  gap: 8px;
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  .font-mono {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  button[aria-expanded]
+  + span
+  > button:not(.font-mono) {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background-color: transparent;
+  color: var(--muted-foreground);
+  transition:
+    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (hover: hover) {
+  .dark
+    :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+      [data-testid="git-diff-toolbar-layout"]
+    )
+    .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+    button[aria-expanded]
+    + span
+    > button:not(.font-mono):hover {
+    background-color: var(--state-hover);
+    color: var(--foreground);
+  }
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  > .flex
+  > span:last-child {
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dark
+  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
+    [data-testid="git-diff-toolbar-layout"]
+  )
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  > .flex
+  > span:last-child
+  > .text-xs {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
 :root,
 .light {
   /* Fonts are the only genuinely mode-independent values here. The frontend
@@ -68,66 +248,59 @@
   --terminal-line-height: 1.4;
   --bb-monokai-code-entity: {{code.entity}};
 
-  /* ---- Anchors --------------------------------------------------------
-   * bb derives every surface, border and state fill as
-   * color-mix(in oklch, var(--ink) N%, var(--canvas)). Left alone those land
-   * between the ramp steps (#1C1C1C, #2E2E2D, #333333, #525251 …), so every
-   * ground below is pinned explicitly. The anchors still matter for anything
-   * bb adds later. */
-  --canvas: {{ground.content}}; /* editor ground */
-  --ink: {{text.ink}}; /* the one white; ladder base */
+  /* Opaque anchors occlude content. In-flow layers composite over their
+   * actual parent. Cursor uses the same ink-relative 4/6/8/14/20% ladder.
+   * Only explicit *-solid fallbacks may flatten a layer to a fixed ground. */
+  --canvas: {{ground.conversation}};
+  --ink: {{text.ink}};
+  --background: {{ground.conversation}};
+  --card: {{layer.subtle}};
+  --popover: {{solid.recessed}};
+  --secondary: {{layer.control}};
+  --accent: {{layer.hover}};
+  --muted: {{layer.selected}};
+  --input: {{layer.edge}};
+  --control-background: {{layer.subtle}};
+  --control-primary: {{layer.selected}};
+  --control-primary-hover: {{layer.active}};
 
-  /* ---- Grounds ramp ---------------------------------------------------
-   * #141414 chrome · #181818 editor · #1E1E1E wells · #262626 raised/hover ·
-   * #404040 selection. Nothing else serves as a surface. Translucent tiers use
-   * an ink alpha chosen to flatten onto a ramp step over --background. */
-  --background: {{ground.content}}; /* main pane = editor ground */
-  --card: {{ground.chrome}}; /* panels are chrome, one step under the pane */
-  --popover: {{ground.chrome}}; /* menus, dropdowns, command palette, tooltips */
-  --secondary: {{ground.raised}}; /* raised */
-  --accent: {{ground.raised}}; /* neutral hover/active fill, despite the name */
-  --muted: {{ground.selection}}; /* chips + xterm selection ground (see below) */
-  --input: {{control.edge}}; /* compact form-control edge; distinct from the #1E1E1E
-                      * well without becoming a bright line */
-
-  --surface-recessed: {{text.ink03}}; /* -> #1E1E1E over --background */
-  --surface-recessed-solid: {{ground.recessed}};
-  --surface-recessed-soft-solid: {{ground.recessed}}; /* ramp has no step between #181818
-                                           * and #1E1E1E; coarse on purpose */
-  --surface-raised: {{text.ink08}}; /* -> #262626 */
-  --surface-raised-solid: {{ground.raised}};
-  --surface-scrim: {{ground.contentScrim}}; /* not a veil: bb paints the page
+  --surface-recessed: {{layer.subtle}};
+  --surface-recessed-solid: {{solid.recessed}};
+  --surface-recessed-soft-solid: {{solid.recessed}};
+  --surface-raised: {{layer.control}};
+  --surface-raised-solid: {{solid.raised}};
+  --surface-scrim: {{ground.conversationScrim}}; /* not a veil: bb paints the page
                                            * header and floating control
                                            * clusters with it, over the pane.
                                            * On the content ground it flattens
-                                           * to #181818; on the chrome ground
+                                           * to #151515; on the chrome ground
                                            * the header read one step darker
                                            * than the safe-area strip above it
                                            * on phones. */
 
-  --agent-surface-background: {{ground.recessed}};
-  --agent-surface-border: {{text.ink07}};
+  --agent-surface-background: {{layer.control}};
+  --agent-surface-border: {{layer.hover}};
 
-  --state-hover: {{text.ink08}}; /* -> #262626, the raised/hover step */
-  --state-active: {{text.ink20}}; /* -> #404040, the selection step */
+  --state-hover: {{layer.hover}};
+  --state-active: {{layer.active}};
 
   /* Selected rows are ladder, not accent: the contract keeps counters and
    * selection quiet. Both names default to a --primary mix, so both are pinned
    * or they would tint cyan. */
-  --surface-selected: {{text.ink12}};
-  --surface-selected-border: {{text.ink25}};
+  --surface-selected: {{layer.selected}};
+  --surface-selected-border: {{layer.active}};
 
   /* ---- Borders --------------------------------------------------------- */
-  --border-seam: {{text.ink07}}; /* quietest divider; = editorGroup.border */
+  --border-seam: {{layer.subtle}};
   --border-seam-vertical: var(--border-seam);
-  --border: {{text.ink12}};
-  --border-hairline: {{text.ink17}}; /* = tree.indentGuidesStroke */
+  --border: {{layer.edge}};
+  --border-hairline: {{layer.hover}};
 
   /* ---- Text ladder -----------------------------------------------------
    * One white at four alphas, ≥20 alpha points apart.
    * --foreground stays opaque: it is also the xterm foreground and cursor, and
    * ANSI bright-white is #E3E3DD. */
-  --foreground: {{text.ink}}; /* 13.78:1 on --background */
+  --foreground: {{text.ink}}; /* 14.17:1 on --background */
   --muted-foreground: {{text.ink74}}; /* secondary 74% — 8.02:1 */
   --readback-foreground: {{text.ink55}}; /* muted 55% — 4.96:1 */
   --subtle-foreground: {{text.ink30}}; /* faint 30% — the deliberately ghosted
@@ -142,7 +315,7 @@
    * --timeline-accent must be pinned too — it is hardcoded blue upstream and is
    * the default source of --file-accent. */
   --primary: {{accent.base}};
-  --primary-foreground: {{ground.chrome}}; /* 9.21:1 on the accent */
+  --primary-foreground: {{ground.chrome}}; /* 8.88:1 on the accent */
   --timeline-accent: {{accent.base}};
   --file-accent: {{accent.base}};
 
@@ -155,17 +328,17 @@
   --sidebar-search-match: {{accent.match}};
   --sidebar-search-match-border: {{accent.matchBorder}};
 
-  --resource-source-shelf-card-hover-border: {{text.ink25}};
+  --resource-source-shelf-card-hover-border: {{layer.active}};
 
   /* ---- Feedback — one hex per role ------------------------------------- */
   --destructive: {{feedback.error}};
-  --destructive-foreground: {{ground.chrome}}; /* 4.72:1. The whites both fall short as
+  --destructive-foreground: {{ground.chrome}}; /* 4.55:1. The whites both fall short as
                                       * TEXT on this fill: the ladder #E3E3DD
                                       * reaches 3.03:1 and upstream's off-ladder
                                       * #FFFFFF only 3.90:1, so dark wins the
                                       * token. Glyphs answer to the 3:1 non-text
                                       * floor instead — see the stop button. */
-  --destructive-text: {{feedback.error}}; /* 4.55:1 on --background */
+  --destructive-text: {{feedback.error}}; /* 4.68:1 on --background */
   --warning: {{feedback.warning}};
   --warning-text: {{feedback.warning}};
   --attention: {{feedback.warning}};
@@ -181,23 +354,23 @@
   --surface-attention: {{feedback.warning12}};
 
   /* ---- Sidebar ---------------------------------------------------------
-   * --sidebar is also the xterm background and cursor accent, so pinning it to
-   * the chrome ground gives the navigation a clear step below the main pane. */
-  --sidebar: {{ground.chrome}};
-  --sidebar-foreground: {{text.ink74}}; /* 8.22:1 */
-  --sidebar-accent: {{ground.raised}};
+   * Keep both navigation sidebars on the content ground. Terminal chrome stays
+   * on its separate --terminal-background token above. */
+  --sidebar: {{ground.content}};
+  --sidebar-foreground: {{text.ink74}}; /* 8.02:1 */
+  --sidebar-accent: {{layer.hover}};
   --sidebar-accent-foreground: {{text.ink}}; /* selection keeps primary text */
-  --sidebar-border: {{control.paneDivider}}; /* solid, low-contrast 1px pane divider */
+  --sidebar-border: {{layer.edge}}; /* shared alpha edge; one owner per boundary */
 
   /* ---- Mention pills ---------------------------------------------------
    * The gradient syntax is required (the token is consumed as a
    * background-image); the stops are flat so the chip stays on the ramp. */
-  --pill-surface: linear-gradient(to bottom, {{ground.raised}}, {{ground.raised}});
-  --pill-surface-border: {{text.ink12}};
+  --pill-surface: linear-gradient(to bottom, {{layer.control}}, {{layer.control}});
+  --pill-surface-border: {{layer.edge}};
   --pill-foreground: {{text.ink}};
   --pill-icon: {{text.ink74}};
-  --pill-surface-selected: linear-gradient(to bottom, {{ground.selection}}, {{ground.selection}});
-  --pill-surface-selected-border: {{text.ink25}};
+  --pill-surface-selected: linear-gradient(to bottom, {{layer.selected}}, {{layer.selected}});
+  --pill-surface-selected-border: {{layer.active}};
 
   /* ---- Terminal ANSI ---------------------------------------------------
    * Content palette, not chrome: the program assigns the meaning. Normal tier
@@ -224,25 +397,25 @@
   --ansi-15: {{text.ink}};
 
   /* Text bb draws ON an ANSI colour used as a background. Each slot takes
-   * whichever of #141414 / #E3E3DD scores higher; every slot but 0 is dark.
-   * Worst pair is slot 8 (#7C7865, the comment gray) at 4.15:1 — inherent to a
+   * whichever of #181818 / #E3E3DD scores higher; every slot but 0 is dark.
+   * Worst pair is slot 8 (#7C7865, the comment gray) at 4.00:1 — inherent to a
    * mid gray, and bright-black backgrounds are rare. */
-  --ansi-bg-fg-0: {{text.ink}}; /* 14.30:1 */
-  --ansi-bg-fg-1: {{ground.chrome}}; /* 4.72:1 */
-  --ansi-bg-fg-2: {{ground.chrome}}; /* 5.76:1 */
-  --ansi-bg-fg-3: {{ground.chrome}}; /* 10.06:1 */
-  --ansi-bg-fg-4: {{ground.chrome}}; /* 6.21:1 */
-  --ansi-bg-fg-5: {{ground.chrome}}; /* 7.36:1 */
-  --ansi-bg-fg-6: {{ground.chrome}}; /* 11.01:1 */
-  --ansi-bg-fg-7: {{ground.chrome}}; /* 8.18:1 */
-  --ansi-bg-fg-8: {{ground.chrome}}; /* 4.15:1 — below AA, best available */
-  --ansi-bg-fg-9: {{ground.chrome}}; /* 6.25:1 */
-  --ansi-bg-fg-10: {{ground.chrome}}; /* 11.32:1 */
-  --ansi-bg-fg-11: {{ground.chrome}}; /* 12.40:1 */
-  --ansi-bg-fg-12: {{ground.chrome}}; /* 8.06:1 */
-  --ansi-bg-fg-13: {{ground.chrome}}; /* 9.62:1 */
-  --ansi-bg-fg-14: {{ground.chrome}}; /* 13.74:1 */
-  --ansi-bg-fg-15: {{ground.chrome}}; /* 14.30:1 */
+  --ansi-bg-fg-0: {{text.ink}}; /* 13.78:1 */
+  --ansi-bg-fg-1: {{ground.chrome}}; /* 4.55:1 */
+  --ansi-bg-fg-2: {{ground.chrome}}; /* 5.56:1 */
+  --ansi-bg-fg-3: {{ground.chrome}}; /* 9.69:1 */
+  --ansi-bg-fg-4: {{ground.chrome}}; /* 5.99:1 */
+  --ansi-bg-fg-5: {{ground.chrome}}; /* 7.10:1 */
+  --ansi-bg-fg-6: {{ground.chrome}}; /* 10.62:1 */
+  --ansi-bg-fg-7: {{ground.chrome}}; /* 7.89:1 */
+  --ansi-bg-fg-8: {{ground.chrome}}; /* 4.00:1 — below AA, best available */
+  --ansi-bg-fg-9: {{ground.chrome}}; /* 6.02:1 */
+  --ansi-bg-fg-10: {{ground.chrome}}; /* 10.91:1 */
+  --ansi-bg-fg-11: {{ground.chrome}}; /* 11.95:1 */
+  --ansi-bg-fg-12: {{ground.chrome}}; /* 7.77:1 */
+  --ansi-bg-fg-13: {{ground.chrome}}; /* 9.27:1 */
+  --ansi-bg-fg-14: {{ground.chrome}}; /* 13.24:1 */
+  --ansi-bg-fg-15: {{ground.chrome}}; /* 13.78:1 */
 
   /* ---- Diff viewer (shadow DOM) ---------------------------------------
    * Only the `-override` family is reachable: it has top precedence and is
@@ -258,19 +431,19 @@
   --diffs-bg-context-override: {{ground.content}};
   --diffs-bg-context-gutter-override: {{ground.content}};
   --diffs-bg-buffer-override: {{ground.content}};
-  --diffs-bg-separator-override: {{ground.raised}};
+  --diffs-bg-separator-override: {{layer.control}};
   --diffs-bg-addition-override: {{feedback.success13}};
   --diffs-bg-addition-emphasis-override: {{feedback.success27}};
   --diffs-bg-deletion-override: {{feedback.error13}};
   --diffs-bg-deletion-emphasis-override: {{feedback.error27}};
-  --diffs-bg-hover-override: {{text.ink08}};
-  --diffs-bg-selection-override: {{ground.selection60}};
+  --diffs-bg-hover-override: {{layer.hover}};
+  --diffs-bg-selection-override: {{layer.selected}};
 
   /* Number gutters share the neutral code ground, not the change-row wash.
    * Feedback numbers retain their contrast against the content surface. */
   --diffs-bg-addition-number-override: {{ground.content}};
   --diffs-bg-deletion-number-override: {{ground.content}};
-  --diffs-bg-selection-number-override: {{ground.raised}};
+  --diffs-bg-selection-number-override: {{layer.selected}};
   --diffs-fg-number-override: {{text.ink55}};
   --diffs-fg-number-addition-override: {{feedback.success}};
   --diffs-fg-number-deletion-override: {{feedback.error}};
@@ -291,10 +464,9 @@
   --trees-status-deleted-override: {{feedback.error}};
   --trees-status-ignored-override: {{text.ink30}};
 
-  --trees-input-bg-override: {{ground.recessed}}; /* default is #070707, darker than every
-                                       * ground on the ramp */
+  --trees-input-bg-override: {{layer.subtle}};
   --trees-accent-override: {{accent.base}}; /* default is #009fff */
-  --trees-indent-guide-bg-override: {{text.ink17}};
+  --trees-indent-guide-bg-override: {{layer.edge}};
   --trees-fg-muted-override: {{text.ink55}};
   --trees-focus-ring-color-override: {{text.ink25}};
 
@@ -313,7 +485,7 @@
   background-color: var(--terminal-background);
 }
 
-/* Both outer sidebars spend the solid pane-divider role. The active right
+/* Both outer sidebars spend the shared alpha edge. The active right
  * resize handle owns that boundary, so suppress the panel border beneath it
  * instead of painting the divider twice. */
 .dark [data-sidebar="panel"],
@@ -332,11 +504,12 @@
   border-color: transparent;
 }
 
-/* Cursor Monokai leaves chat.request* unset. Its visible user request bubble is
- * #1E1E1E with a faint edge. Match those colors while preserving bb's native
- * bubble geometry. Agent replies stay flat on the #181818 panel ground. */
+/* User requests use the shared 6% ink surface with an 8% edge while keeping
+ * bb's native bubble geometry. Agent replies stay flat on the #151515
+ * conversation ground. */
 .dark .rounded-xl.border.border-border-seam.bg-surface-recessed {
   background-color: var(--agent-surface-background);
+  background-clip: padding-box;
   border-color: var(--agent-surface-border);
 }
 
@@ -351,21 +524,155 @@
   color: var(--readback-foreground);
 }
 
-/* bb shares --input between control edges and, in a few components, fills.
- * Give editable controls the recessed well while --input supplies their
- * visible #3C3C3C keyline. Keep the selector narrow so outline buttons retain
- * their own treatment below. */
+/* bb's collapsed timeline toggles ("Ran 2 commands", "Thought 3s",
+ * "Worked for 5m") wrap their label in an opacity-40 span under a subtle or
+ * muted button: 30% x 40% is ~12% alpha, which vanishes on this ground. Drop
+ * the multiplier and keep one fade per span: subtle lifts to readback, muted
+ * stays muted, so "Worked for" still sits under its duration. Hover and focus
+ * climb one step as upstream intends. */
+.dark .group\/timeline-row > button[aria-expanded] > span > .opacity-40 {
+  opacity: 1;
+}
+.dark .group\/timeline-row > button[aria-expanded].text-subtle-foreground,
+.dark .group\/timeline-row > button[aria-expanded] .text-subtle-foreground {
+  color: var(--readback-foreground);
+}
+.dark .group\/timeline-row > button[aria-expanded].text-subtle-foreground:focus-visible,
+.dark .group\/timeline-row > button[aria-expanded].text-subtle-foreground:focus-visible .text-subtle-foreground {
+  color: var(--muted-foreground);
+}
+@media (hover: hover) {
+  .dark .group\/timeline-row > button[aria-expanded].text-subtle-foreground:hover,
+  .dark .group\/timeline-row > button[aria-expanded].text-subtle-foreground:hover .text-subtle-foreground {
+    color: var(--muted-foreground);
+  }
+}
+
+/* Shared host-component adapter. Field and outline-button fills depend only
+ * on role, never on which card, sidebar, dialog, or composer contains them.
+ * Clip the translucent fill inside its edge to avoid double compositing. */
 .dark input.border-input,
 .dark textarea.border-input,
 .dark select.border-input,
-.dark [role="combobox"].border-input {
-  background-color: {{ground.recessed}};
+.dark [role="combobox"].border-input,
+.dark button.border-input,
+.dark button.border.bg-card {
+  background-color: var(--control-background);
+  background-clip: padding-box;
+  border-color: var(--input);
 }
 
-/* The composer shares the #1E1E1E recessed well. Its native border remains
- * responsible for the edge. */
+/* Native option sheets must occlude the page, just like portalled menus. */
+.dark select.border-input option,
+.dark select.border-input optgroup {
+  background-color: var(--popover);
+  color: var(--foreground);
+}
+
+@media (hover: hover) {
+  .dark input.border-input:hover:not(:disabled),
+  .dark textarea.border-input:hover:not(:disabled),
+  .dark select.border-input:hover:not(:disabled),
+  .dark [role="combobox"].border-input:hover:not(:disabled),
+  .dark button.border-input:hover:not(:disabled),
+  .dark button.border.bg-card:hover:not(:disabled) {
+    background-color: var(--state-hover);
+  }
+}
+
+.dark button.border-input:active:not(:disabled),
+.dark button.border.bg-card:active:not(:disabled),
+.dark button.border-input[data-state="open"],
+.dark button.border.bg-card[data-state="open"] {
+  background-color: var(--surface-selected);
+}
+
+/* The composer owns one 6% layer. Its editor is layout, not another surface. */
 .dark [data-promptbox] {
-  background-color: {{ground.recessed}};
+  background-color: var(--agent-surface-background);
+  background-clip: padding-box;
+}
+
+.dark [data-promptbox] [data-promptbox-editor-scroll] {
+  background-color: transparent;
+  border-radius: 11px 11px 0 0;
+}
+
+/* Context is a separate request surface; its compact git inlay is layout. */
+.dark [aria-label="Thread context before sending"] {
+  background-color: var(--agent-surface-background);
+  background-clip: padding-box;
+}
+
+.dark
+  [aria-label="Thread context before sending"]
+  > .flex.items-center.gap-0\.5.p-1 {
+  background-color: transparent;
+}
+
+/* Agentation owns this composer banner and exposes a stable theme hook. Match
+ * it to user-authored surfaces, including its outer edge and list divider. */
+.dark [data-agentation-staging-banner] {
+  background-color: var(--agent-surface-background);
+  background-clip: padding-box;
+  border-color: var(--agent-surface-border);
+}
+
+.dark [data-agentation-staging-banner] > ul {
+  border-color: var(--agent-surface-border);
+}
+
+/* Settings pages use both section-owned cards and standalone list/detail cards.
+ * Scope to the routed settings content, not its navigation or portalled menus.
+ * Inputs keep their own well; explicit transparent containers stay transparent. */
+.dark
+  body:has(a[aria-current="page"][href^="/settings"])
+  main
+  main
+  .bg-card:not(button):not(input):not(textarea):not(select):not(.bg-transparent),
+.dark
+  body:has(a[aria-current="page"][href^="/settings"])
+  main
+  main
+  div.rounded-md.border.border-border:not(.bg-transparent),
+.dark
+  body:has(a[aria-current="page"][href^="/settings"])
+  main
+  main
+  li.rounded-md.border.border-border:not(.bg-transparent),
+.dark
+  body:has(a[aria-current="page"][href^="/settings"])
+  main
+  main
+  div.rounded-lg.border.border-border:not(.bg-transparent) {
+  background-color: var(--card);
+  border-width: 0;
+}
+
+/* The bottom-anchored conversation body is transparent upstream. Pin its
+ * concrete child as well as --background so split-pane wrappers cannot leak. */
+.dark .thread-scrollbar > .flex.min-h-full.min-w-0.flex-col {
+  background-color: {{ground.conversation}};
+}
+
+/* Conversation links read as one quiet blue label, then reveal their inline
+ * hit area on hover. The fill is the accent at 15% alpha so the conversation
+ * ground remains part of the resulting color instead of introducing another
+ * opaque surface. Negative inline margins preserve surrounding prose spacing. */
+.dark [data-message-column] [data-markdown-preview] a.underline {
+  color: var(--primary);
+  text-decoration-line: none;
+  border-radius: 0.375rem;
+  padding: 0.0625rem 0.25rem;
+  margin-inline: -0.25rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+@media (hover: hover) {
+  .dark [data-message-column] [data-markdown-preview] a.underline:hover {
+    background-color: {{accent.hoverSurface}};
+  }
 }
 
 /* Keep the new-thread composer at the conversation footer's position. The
@@ -719,16 +1026,17 @@
   vertical-align: middle;
 }
 
-/* Keep button fills on the neutral ground ramp without changing --primary,
+/* Filled actions use shared ink layers without changing --primary,
  * which continues to own links and mention accents. */
 .dark button.bg-primary,
 .dark button.bg-foreground {
-  background-color: {{control.primary}};
+  background-color: var(--control-primary);
   color: var(--foreground);
 }
 
 .dark button.bg-secondary {
-  background-color: {{ground.recessed}};
+  background-color: var(--secondary);
+  background-clip: padding-box;
   border: 1px solid var(--input);
 }
 
@@ -740,11 +1048,11 @@
 @media (hover: hover) {
   .dark button.bg-primary:hover,
   .dark button.bg-foreground:hover {
-    background-color: {{ground.selection}};
+    background-color: var(--control-primary-hover);
   }
 
   .dark button.bg-secondary:hover {
-    background-color: {{ground.raised}};
+    background-color: var(--state-hover);
   }
 }
 
@@ -752,9 +1060,112 @@
  * they are neutral informational surfaces. Keep the accent for links and
  * mentions; render tooltip content as an elevated dark control instead. */
 .dark .bg-primary:has([role="tooltip"]) {
-  background-color: {{ground.recessed}};
+  background-color: var(--popover);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--foreground);
+}
+
+/* Menu navigation highlights are quiet selections, not pressed actions.
+ * Share the same mapping across model/reasoning popovers and all menus. */
+.dark .bg-popover,
+.dark [role="menu"] {
+  --state-active: var(--state-hover);
+}
+
+/* The model-search row is one field, including its inset around the input. */
+.dark .bg-popover > .border-b:has(input[aria-label="Search models"]) {
+  background-color: var(--control-background);
+  border-bottom-width: 0;
+}
+
+.dark .bg-popover > .border-b input[aria-label="Search models"] {
+  background-color: transparent;
+}
+
+/* Embedded frames need a crisp alpha edge. The plugin's light outer shadow
+ * reads as a glow, and painting the fill under the edge brightens it again. */
+.dark .smart-embed {
+  background-clip: padding-box;
+  box-shadow: none;
+}
+
+/* Pierre centers the prefix slot. A block flex button avoids the inline
+ * baseline space that otherwise shifts its visual center upward. */
+.dark .last-turn-diff-chevron {
+  display: flex;
+}
+
+/* Radix publishes these context-menu sizing variables on both root menus and
+ * submenus. Scope geometry here so dropdown pickers retain their own layout. */
+.dark [role="menu"][style*="--radix-context-menu-content"] {
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background-color: var(--popover);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"]
+  :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]) {
+  min-height: 30px;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"]
+  :is([role="menuitemcheckbox"], [role="menuitemradio"]) {
+  padding-right: 28px;
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"]
+  :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]) svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"]
+  [role="menuitem"]:is(.text-destructive, .text-destructive-text) {
+  color: var(--destructive-text);
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"]
+  [role="menuitem"]:is(.text-destructive, .text-destructive-text) svg {
+  color: currentColor;
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"] [role="separator"] {
+  height: 1px;
+  margin: 6px 8px;
+  background-color: var(--border);
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"] [role="menuitem"] > span.ml-auto {
+  font-size: 12px;
+  letter-spacing: normal;
+}
+
+.dark [role="menu"][style*="--radix-context-menu-content"]
+  :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]):focus-visible,
+.dark [role="menu"][style*="--radix-context-menu-content"] [role="menuitem"][data-state="open"] {
+  background-color: var(--state-hover);
+}
+
+@media (hover: hover) {
+  .dark [role="menu"][style*="--radix-context-menu-content"]
+    :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])[data-highlighted] {
+    background-color: var(--state-hover);
+  }
 }
 
 /* The model picker's sticky group headings ("Model", "Reasoning") paint
@@ -768,9 +1179,9 @@
 /* Composer stop button.
  *
  * bb 0.36 renders the run-interrupt control as `variant="secondary"`, so the
- * chip lands on --secondary (#262626) over the composer's #1E1E1E ground —
+ * chip lands on --secondary (#262626) over the composer's #212121 ground —
  * 1.35:1, under the 3:1 floor for a UI component. The send chip it replaces is
- * `variant="default"` (--foreground on --background) at 13.78:1, so the control
+ * `variant="default"` (--foreground on --background) at 14.17:1, so the control
  * fades out at the one moment it is the only one that can be pressed.
  *
  * Stop is an interrupt, which is the destructive role — the same reading later
@@ -793,7 +1204,7 @@
                              * non-text) and under the 4.5:1 text floor, which a
                              * 14px filled square is not held to. Deliberately
                              * NOT --destructive-foreground: that token is the
-                             * dark #141414 every other destructive control
+                             * dark #181818 every other destructive control
                              * needs, and it is shared. The Square glyph is
                              * `fill-current`, so it tracks this. */
 }
@@ -804,16 +1215,20 @@
   }
 }
 
-/* Lightweight code highlighter (sugar-high) used for inline code and code
- * blocks in the thread. This IS a code surface, so the code hues are legal.
+/* Lightweight code highlighter (sugar-high) used for code blocks in the
+ * thread. This IS a code surface, so the code hues are legal.
  * bb declares six of these on `.dark .bb-code-highlight` in its lazily-loaded
  * workspace-checkout-display chunk. That chunk arrives after this sheet, so a
  * tie on specificity loses the moment a thread is opened. Repeating the class
  * outranks it without reaching for `!important`.
- * Measured on the recessed well #1E1E1E. */
-.dark .bg-surface-recessed:has(> .bb-code-highlight),
-.dark code.bg-muted\/70 {
+ * Measured on the content ground #181818. */
+.dark .bg-surface-recessed:has(> .bb-code-highlight) {
   background-color: {{ground.content}};
+}
+
+/* Backtick-delimited inline code is prose emphasis, not a fenced code body. */
+.dark code.bg-muted\/70 {
+  background-color: var(--accent);
 }
 
 .dark .bb-code-highlight.bb-code-highlight {
@@ -822,7 +1237,7 @@
   --sh-identifier: {{text.ink}}; /* everything else — 12.79:1 */
   --sh-property: {{text.ink}}; /* properties are white by contract */
   --sh-sign: {{text.ink}}; /* punctuation; sugar-high cannot split operators out */
-  --sh-comment: {{text.comment60}}; /* blends to #7E7B68 — 3.86:1, the contract's
+  --sh-comment: {{text.comment60}}; /* blends to #7C7865 — 4.00:1, the contract's
                             * deliberately sub-AA comment tier */
   --sh-keyword: {{code.keyword}}; /* language machinery — 5.59:1 */
   --sh-string: {{code.string}}; /* literal text — 11.09:1 */
@@ -908,12 +1323,28 @@ diffs-container {
  * control structure, including collapsed cards, within the Git diff panel.
  * Smart embeds expose their own header class. Bodies keep the content ground. */
 .dark .smart-embed-header,
+.dark .last-turn-diff-heading {
+  background-color: var(--agent-surface-background);
+}
+
 .dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
-  )
-  .bg-background:has(> .flex > span > button[aria-expanded]) {
-  background-color: {{ground.recessed}};
+  #thread-detail-secondary-panel
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]),
+.dark
+  [data-secondary-panel-shelf]
+  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
+  background-color: var(--agent-surface-background);
+}
+
+/* Sticky headers must hide scrolling code. Their solid fallback is generated
+ * from the same 6% layer over content, not a separately chosen header color. */
+.dark
+  #thread-detail-secondary-panel
+  .sticky.rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]),
+.dark
+  [data-secondary-panel-shelf]
+  .sticky.rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
+  background-color: var(--surface-raised-solid);
 }
 
 .dark .smart-embed-header,
@@ -937,8 +1368,8 @@ diffs-container {
   --canvas-prose-link-hover: {{content.cyan}};
   --canvas-prose-marker: {{content.comment}};
   --canvas-prose-quote-rule: {{code.keyword}};
-  --canvas-prose-rule: {{text.ink07}};
-  --canvas-prose-code-well: {{ground.raised}};
+  --canvas-prose-rule: var(--border-hairline);
+  --canvas-prose-code-well: var(--accent);
 }
 
 /* bb's notification history is a first-class themed surface, separate from
@@ -984,7 +1415,7 @@ diffs-container {
     border-radius: 16px;
     background: var(--popover);
     box-shadow:
-      0 0 0 1px {{text.ink12}},
+      0 0 0 1px var(--border),
       0 4px 12px -4px {{ground.chromeScrim}};
   }
 }
@@ -1053,7 +1484,7 @@ diffs-container {
   border-color: var(--border);
   color: var(--popover-foreground);
   box-shadow:
-    0 0 0 1px {{text.ink12}},
+    0 0 0 1px var(--border),
     0 4px 12px -4px {{ground.chromeScrim}};
 }
 
@@ -1067,28 +1498,8 @@ diffs-container {
   color: var(--muted-foreground);
 }
 
-/* Keep actions beside the copy and the dismiss control inside the card.
- * These structural selectors also cover bb's plain description container. */
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-auto-columns: auto;
-  grid-auto-flow: column;
-  column-gap: 8px;
-  row-gap: 2px;
-  align-items: center;
-}
-
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:first-child {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-}
-
-/* A title without a description shares the actions' full height. */
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2):has(> div:nth-child(2) > div) > div:first-child {
-  grid-row: 1;
-}
-
+/* Keep bb's title and details rows in normal flow. Flattening the details
+ * into a grid can place wrapped actions on top of the description. */
 .dark [data-sonner-toast].bb-app-toast svg {
   margin: 0;
 }
@@ -1099,32 +1510,26 @@ diffs-container {
   font-weight: 500;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) {
-  display: contents;
-}
-
 .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > div {
-  grid-column: 1;
-  grid-row: 2;
   font-size: 12px;
   line-height: 18px;
   color: var(--muted-foreground);
 }
 
 .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > button {
-  grid-row: 1 / span 2;
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--secondary);
+  background-clip: padding-box;
   color: var(--secondary-foreground);
   text-decoration: none;
 }
 
 @media (hover: hover) {
   .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > button:hover {
-    background: var(--state-active);
+    background: var(--state-hover);
   }
 }
 

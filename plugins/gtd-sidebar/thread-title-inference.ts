@@ -1,11 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
-  gtdSidebarHostContract,
   type GtdSidebarAiInferenceCompleteOutput,
+  type GtdSidebarHostClient,
 } from "./lib/host-contract.ts";
 
 const TITLE_PRIMARY_MODEL = "gpt-5.6-luna";
-const TITLE_FALLBACK_MODEL = "gpt-5.4-mini";
 const INFERENCE_TIMEOUT_MS = 5_000;
 const RETRY_DELAY_MS = 250;
 const TRANSIENT_FAILURES = new Set(["timeout", "rate_limited", "service_unavailable"]);
@@ -91,9 +90,10 @@ export async function completeThreadTitleWithFallback({
   throw new Error("The inference service returned no title.");
 }
 
-export function createThreadTitleInference(bb: BbPluginApi): ThreadTitleInference {
-  const host = bb.hosts.experimental_client({ contract: gtdSidebarHostContract });
-
+export function createThreadTitleInference(
+  bb: BbPluginApi,
+  host: Pick<GtdSidebarHostClient, "call">,
+): ThreadTitleInference {
   return {
     async complete({ environmentId, prompt, allowKeep }) {
       const config = await bb.sdk.system.config();
@@ -106,7 +106,8 @@ export function createThreadTitleInference(bb: BbPluginApi): ThreadTitleInferenc
 
       return completeThreadTitleWithFallback({
         primary: TITLE_PRIMARY_MODEL,
-        fallback: TITLE_FALLBACK_MODEL,
+        // Retry the supported model. GPT-5.4-Mini rejects ChatGPT-account requests.
+        fallback: TITLE_PRIMARY_MODEL,
         onAttempt: (attempt) => bb.log.info(`title inference ${JSON.stringify(attempt)}`),
         complete: (model) =>
           host.call(

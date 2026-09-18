@@ -11,7 +11,8 @@ const noop = () => {};
 const active = (canPark: boolean): RowLifecycleState => ({
   kind: "active",
   canPark,
-  snoozeUntilTomorrow: noop,
+  quickSnooze: noop,
+  quickSnoozeLabel: "Snooze until tomorrow",
   settle: noop,
 });
 const snoozed: RowLifecycleState = { kind: "snoozed", wakeNow: noop };
@@ -26,7 +27,7 @@ describe("buildThreadActionPlan", () => {
     {
       name: "a parkable working thread",
       lifecycle: active(true),
-      ids: ["settle", "snooze-tomorrow", "toggle-pin", "request-delete"],
+      ids: ["settle", "quick-snooze", "toggle-pin", "request-delete"],
     },
     // Settle is bb's archive, which bb offers on every thread, so a thread
     // that cannot park keeps it while losing snooze.
@@ -58,7 +59,7 @@ describe("buildThreadActionPlan", () => {
   test("uses the sheet's short labels and never lists Archive", () => {
     assert.deepEqual(
       plan(active(true)).map(({ label }) => label),
-      ["Settle", "Snooze", "Pin", "Delete"],
+      ["Settle", "Snooze until tomorrow", "Pin", "Delete"],
     );
     assert.deepEqual(
       plan(snoozed).map(({ label }) => label),
@@ -81,6 +82,6 @@ describe("buildThreadActionPlan", () => {
   });
 
   test("finds no snooze on a thread that cannot park", () => {
-    assert.equal(findThreadAction(plan(active(false)), "snooze-tomorrow"), undefined);
+    assert.equal(findThreadAction(plan(active(false)), "quick-snooze"), undefined);
   });
 });

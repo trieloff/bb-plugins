@@ -12,8 +12,60 @@ const theme = await readFile(themePath, "utf8");
 const codeTheme = await readFile(codeThemePath, "utf8");
 const codeThemeRules = readCodeThemeRules().rules;
 
+describe("bb Monokai surface palette", () => {
+  test("assigns conversation, sidebar, user, and chrome grounds", () => {
+    expect(theme).toContain("--background: #151515");
+    expect(theme).toContain("--sidebar: #181818");
+    expect(theme).toContain("--popover: #1d1d1d");
+    expect(theme).toContain("--agent-surface-background: #e3e3dd0f");
+    expect(theme).toContain(
+      ".dark [data-promptbox] {\n  background-color: var(--agent-surface-background)",
+    );
+    expect(theme).toContain(".dark code.bg-muted\\/70 {\n  background-color: var(--accent)");
+    expect(theme).toContain("--terminal-background: #181818");
+    expect(theme.toLowerCase()).not.toContain("#141414");
+  });
+
+  test("pins annotated bb surfaces to their intended grounds", () => {
+    expect(theme).toContain(
+      ".dark .thread-scrollbar > .flex.min-h-full.min-w-0.flex-col {\n  background-color: #151515",
+    );
+    expect(theme).toContain(
+      ".dark [data-promptbox] [data-promptbox-editor-scroll] {\n  background-color: transparent;\n  border-radius: 11px 11px 0 0",
+    );
+    expect(theme).toContain(
+      '.dark [aria-label="Thread context before sending"] {\n  background-color: var(--agent-surface-background)',
+    );
+    expect(theme).toContain(
+      '[aria-label="Thread context before sending"]\n  > .flex.items-center.gap-0\\.5.p-1 {\n  background-color: transparent',
+    );
+    expect(theme).toContain(
+      ".dark [data-agentation-staging-banner] {\n  background-color: var(--agent-surface-background);\n  background-clip: padding-box;\n  border-color: var(--agent-surface-border)",
+    );
+    expect(theme).toContain(
+      "div.rounded-lg.border.border-border:not(.bg-transparent) {\n  background-color: var(--card);\n  border-width: 0",
+    );
+    expect(theme).toContain(
+      ".bg-card:not(button):not(input):not(textarea):not(select):not(.bg-transparent),",
+    );
+    expect(theme).toContain("div.rounded-md.border.border-border:not(.bg-transparent),");
+    expect(theme).toContain("li.rounded-md.border.border-border:not(.bg-transparent),");
+    expect(theme).toContain('body:has(a[aria-current="page"][href^="/settings"])');
+    expect(theme).not.toContain('href="/settings/usage"');
+  });
+
+  test("styles conversation links with an alpha-derived accent hover surface", () => {
+    expect(theme).toContain(
+      ".dark [data-message-column] [data-markdown-preview] a.underline {\n  color: var(--primary);\n  text-decoration-line: none;",
+    );
+    expect(theme).toContain(
+      "@media (hover: hover) {\n  .dark [data-message-column] [data-markdown-preview] a.underline:hover {\n    background-color: #88c0d026;",
+    );
+  });
+});
+
 describe("bb Monokai contract audit", () => {
-  test("unifies code grounds and keeps filenames in sans-serif recessed headers", () => {
+  test("keeps code bodies dark and gives headers and separators the requested surface", () => {
     expect(theme).toContain("--diffs-header-font-family: var(--font-sans)");
     expect(theme).toContain("diffs-container {\n  --diffs-dark-bg: #181818;");
     expect(theme).toContain(
@@ -24,9 +76,12 @@ describe("bb Monokai contract audit", () => {
     for (const role of ["context-gutter", "buffer", "addition-number", "deletion-number"]) {
       expect(theme).toContain(`--diffs-bg-${role}-override: #181818`);
     }
-    expect(theme).toContain("--diffs-bg-separator-override: #262626");
+    expect(theme).toContain("--diffs-bg-separator-override: #e3e3dd0f");
     expect(theme).toContain(
-      ".bg-background:has(> .flex > span > button[aria-expanded]) {\n  background-color: #1e1e1e;",
+      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {\n  background-color: var(--agent-surface-background);",
+    );
+    expect(theme).toContain(
+      ".dark .smart-embed-header,\n.dark .last-turn-diff-heading {\n  background-color: var(--agent-surface-background);",
     );
     expect(theme).toContain(".font-mono {\n  font-family: var(--font-sans);");
     expect(theme).toContain(".dark .smart-embed-path,");
@@ -146,7 +201,7 @@ describe("bb Monokai contract audit", () => {
     expect(theme).toContain(
       '@media (min-width: 768px) {\n  .dark [data-testid="notification-center"] {\n    overflow: hidden;\n    border-color: var(--border);\n    border-radius: 16px;',
     );
-    expect(template).toContain("0 0 0 1px {{text.ink12}}");
+    expect(template).toContain("0 0 0 1px var(--border)");
   });
 
   test("leaves compact mobile toasts on bb's native layout", () => {
@@ -191,11 +246,68 @@ describe("bb Monokai contract audit", () => {
     );
   });
 
+  test("mirrors the Diffs.com header shell with Monokai color roles", () => {
+    expect(theme).toContain(
+      "> .h-0 + .rounded-lg.bg-background button[aria-expanded]\n  ) {\n  overflow: hidden;\n  border-color: var(--border);\n  border-radius: 10px;\n  background-color: #181818;",
+    );
+    expect(theme).toContain(
+      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {\n  min-height: 44px;\n  margin-top: 0;\n  display: flex;\n  align-items: center;\n  padding: 0 16px;\n  border-top: 0;\n  border-radius: 0;\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 400;",
+    );
+    expect(theme).toContain(
+      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded] {\n  width: 24px;\n  height: 24px;\n  margin-left: -5px;\n  padding: 0;\n  border-radius: 8px;\n  background-color: transparent;\n  color: var(--muted-foreground);",
+    );
+    expect(theme).toContain(
+      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded]\n  svg {\n  width: 10px;\n  height: 16px;",
+    );
+    expect(theme).toContain(
+      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded]\n  + span\n  > button:not(.font-mono) {\n  width: 24px;",
+    );
+    expect(theme).not.toContain(
+      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded]\n  + span\n  > button {\n  width: 24px;",
+    );
+    expect(theme).toContain(
+      "> span:last-child\n  > .text-xs {\n  display: flex;\n  align-items: center;\n  gap: 1ch;\n  font-family: var(--font-mono);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 400;\n  font-variant-numeric: tabular-nums;",
+    );
+  });
+
   test("the shipped theme follows the shared contract", () => {
     expect(() => auditTheme(theme)).not.toThrow();
   });
 
-  test("paints each outer sidebar edge with one solid pane divider", () => {
+  test("rejects flattening an in-flow surface or repainting composer layout", () => {
+    expect(() =>
+      auditTheme(
+        theme.replace(
+          "--agent-surface-background: #e3e3dd0f",
+          "--agent-surface-background: #262626",
+        ),
+      ),
+    ).toThrow("--agent-surface-background: expected #e3e3dd0f");
+    expect(() =>
+      auditTheme(
+        theme.replace(
+          "[data-promptbox-editor-scroll] {\n  background-color: transparent",
+          "[data-promptbox-editor-scroll] {\n  background-color: var(--agent-surface-background)",
+        ),
+      ),
+    ).toThrow("background-color: expected transparent");
+  });
+
+  test("derives occluding fallbacks and keeps sticky headers opaque", () => {
+    // 4% ink over conversation; 6% ink over content, byte-rounded in sRGB.
+    expect(theme).toContain("--surface-recessed-solid: #1d1d1d");
+    expect(theme).toContain("--surface-raised-solid: #242424");
+    expect(() =>
+      auditTheme(
+        theme.replace(
+          "background-color: var(--surface-raised-solid)",
+          "background-color: var(--agent-surface-background)",
+        ),
+      ),
+    ).toThrow("background-color: expected var(--surface-raised-solid)");
+  });
+
+  test("paints each outer sidebar edge with one shared alpha edge", () => {
     expect(theme).toContain(
       '.dark [data-sidebar="panel"],\n.dark #thread-detail-secondary-panel > aside {\n  border-color: var(--sidebar-border);\n}',
     );
@@ -208,7 +320,7 @@ describe("bb Monokai contract audit", () => {
   });
 
   test("rejects an off-contract rendered color", () => {
-    const changed = theme.replace("--background: #181818", "--background: #123456");
+    const changed = theme.replace("--background: #151515", "--background: #123456");
     expect(() => auditTheme(changed)).toThrow("#123456 is off-contract");
   });
 
@@ -230,7 +342,7 @@ describe("bb Monokai contract audit", () => {
   });
 
   test("rejects an illegible registered foreground/background pair", () => {
-    const changed = theme.replace("--primary-foreground: #141414", "--primary-foreground: #e3e3dd");
+    const changed = theme.replace("--primary-foreground: #181818", "--primary-foreground: #e3e3dd");
     expect(() => auditTheme(changed)).toThrow("--primary-foreground on --primary:");
   });
 });

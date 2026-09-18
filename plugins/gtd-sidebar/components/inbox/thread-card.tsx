@@ -1,7 +1,9 @@
 import {
   memo,
+  useCallback,
   useRef,
   useState,
+  type KeyboardEvent,
   type PointerEvent,
   type CSSProperties,
   type ReactNode,
@@ -28,12 +30,14 @@ import { ProviderGlyph, type ProviderGlyphInfo } from "@/components/inbox/provid
 import { STATUS_SLOT_CLASS, StatusOrTime } from "@/components/inbox/status-slot";
 import { FadingText, HostLead, ThreadDetails } from "@/components/inbox/thread-details";
 import { threadDisplayTitle } from "@/lib/inbox";
-import { snoozeUntilTomorrow } from "@/lib/lifecycle";
 import { useIosLongPress } from "@/hooks/use-ios-long-press";
 import { useCommittedEvent } from "@/hooks/use-committed-event";
+import { useNestRow, type SidebarDragApi } from "@/hooks/use-nest-drag";
 
 /** Horizontal step per nesting level, in px. Mirrors --gtd-depth-step in app.css. */
-const DEPTH_STEP = 16;
+const DEPTH_STEP = 8;
+/** The touch disclosure column: app.css `.gtd-disclosure-touch` width. */
+const MOBILE_DISCLOSURE_WIDTH = 32;
 
 interface ThreadCardProps {
   thread: PluginSidebarThread;
@@ -53,14 +57,21 @@ interface ThreadCardProps {
   /** bb's branch, or GitButler's virtual-branch summary for its workspace. */
   branchName: string | null;
   isActive: boolean;
+  isNaming?: boolean;
   /** False while the thread is working or blocked on the user. */
   canPark: boolean;
+  /** The adaptive snooze destination, e.g. “Snooze until Monday”. */
+  quickSnoozeLabel: string;
   /** The `showProviderIcon` setting, on by default. */
   showProviderIcon: boolean;
   isCompactViewport: boolean;
   command: DispatchRowCommand;
   /** Quantized clock, so every card in one render agrees on "now". */
   now: number;
+  /** Sidebar drag state; absent on compact viewports, where there is no drag. */
+  drag?: SidebarDragApi;
+  /** Whether the row being dragged may drop here, per the tree's cycle guard. */
+  dropAllowed: boolean;
 }
 
 export const ThreadCard = memo(function ThreadCard(props: ThreadCardProps) {
@@ -69,6 +80,26 @@ export const ThreadCard = memo(function ThreadCard(props: ThreadCardProps) {
   const onSplitPointerDown = useCommittedEvent((event: PointerEvent<HTMLElement>) => {
     splitProps.onPointerDown?.(event);
   });
+  // Drag source and drop target both; see use-nest-drag for how this shares
+  // the anchor's pointerdown with bb's split gesture. Subscribed here, not in
+  // the body, so dnd-kit's context churn re-runs this wrapper only: the body
+  // sees committed handlers (dnd-kit rebuilds its listeners on every context
+  // render) and two booleans.
+  const nestRow = useNestRow(props.thread.id, props.dropAllowed, props.drag === undefined);
+  const { setDragRef, setDropRef } = nestRow;
+  const onNestPointerDown = useCommittedEvent((event: PointerEvent<HTMLElement>) => {
+    nestRow.listeners?.onPointerDown?.(event);
+  });
+  const onNestKeyDown = useCommittedEvent((event: KeyboardEvent<HTMLElement>) => {
+    nestRow.listeners?.onKeyDown?.(event);
+  });
+  const setNestRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setDragRef(node);
+      setDropRef(node);
+    },
+    [setDragRef, setDropRef],
+  );
   return (
     <ThreadCardBody
       {...props}
@@ -76,6 +107,11 @@ export const ThreadCard = memo(function ThreadCard(props: ThreadCardProps) {
       isOpenInSplit={layout !== null}
       isFocusedInSplit={layout?.panes.some((pane) => pane.isMe && pane.isFocused)}
       onSplitPointerDown={splitProps.onPointerDown ? onSplitPointerDown : undefined}
+      onNestPointerDown={onNestPointerDown}
+      onNestKeyDown={onNestKeyDown}
+      nestIsDragging={nestRow.isDragging}
+      nestIsOver={nestRow.isOver}
+      setNestRef={setNestRef}
     />
   );
 });
@@ -107,27 +143,46 @@ const ThreadCardBody = memo(function ThreadCardBody({
   projectName,
   branchName,
   isActive,
+  isNaming = false,
   canPark,
+  quickSnoozeLabel,
   showProviderIcon,
   isCompactViewport,
   command,
   now,
+  drag,
   pullRequest,
   isOpenInSplit,
   isFocusedInSplit,
   onSplitPointerDown,
+  onNestPointerDown,
+  onNestKeyDown,
+  nestIsDragging,
+  nestIsOver,
+  setNestRef,
 }: ThreadCardProps & {
   pullRequest: PluginSidebarPullRequest | null;
   isOpenInSplit: boolean;
   isFocusedInSplit: boolean | undefined;
   onSplitPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  onNestPointerDown: (event: PointerEvent<HTMLElement>) => void;
+  onNestKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+  nestIsDragging: boolean;
+  nestIsOver: boolean;
+  setNestRef: (node: HTMLDivElement | null) => void;
 }) {
   const plan = buildThreadActionPlan({
     lifecycle: {
       kind: "active",
       canPark,
-      snoozeUntilTomorrow: () =>
-        command({ kind: "snooze", threadId: thread.id, until: snoozeUntilTomorrow(new Date()) }),
+      quickSnooze: () =>
+        command({
+          kind: "quick-snooze",
+          threadId: thread.id,
+          projectId: thread.projectId,
+          pullRequestUrl: pullRequest?.url ?? null,
+        }),
+      quickSnoozeLabel,
       settle: () => command({ kind: "settle", threadId: thread.id }),
     },
     isPinned: thread.isPinned,
@@ -139,6 +194,11 @@ const ThreadCardBody = memo(function ThreadCardBody({
   const { isPressing, handlers } = useIosLongPress(() => setMenuOpen(true), {
     enabled: isCompactViewport,
   });
+
+  const setCardRef = (node: HTMLDivElement | null) => {
+    cardRef.current = node;
+    setNestRef(node);
+  };
 
   const compact = !isCompactViewport && (compactThreads || depth > 0);
   const showActions = shelf === "nextAction" || canPark;
@@ -152,6 +212,7 @@ const ThreadCardBody = memo(function ThreadCardBody({
   const title = (
     <ThreadTitle
       title={titleText}
+      isNaming={isNaming}
       isActive={isActive}
       isUnread={thread.isUnread}
       isChild={depth > 0}
@@ -179,13 +240,16 @@ const ThreadCardBody = memo(function ThreadCardBody({
   );
 
   return (
-    <RowContextMenu plan={plan} disabled={isCompactViewport}>
+    <RowContextMenu thread={thread} command={command} plan={plan} disabled={isCompactViewport}>
       <li className="list-none">
         <div
-          ref={cardRef}
+          ref={setCardRef}
+          data-sidebar-thread-active={isActive ? "true" : undefined}
           data-sidebar-thread-focused={isFocusedInSplit}
           {...handlers}
           data-action-count={!isCompactViewport && showActions ? 2 : 0}
+          data-dragging={nestIsDragging ? "true" : undefined}
+          data-drop-target={nestIsOver ? "true" : undefined}
           {...threadCardPresentation({
             depth,
             childCount,
@@ -225,6 +289,9 @@ const ThreadCardBody = memo(function ThreadCardBody({
             expanded={expanded}
             toggleThread={toggleThread}
             onSplitPointerDown={onSplitPointerDown}
+            onNestPointerDown={onNestPointerDown}
+            onNestKeyDown={onNestKeyDown}
+            nestActive={drag?.source?.kind === "thread"}
             command={command}
           />
           {isCompactViewport ? (
@@ -303,7 +370,10 @@ function threadCardPresentation({
       // same offsets as before.
       ...(isCompactViewport
         ? {
-            paddingLeft: `calc(${depth > 0 || childCount > 0 ? 28 + depth * DEPTH_STEP : 10}px + var(--gtd-group-indent, 0px))`,
+            paddingLeft:
+              depth > 0 || childCount > 0
+                ? `calc(${MOBILE_DISCLOSURE_WIDTH + 8 + depth * DEPTH_STEP}px + var(--gtd-group-indent, 0px))`
+                : "calc(22px + var(--gtd-leaf-group-indent, 0px))",
           }
         : {}),
     } as CSSProperties,
@@ -328,12 +398,14 @@ function summaryHeight(mobile: boolean, compact: boolean) {
 
 function ThreadTitle({
   title,
+  isNaming,
   isActive,
   isUnread,
   isChild,
   mobile,
 }: {
   title: string;
+  isNaming: boolean;
   isActive: boolean;
   isUnread: boolean;
   isChild: boolean;
@@ -344,6 +416,8 @@ function ThreadTitle({
   const muted = isChild && !isActive && !isUnread;
   return (
     <span
+      data-gtd-naming={isNaming || undefined}
+      aria-busy={isNaming || undefined}
       className={cn(
         "gtd-thread-title min-w-0 flex-1",
         mobile && "gtd-mobile-title",
@@ -453,7 +527,7 @@ function ThreadHierarchy({
       {childCount > 0 ? (
         <button
           type="button"
-          className="gtd-disclosure"
+          className={cn("gtd-disclosure", mobile && "gtd-disclosure-touch")}
           aria-label={`${expanded ? "Collapse" : "Expand"} children of ${title}`}
           aria-expanded={expanded}
           onPointerDown={(event) => event.stopPropagation()}
@@ -462,7 +536,10 @@ function ThreadHierarchy({
             toggleThread(threadId);
           }}
         >
-          <Icon name="ChevronDown" className={cn("size-3", !expanded && "-rotate-90")} />
+          <Icon
+            name="ChevronDown"
+            className={cn(mobile ? "size-4" : "size-3", !expanded && "-rotate-90")}
+          />
         </button>
       ) : null}
     </>
@@ -486,6 +563,9 @@ function ThreadRowLink({
   expanded,
   toggleThread,
   onSplitPointerDown,
+  onNestPointerDown,
+  onNestKeyDown,
+  nestActive,
   command,
 }: {
   thread: PluginSidebarThread;
@@ -504,6 +584,11 @@ function ThreadRowLink({
   expanded: boolean;
   toggleThread: (threadId: string) => void;
   onSplitPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  /** dnd-kit's activators for the nest drag; no-ops where drags are off. */
+  onNestPointerDown: (event: PointerEvent<HTMLElement>) => void;
+  onNestKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+  /** A nest drag is live somewhere in the list. */
+  nestActive: boolean;
   command: DispatchRowCommand;
 }) {
   return (
@@ -526,16 +611,21 @@ function ThreadRowLink({
         aria-label={title}
         aria-current={isActive ? "page" : undefined}
         onKeyDown={(event) => {
+          // Space picks the row up (see use-nest-drag); while a drag is live
+          // the arrows move the pick, not the fold.
+          onNestKeyDown(event);
+          if (nestActive) return;
+          const tree =
+            event.currentTarget.closest("[data-sidebar-thread-tree]") ??
+            event.currentTarget.closest("ul");
+          const rows = Array.from(
+            tree?.querySelectorAll<HTMLAnchorElement>("[data-sidebar-thread-id]") ?? [],
+          );
           let focusId: string | null = null;
           if (event.key === "ArrowRight" && childCount > 0) {
             event.preventDefault();
             if (!expanded) toggleThread(threadId);
             else {
-              const rows = Array.from(
-                event.currentTarget
-                  .closest("ul")
-                  ?.querySelectorAll<HTMLAnchorElement>("[data-sidebar-thread-id]") ?? [],
-              );
               focusId =
                 rows[rows.indexOf(event.currentTarget) + 1]?.dataset.sidebarThreadId ?? null;
             }
@@ -544,16 +634,13 @@ function ThreadRowLink({
             if (expanded) toggleThread(threadId);
             else focusId = parentId;
           }
-          if (focusId)
-            Array.from(
-              event.currentTarget
-                .closest("ul")
-                ?.querySelectorAll<HTMLAnchorElement>("[data-sidebar-thread-id]") ?? [],
-            )
-              .find((row) => row.dataset.sidebarThreadId === focusId)
-              ?.focus();
+          if (focusId) rows.find((row) => row.dataset.sidebarThreadId === focusId)?.focus();
         }}
-        onPointerDown={onSplitPointerDown}
+        onPointerDown={(event) => {
+          // Both gestures start here; the destination decides which one lands.
+          onNestPointerDown(event);
+          onSplitPointerDown?.(event);
+        }}
         onClick={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
@@ -591,7 +678,7 @@ function DesktopThreadSummary({
   activity: PluginSidebarThread["activity"];
   pullRequest: PluginSidebarPullRequest | null;
 }) {
-  const snoozeAction = findThreadAction(plan, "snooze-tomorrow");
+  const snoozeAction = findThreadAction(plan, "quick-snooze");
   const settleAction = findThreadAction(plan, "settle");
   return (
     <>
@@ -608,7 +695,7 @@ function DesktopThreadSummary({
       {showActions ? (
         <span className="gtd-trailing-actions">
           <ParkButton
-            label="Snooze"
+            label={snoozeAction?.label ?? "Snooze"}
             icon="Clock"
             disabled={!canPark}
             onActivate={() => snoozeAction?.execute()}

@@ -1,4 +1,11 @@
-import { memo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import {
+  memo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import {
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
   type PluginSidebarThread,
@@ -25,6 +32,7 @@ import { useCommittedEvent } from "@/hooks/use-committed-event";
 interface SlimRowProps {
   thread: PluginSidebarThread;
   isActive: boolean;
+  isNaming?: boolean;
   compactThreads: boolean;
   projectName: string | null;
   branchName: string | null;
@@ -63,6 +71,7 @@ const SlimRowBody = memo(function SlimRowBody({
   branchName,
   provider,
   isActive,
+  isNaming = false,
   shelf,
   wakeAt,
   now,
@@ -91,7 +100,7 @@ const SlimRowBody = memo(function SlimRowBody({
   });
 
   const compact = compactThreads && !isCompactViewport;
-  const { rowClassName, titleClassName } = slimRowPresentation({
+  const { rowClassName, rowStyle, titleClassName } = slimRowPresentation({
     isCompactViewport,
     isActive,
     compact,
@@ -101,7 +110,12 @@ const SlimRowBody = memo(function SlimRowBody({
   const status = <SlimRowStatusLabel thread={thread} shelf={shelf} wakeAt={wakeAt} now={now} />;
   const highlightContent = (
     <div className="flex h-full items-center gap-2 px-2.5 text-xs">
-      <span className={cn("min-w-0 flex-1 truncate", titleClassName)}>{title}</span>
+      <span
+        data-gtd-naming={isNaming || undefined}
+        className={cn("min-w-0 flex-1 truncate", titleClassName)}
+      >
+        {title}
+      </span>
       <span className={cn(STATUS_SLOT_CLASS, "tabular-nums text-2xs", "text-muted-foreground")}>
         {status}
       </span>
@@ -109,13 +123,14 @@ const SlimRowBody = memo(function SlimRowBody({
   );
 
   return (
-    <RowContextMenu plan={plan} disabled={isCompactViewport}>
+    <RowContextMenu thread={thread} command={command} plan={plan} disabled={isCompactViewport}>
       <li className="list-none">
         <div
           ref={rowRef}
           {...handlers}
           data-action-count={isCompactViewport ? 0 : 1}
           className={rowClassName}
+          style={rowStyle}
         >
           <ThreadDetails
             thread={thread}
@@ -148,6 +163,8 @@ const SlimRowBody = memo(function SlimRowBody({
           </ThreadDetails>
           <HostLead host={thread.host} />
           <span
+            data-gtd-naming={isNaming || undefined}
+            aria-busy={isNaming || undefined}
             className={cn(
               "pointer-events-none relative min-w-0 flex-1 truncate",
               titleClassName,
@@ -189,6 +206,9 @@ function slimRowPresentation({
   isMenuOpen: boolean;
 }) {
   return {
+    rowStyle: (isCompactViewport
+      ? { paddingLeft: "calc(22px + var(--gtd-leaf-group-indent, 0px))" }
+      : undefined) as CSSProperties | undefined,
     rowClassName: cn(
       "group/slim relative flex items-center gap-1.5 rounded-xl px-2.5 text-xs",
       !isCompactViewport && "gtd-thread-row gtd-parked-row",

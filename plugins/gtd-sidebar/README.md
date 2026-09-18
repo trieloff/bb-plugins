@@ -9,7 +9,7 @@
 
 **A thread list organized by who can act next.**
 
-![bb 0.40+](https://img.shields.io/badge/bb-0.40%2B-88C0D0?style=flat-square)
+![bb 0.43.1+](https://img.shields.io/badge/bb-0.43.1%2B-88C0D0?style=flat-square)
 ![any platform](https://img.shields.io/badge/platform-any-3FA266?style=flat-square)
 ![experimental slot](https://img.shields.io/badge/uses-experimental%20SDK%20slot-F1B467?style=flat-square)
 
@@ -59,7 +59,7 @@ reinstall.
 
 ## Requirements
 
-- bb 0.40+
+- bb 0.43.1+
 - Sidebar organization needs nothing else.
 - Thread naming needs an existing Codex login on bb's primary host.
 
@@ -94,16 +94,22 @@ background work is also live, because the user can act now.
 ### Project groups
 
 Once threads from two or more projects are in view, every shelf splits into
-project groups: a header naming the project, then that project's threads. The
+project groups: a header naming the project, then that project's threads. A
+machine filter keeps these headers visible even when that machine has threads
+in only one project, so the repository context is not lost. Use **Settings → Plugins → GTD Sidebar → Group threads by project**
+to hide or restore project groups. The choice persists across reloads. The project selector stays available with
+repository grouping on or off, and toggling groups preserves the selected project. The
 header folds the group; a folded header shows `needs-you / total` while
 something inside asks for you, and the total alone otherwise. Hovering the
 header shows a **+** that opens the project's new-thread screen. Shelf and
 group headers stay pinned while their rows scroll.
 
 Groups follow bb's project order in every shelf, with your personal project
-last. Right-click a group header for **Move up** and **Move down**: they reorder
-the project in bb itself, so every shelf agrees and bb's own project lists
-follow along.
+last. Drag a group header onto another group to drop its project in that
+slot — or right-click it for **Move up** and **Move down**, the keyboard
+path. Both reorder the project in bb itself, so every shelf agrees and bb's
+own project lists follow along. The personal project's group never drags and
+nothing lands after it.
 
 The shelf still comes first: the same project appears under Next Action and
 under Waiting when it has work in both, and folding it in one shelf leaves it
@@ -116,7 +122,7 @@ lead with a globe in their machine's colour instead.
 ### Cards
 
 Two lines: the title in bold when unread and a status slot, then the project, the
-branch, activity counts, PR number, and the agent (which you can turn off — see
+branch, activity counts, PR number, and optional agent icons (enable them in
 [Configuration](#configuration)). The status slot shows what the
 thread needs — failed, waiting on you, working, or finished while you were away —
 and its age (`now`, `7m`, `3d`) when it needs nothing. Hovering swaps that slot for
@@ -150,14 +156,26 @@ own `sidebar.collapsedThreads` preference, so a family folded here is folded in 
 built-in sidebar too, and the fold survives a reload. Folded project groups stay
 session state.
 
+Drag a row onto another row to nest it there, or onto a project group header
+to lift it back to the top level. The move is bb's own parent change, so bb's
+sidebar follows it. A row never drops onto itself, its current parent, anything
+inside its own family, or a thread in another project; a row that cannot take
+the drop shows no highlight. With the keyboard, Space picks the focused row up,
+the arrows move it between targets, Space drops, and Escape cancels.
+
+The same drag is still bb's drag-to-split gesture: a drag that stays in the
+sidebar nests, a drag out to the main area splits. Nothing needs a modifier.
+Desktop only.
+
 ### Thread names
 
-A root thread gets a GTD-generated name on its first user prompt, replacing any
+With **Automatically name threads** enabled, a root thread gets a GTD-generated name on its first user prompt, replacing any
 initial title supplied by BB. First-request inference can only generate a new
 title, never keep BB's title. Later prompts keep the existing title unless you clearly start completely different work. Follow-ups,
 corrections, tests, debugging, screenshots, commits, and shipping for the same
 task keep its title. When the task change is uncertain, the title stays unchanged.
-Queued prompts are checked when dispatched. Agent replies and turn completion do
+Queued prompts are checked when dispatched. New threads wait for their workspace
+to be ready so the first title includes project naming rules. Agent replies and turn completion do
 not trigger naming. New titles are plain text with no activity emoji. Prefixes
 and other project formatting come only from your naming rules. Existing titles
 are preserved exactly when the decision is to keep them.
@@ -168,7 +186,7 @@ untitled thread, and explicit regeneration use a generation prompt that can only
 rename. Later requests use a review prompt that sees the current title and may
 keep it, and a keep decision does not write to the thread. Both prompts carry the
 latest request, the original request, up to three recent requests, and your
-project naming rules. A transient failure retries once with GPT-5.4-Mini, and each
+project naming rules. A transient failure retries once with GPT-5.6-Luna, and each
 attempt has a five-second deadline. Logs record timing, never the prompt.
 
 Run the **configure-gtd-naming** skill to create or update
@@ -193,25 +211,67 @@ the task has not changed.
 ### The rest
 
 - A project scope picker — the one control the plugin adds.
-- Right-click a row to settle, snooze, pin, or delete it.
-- On a phone, hold a row for half a second (iOS's own long-press timing) for the same
-  menu, drawn as an iOS-style frosted sheet. Menu taps play a haptic on iOS.
+- Right-click a row for Settle and Snooze first, followed by bb's split, copy-link,
+  read/unread, pin, section-move, rename, and delete actions. Settle replaces Archive.
+  Moving to a section also unpins the thread, as in bb's normal sidebar.
+- On a phone, hold a row for half a second (iOS's own long-press timing) for a short
+  settle, snooze, pin, and delete menu, drawn as an iOS-style frosted sheet.
+  Menu taps can play a haptic on iOS when enabled in settings.
 - Drag a card to a split pane, or Cmd/Ctrl-click to open one.
+- Drag a card onto another to nest it, or onto a project header to un-nest it.
+- Drag a project group header onto another group to reorder the project in bb.
 - bb's search, its thread shortcuts, and modifier-click split-open all keep working.
 
 ## Configuration
 
-Two settings, in **Settings → Plugins → GTD Sidebar**:
+Choose preferences in **Settings → Plugins → GTD Sidebar**. Project grouping
+defaults **on**. Optional enhancements default **off**, including while settings are loading. The SDK stores
+these preferences on the server and updates open clients when they change.
 
-- **Automatically name threads** — on. Turn it off to stop automatic title
-  generation and task-change checks. Manual naming from the CLI still works.
+### Feature catalog
 
-- **Show the agent icon on each card** — on. Turn it off to drop the trailing agent
-  glyph and give the branch that space back. Every card follows it together, so the
-  meta line keeps a straight right edge either way.
+Core means available when you select GTD Sidebar in Appearance. Core actions run
+only when you use them, apart from reads and clocks needed to keep the inbox
+accurate. Normal inbox behavior does not invoke an AI model or poll external
+services. The explicit naming command below is a separate user-requested inference.
 
-A snooze wakes the thread at 09:00 the next day in your local timezone. That is
-not a setting.
+| Core sidebar feature       | What it does                                                                                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Action shelves             | Pinned, Next Action, Waiting, Snoozed, and the last 24 hours of Settled. Running work and pending interactions stay visible.                                                               |
+| Repository groups          | Group shelves by BB repository, keep repository context under machine filters, toggle groups from plugin settings, fold groups, create a thread from a group, and reorder groups.          |
+| Thread families            | Fold using BB's shared preference. Desktop drag or keyboard drag nests/un-nests threads using BB's parent relation.                                                                        |
+| Thread actions             | Pin, snooze until tomorrow at 09:00, settle/archive with native Undo, restore, delete, and insert a thread reference into the composer.                                                    |
+| Navigation                 | Row click, search, repository and machine scope pickers, Cmd/Ctrl-click split-open, and drag-to-split. Preserve BB/Vimium thread shortcut anchors.                                         |
+| Status and details         | Unread titles, activity indicators/counts, time, native branch and PR information, provider tooltips, machine globe/color and host identity. These make thread state and location visible. |
+| Mobile and compact layouts | Mobile/subthreads use one-line rows. Long-press opens the action sheet without requiring haptics. Desktop roots use two-line cards by default.                                             |
+| Explicit naming command    | `bb gtd-sidebar rename [<threadId>]` is an explicit request for Codex title inference even with automatic naming off.                                                                      |
+
+| Optional setting (key)                                  | Default | Effect when enabled                                                                                                                                                                                            |
+| ------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Group threads by project (`groupThreadsByProject`)      | On      | Organize each shelf into project groups. Turning it off keeps project and machine filters available.                                                                                                           |
+| Compact thread rows (`compactThreads`)                  | Off     | One-line desktop root rows. Mobile/subthreads remain compact either way.                                                                                                                                       |
+| Show agent icons (`showProviderIcon`)                   | Off     | Provider glyph on two-line cards. Provider identity remains in tooltips/menus when off.                                                                                                                        |
+| Enable mobile haptics (`mobileHaptics`)                 | Off     | Attach iOS tactile menu-tap switches. Turning off removes those switches, including from an open menu.                                                                                                         |
+| Show GitButler branches (`gitButlerBranches`)           | Off     | Periodically read GitButler branches on primary checkouts through the host CLI. Off stops refreshes and server host reads, restoring BB's native labels.                                                       |
+| Automatically name threads (`automaticallyNameThreads`) | Off     | Infer titles on user requests through the existing Codex login. Sends request context and naming rules. Off skips automatic context reads/inference and prevents an in-flight result from renaming the thread. |
+
+| Supporting preference            | Default | Purpose                                                                                                   |
+| -------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| Local machine (`localMachineId`) | Empty   | Choose which machine's threads omit the globe. This does not move threads or change their execution host. |
+
+### Opt-in and migration behavior
+
+- Existing **explicit saved values** keep their meaning, including saved `true`
+  for automatic naming, icons or compact rows. We retain the original keys and
+  use SDK effective values. We do not infer consent from a token or existing data.
+- Previously implicit defaults for automatic naming and icons become **off**.
+  GitButler branch lookups and haptics now require an explicit opt-in.
+  No migration writes `true` on an existing or new installation.
+- Cursor Projects coordination has been removed. Existing native threads appear
+  in the ordinary inbox. Legacy project data is retained but unused, and project
+  subscription polling and delivery no longer run.
+- Settings take effect without a plugin reload. The selected sidebar itself stays
+  BB's explicit Appearance preference.
 
 ## Troubleshooting
 

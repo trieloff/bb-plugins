@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { gtdSidebarHostContract } from "../lib/host-contract.ts";
 import {
   completeThreadTitleWithFallback,
   createThreadTitleInference,
@@ -10,6 +11,33 @@ import {
 } from "../thread-title-inference.ts";
 
 describe("thread title inference policy", () => {
+  test("retries a timeout with the same ChatGPT-supported model", async () => {
+    const models: string[] = [];
+    const bb = {
+      sdk: { system: { config: async () => ({ primaryHostId: "host-primary" }) } },
+    } as unknown as BbPluginApi;
+    const title = await createThreadTitleInference(bb, {
+      call: async (_method, input) => {
+        assert.ok("model" in input);
+        models.push(input.model);
+        if (models.length === 1) {
+          return { ok: false, code: "timeout", message: "timed out" };
+        }
+        if (input.model !== "gpt-5.6-luna") {
+          return { ok: false, code: "request_failed", message: "Model not supported" };
+        }
+        return {
+          ok: true,
+          model: input.model,
+          value: { action: "rename", title: "Fix thread naming" },
+        };
+      },
+    }).complete({ environmentId: null, prompt: "Fix thread naming", allowKeep: false });
+
+    assert.equal(title, "Fix thread naming");
+    assert.deepEqual(models, ["gpt-5.6-luna", "gpt-5.6-luna"]);
+  });
+
   test("calls GPT-5.6-Luna without reasoning on the primary host", async () => {
     const calls: Array<{ input: Record<string, unknown>; hostId: string }> = [];
     const bb = {
@@ -36,7 +64,8 @@ describe("thread title inference policy", () => {
       },
     } as unknown as BbPluginApi;
 
-    const title = await createThreadTitleInference(bb).complete({
+    const host = bb.hosts.experimental_client({ contract: gtdSidebarHostContract });
+    const title = await createThreadTitleInference(bb, host).complete({
       environmentId: null,
       prompt: "Generate a title",
       allowKeep: true,
@@ -68,7 +97,10 @@ describe("thread title inference policy", () => {
       sdk: { system: { config: async () => ({ primaryHostId: "host-primary" }) } },
     } as unknown as BbPluginApi;
     assert.equal(
-      await createThreadTitleInference(bb).complete({
+      await createThreadTitleInference(
+        bb,
+        bb.hosts.experimental_client({ contract: gtdSidebarHostContract }),
+      ).complete({
         environmentId: null,
         prompt: "Name the first request",
         allowKeep: false,

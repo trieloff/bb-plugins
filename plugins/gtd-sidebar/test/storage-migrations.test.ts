@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import { migrationsForDatabase } from "../server.ts";
+import { RETIRED_PROJECT_MIGRATIONS } from "../lib/retired-project-migrations.ts";
 
 const FORK_INDEX_2_HASH = "a6a0d865796db1744b25841bbedacf5d66fef12f1edce393e3f19b38320e558b";
 const UPSTREAM_INDEX_2_HASH = "e022af723c4c0b9b2661cde98a11746852e161388588fdd97979b1f98baf23f4";
@@ -23,12 +24,14 @@ function hash(statement: string): string {
 function databaseWithMigration(
   migration: { statement_hash: string | null } | undefined,
   forkTableExists = false,
+  nextMigration?: { statement_hash: string | null },
 ): Parameters<typeof migrationsForDatabase>[0] {
   return {
     prepare(sql) {
       return {
         get() {
-          if (sql.includes("FROM _bb_migrations")) return migration;
+          if (sql.includes("id = 2")) return migration;
+          if (sql.includes("id = 3")) return nextMigration;
           return forkTableExists ? { exists: 1 } : undefined;
         },
       };
@@ -43,16 +46,31 @@ describe("storage migration history", () => {
     );
 
     assert.deepEqual(migrations.slice(0, LIVE_FORK_PREFIX.length).map(hash), LIVE_FORK_PREFIX);
-    assert.equal(hash(migrations.at(-1)!), UPSTREAM_INDEX_2_HASH);
+    assert.equal(hash(migrations[LIVE_FORK_PREFIX.length]!), UPSTREAM_INDEX_2_HASH);
   });
 
-  it("keeps upstream's index 2 and appends the fork migrations", () => {
+  it("keeps an older merged upstream prefix before its fork migrations", () => {
     const migrations = migrationsForDatabase(
-      databaseWithMigration({ statement_hash: UPSTREAM_INDEX_2_HASH }),
+      databaseWithMigration({ statement_hash: UPSTREAM_INDEX_2_HASH }, false, {
+        statement_hash: FORK_INDEX_2_HASH,
+      }),
     );
 
     assert.equal(hash(migrations[2]!), UPSTREAM_INDEX_2_HASH);
     assert.equal(hash(migrations[3]!), FORK_INDEX_2_HASH);
+  });
+
+  it("keeps current upstream's retired-project prefix before fork migrations", () => {
+    const retiredHash = hash(RETIRED_PROJECT_MIGRATIONS[0]!);
+    const migrations = migrationsForDatabase(
+      databaseWithMigration({ statement_hash: UPSTREAM_INDEX_2_HASH }, false, {
+        statement_hash: retiredHash,
+      }),
+    );
+
+    assert.equal(hash(migrations[2]!), UPSTREAM_INDEX_2_HASH);
+    assert.equal(hash(migrations[3]!), retiredHash);
+    assert.equal(hash(migrations[3 + RETIRED_PROJECT_MIGRATIONS.length]!), FORK_INDEX_2_HASH);
   });
 
   it("distinguishes pre-hash histories by the fork's index 2 table", () => {

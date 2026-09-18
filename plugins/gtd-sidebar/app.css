@@ -53,14 +53,18 @@
   }
 }
 
+[data-gtd-sidebar-thread-list] {
+  background: var(--sidebar);
+}
+
 .gtd-thread-row {
   height: 52px;
   /* Content starts 28px in: 10px past the disclosure's 12px chevron glyph,
      which sits centred in its 24px hit area. Each nesting level steps in by
      --gtd-depth-step; thread-card.tsx mirrors the value for the tree guides. */
-  --gtd-depth-step: 16px;
+  --gtd-depth-step: 8px;
   padding: 6px 10px 6px
-    calc(28px + var(--gtd-group-indent, 0px) + var(--gtd-depth, 0) * var(--gtd-depth-step, 16px));
+    calc(28px + var(--gtd-group-indent, 0px) + var(--gtd-depth, 0) * var(--gtd-depth-step, 8px));
 }
 .gtd-thread-row.gtd-compact-row,
 .gtd-thread-row.gtd-parked-row {
@@ -110,17 +114,19 @@
 /* The shelf header pins to the top of the list while its rows scroll, and
    paints the sidebar ground so they slide under it. */
 .gtd-shelf-header {
+  padding-left: 8px;
   position: sticky;
   top: 0;
   z-index: 3;
   background: var(--sidebar);
 }
 .gtd-project-group-header {
-  /* Positioned so the absolute new-thread button anchors to it. */
+  /* Positioned so the absolute new-thread button anchors to it. Match the
+     2px gap between compact thread rows. */
   position: relative;
   display: flex;
   align-items: center;
-  margin-top: 6px;
+  margin-top: 2px;
   border-radius: 6px;
 }
 .gtd-project-group-header:hover {
@@ -133,8 +139,8 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 8px 0 24px;
+  height: 32px;
+  padding: 0 8px 0 30px;
   border: 0;
   background: transparent;
   color: var(--muted-foreground);
@@ -145,7 +151,14 @@
 }
 .gtd-project-group-header-touch .gtd-project-group-toggle {
   height: 40px;
+  padding-left: 40px;
   font-size: 13px;
+}
+/* Touch rows use rounded-xl (12px); the header must match or the hover fill
+   reads as a different control from the thread row under it. */
+.gtd-project-group-header-touch,
+.gtd-project-group-header-touch .gtd-project-group-toggle:focus-visible {
+  border-radius: 12px;
 }
 .gtd-project-group-toggle:focus {
   outline: none;
@@ -155,10 +168,18 @@
   outline-offset: -1px;
   border-radius: 6px;
 }
-.gtd-project-group-chevron {
-  height: 26px;
+.gtd-disclosure.gtd-project-group-chevron {
+  /* Match the shelf label's 8px inset, not its unpadded container. */
+  left: 8px;
+  width: 12px;
+  height: 32px;
 }
-.gtd-project-group-header-touch .gtd-project-group-chevron {
+/* Touch: a 16px glyph in a 24px column, so the folder reads as a target. */
+.gtd-project-group-header-touch .gtd-disclosure.gtd-project-group-chevron {
+  /* 8px in from thread-row-alignment.css's 0: the 16px folder sits 12px
+     from the row edge and 12px from the name, on the thread chevron's column. */
+  left: 8px;
+  width: 24px;
   height: 40px;
 }
 .gtd-project-group-name {
@@ -210,15 +231,17 @@
 .gtd-project-group-new:focus-visible {
   outline: 1px solid var(--ring);
 }
-/* Rows under a project header step in a little, short of a full tree level:
-   enough to read as the header's children, cheap on a narrow sidebar. */
+/* Move thread content, disclosures, and tree guides together inside groups. */
 .gtd-project-group-rows {
-  --gtd-group-indent: 12px;
+  /* The thread glyph starts 6px inside its hit area: 10 + 6 = 16px,
+     one 8px nesting step beyond the repo glyph's 8px inset. */
+  --gtd-group-indent: 10px;
+  margin-top: 2px;
 }
 .gtd-disclosure {
   position: absolute;
   z-index: 2;
-  left: calc(var(--gtd-group-indent, 0px) + var(--gtd-depth, 0) * var(--gtd-depth-step, 16px));
+  left: calc(var(--gtd-group-indent, 0px) + var(--gtd-depth, 0) * var(--gtd-depth-step, 8px));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
@@ -231,6 +254,14 @@
   border: 0;
   color: var(--muted-foreground);
   cursor: pointer;
+}
+/* Touch: the full 40px row height and a 32px column, a finger-sized target.
+   thread-card.tsx mirrors the width when it pads the row's content. */
+.gtd-disclosure.gtd-disclosure-touch {
+  /* 4px in, so the 16px glyph sits 12px from the row edge and 12px from the title. */
+  left: calc(var(--gtd-group-indent, 0px) + var(--gtd-depth, 0) * var(--gtd-depth-step, 8px) + 4px);
+  width: 32px;
+  height: 40px;
 }
 .gtd-disclosure:focus {
   outline: none;
@@ -274,7 +305,7 @@
   top: -2px;
   bottom: 0;
   width: 1px;
-  background: var(--sidebar-border);
+  background: var(--subtle-foreground);
 }
 .gtd-tree-line-last {
   bottom: 50%;
@@ -283,8 +314,45 @@
   position: absolute;
   top: 50%;
   height: 1px;
-  background: var(--sidebar-border);
+  background: var(--subtle-foreground);
+}
+.gtd-thread-row:is(:hover, :focus-within, [data-sidebar-thread-active="true"]) .gtd-disclosure {
+  color: var(--sidebar-accent-foreground);
 }
 .gtd-thread-tooltip {
   overflow-wrap: anywhere;
+}
+/* Drag-to-nest (use-nest-drag): the dragged row fades in place while its
+   ghost rides the pointer, and the row or project header that may take the
+   drop shows the accent ground with the focus ring's outline. */
+.gtd-thread-row[data-dragging="true"] {
+  opacity: 0.5;
+}
+/* A dragged group rides the pointer on the accent ground a drop target
+   wears, lifted over the siblings the sortable slides aside. */
+.gtd-project-group[data-dragging="true"] {
+  position: relative;
+  z-index: 1;
+}
+.gtd-project-group[data-dragging="true"] > .gtd-project-group-header {
+  background: var(--sidebar-accent);
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+.gtd-thread-row[data-drop-target="true"],
+.gtd-project-group-header[data-drop-target="true"] {
+  background: var(--sidebar-accent);
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+.gtd-nest-ghost {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--sidebar-accent);
+  outline: 1px solid var(--ring);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.2);
+  cursor: grabbing;
 }

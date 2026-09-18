@@ -94,7 +94,7 @@ textarea {
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--surface-recessed-solid);
+  background: var(--surface-recessed);
 }
 
 .sb-text-ladder p {
@@ -124,7 +124,7 @@ textarea {
   padding: 14px 16px;
   border: 1px solid var(--sample-border);
   border-radius: 8px;
-  background: var(--surface-recessed-solid);
+  background: var(--surface-recessed);
 }
 
 .sb-app-shell {
@@ -289,7 +289,7 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--surface-recessed-solid);
+  background: var(--surface-recessed);
 }
 
 .sb-code {
@@ -357,4 +357,29 @@ textarea {
   .sb-ansi-grid {
     grid-template-columns: repeat(4, 1fr);
   }
+}
+
+/* Fixture geometry only. The generated theme owns all control colors/states. */
+.sb-composition {
+  padding: 16px;
+  border-radius: 10px;
+  font-family: var(--font-sans);
+}
+.sb-composition h2 {
+  font-size: 15px;
+}
+.sb-composition button,
+.sb-composition input {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--input);
+  color: var(--foreground);
+  font-size: 13px;
+}
+.sb-composition :focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }

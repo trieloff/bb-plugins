@@ -1,6 +1,6 @@
 {
   "name": "@smsunarto/bb-plugin-amp",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Amp (ampcode.com) as a bb provider: a native provider bridge spawning the Amp CLI directly, with Oracle and Orb surfaces",
   "keywords": [
     "bb",
@@ -64,7 +64,7 @@
     "src/"
   ],
   "dependencies": {
-    "@bb-kit/sentry": "0.1.0",
+    "@bb-kit/sentry": "0.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

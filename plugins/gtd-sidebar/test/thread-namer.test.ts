@@ -57,12 +57,14 @@ function completed(seq = 2) {
 
 function createHost(
   options: {
-    automatic?: boolean;
+    automatic?: boolean | (() => boolean);
     events?: readonly unknown[];
     rereadTitle?: string | null;
     title?: string | null;
     archivedAt?: number | null;
     environmentPath?: string | null;
+    environmentId?: () => string | null;
+    environmentStatus?: () => "ready" | "provisioning";
     inferenceComplete?: (input: unknown) => Promise<string | null>;
     inferenceError?: Error;
     inferenceOutput?: string | null;
@@ -92,6 +94,7 @@ function createHost(
           return {
             id: "env_1",
             hostId: "host_1",
+            status: options.environmentStatus?.() ?? "ready",
             path: options.environmentPath === undefined ? "/workspace" : options.environmentPath,
           };
         },
@@ -118,6 +121,7 @@ function createHost(
         get: async ({ threadId }: { threadId: string }) => {
           assert.equal(threadId, THREAD_ID);
           getCount += 1;
+          if (options.environmentId) thread.environmentId = options.environmentId();
           return getCount > 1 && options.rereadTitle !== undefined
             ? { ...thread, title: options.rereadTitle }
             : thread;
@@ -133,7 +137,8 @@ function createHost(
     },
   });
   const namer = createThreadNamer(host.bb, {
-    automaticallyNameThreads: async () => options.automatic ?? true,
+    automaticallyNameThreads: async () =>
+      typeof options.automatic === "function" ? options.automatic() : (options.automatic ?? true),
     inference: {
       async complete(input) {
         inferenceCalls.push(input);
@@ -148,6 +153,51 @@ function createHost(
 
   return { fileReads, host, inferenceCalls, namer, updates };
 }
+
+describe("thread naming progress", () => {
+  for (const outcome of ["rename", "keep", "failure"] as const) {
+    test(`reports naming only while inference is running and clears after ${outcome}`, async () => {
+      let start!: () => void;
+      const started = new Promise<void>((resolve) => {
+        start = resolve;
+      });
+      let finish!: (value: string | null) => void;
+      let fail!: (error: Error) => void;
+      const result = new Promise<string | null>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const { namer, host } = createHost({
+        title: "Fix login",
+        events: [requested(), requested(3, "Continue", "new-turn")],
+        inferenceComplete: () => {
+          start();
+          return result;
+        },
+      });
+      assert.deepEqual(namer.listNamingThreads(), []);
+      const operation = namer.nameThread(THREAD_ID, { kind: "automatic" });
+      await started;
+      assert.deepEqual(namer.listNamingThreads(), [THREAD_ID]);
+      if (outcome === "failure") fail(new Error("Inference failed"));
+      else finish(outcome === "keep" ? null : "New title");
+      const finished = await operation;
+      assert.equal(finished.ok, outcome !== "failure");
+      assert.deepEqual(namer.listNamingThreads(), []);
+      assert.deepEqual(
+        host.harness.inspection.realtimeSignals.map(({ channel, payload }) => ({
+          channel,
+          payload,
+        })),
+        [
+          { channel: "lifecycle", payload: { kind: "naming", threadId: THREAD_ID } },
+          { channel: "lifecycle", payload: { kind: "naming", threadId: THREAD_ID } },
+        ],
+      );
+      await host.harness.lifecycle.dispose();
+    });
+  }
+});
 
 describe("createThreadNamer", () => {
   test("names an untitled thread when its first prompt arrives", async () => {
@@ -421,6 +471,53 @@ type ThreadSubscription = Extract<
 >;
 
 describe("automatic naming subscription", () => {
+  test("waits for provisioning before naming with the workspace rules", async () => {
+    let environmentId: string | null = null;
+    let environmentStatus: "ready" | "provisioning" = "provisioning";
+    const { host, namer, updates, inferenceCalls, fileReads } = createHost({
+      events: [requested()],
+      environmentId: () => environmentId,
+      environmentStatus: () => environmentStatus,
+      projectInstructions: "Always use [GTD Sidebar] as the title prefix.",
+      inferenceOutput: "[GTD Sidebar] Fix login",
+    });
+    let subscription: ThreadSubscription | undefined;
+    host.harness.sdk.stub("subscribe", (args: ThreadSubscription) => {
+      subscription = args;
+      return () => {};
+    });
+    const nameThread = mock(namer.nameThread);
+    subscribeToThreadNaming(host.bb, { nameThread });
+    const notify = async (type: "client/turn/requested" | "system/thread-provisioning") => {
+      subscription!.callback({
+        type: "changed",
+        entity: "thread",
+        id: THREAD_ID,
+        changes: ["events-appended"],
+        metadata: { eventTypes: [type] },
+      });
+      await nameThread.mock.results.at(-1)!.value;
+    };
+
+    await notify("client/turn/requested");
+    environmentId = "env_1";
+    await notify("system/thread-provisioning");
+    assert.equal(inferenceCalls.length, 0);
+    assert.equal(fileReads.length, 0);
+    assert.equal(updates.length, 0);
+
+    environmentStatus = "ready";
+    await notify("system/thread-provisioning");
+    await notify("system/thread-provisioning");
+    assert.equal(inferenceCalls.length, 1);
+    assert.match(
+      (inferenceCalls[0] as { prompt: string }).prompt,
+      /Always use \[GTD Sidebar\] as the title prefix\./u,
+    );
+    assert.deepEqual(updates, [{ threadId: THREAD_ID, title: "[GTD Sidebar] Fix login" }]);
+    await host.harness.lifecycle.dispose();
+  });
+
   test("reacts only to appended requests and unsubscribes on disposal", async () => {
     const { host, namer, updates } = createHost({ events: [requested()] });
     const unsubscribe = mock(() => {});
@@ -469,4 +566,19 @@ describe("automatic naming subscription", () => {
     await host.harness.lifecycle.dispose();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+});
+
+test("automatic inference cannot write a title after opt-out", async () => {
+  let enabled = true;
+  const { namer, updates } = createHost({
+    automatic: () => enabled,
+    events: [requested()],
+    inferenceComplete: async () => {
+      enabled = false;
+      return "A generated title";
+    },
+  });
+  const result = await namer.nameThread(THREAD_ID, { kind: "automatic" });
+  assert.equal(result.ok, false);
+  assert.deepEqual(updates, []);
 });

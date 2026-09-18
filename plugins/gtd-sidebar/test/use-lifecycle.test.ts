@@ -38,7 +38,7 @@ if (process.env.GTD_LIFECYCLE_TEST_CHILD !== "1") {
       writable: true,
     });
   }
-  const { act, cleanup, configure } = await import("@testing-library/react");
+  const { act, cleanup, configure, fireEvent } = await import("@testing-library/react");
   const { installTestPluginRuntime, renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
   installTestPluginRuntime();
   const { createElement } = await import("react");
@@ -88,7 +88,11 @@ if (process.env.GTD_LIFECYCLE_TEST_CHILD !== "1") {
       { subject: thread("t") },
       {
         rpc: {
-          listLifecycle: () => ({ rows: rows() }),
+          listLifecycle: () => ({
+            rows: rows(),
+            backoff: [],
+            weekdayOnlyProjectIds: [],
+          }),
         } as never,
       },
     );
@@ -125,7 +129,7 @@ if (process.env.GTD_LIFECYCLE_TEST_CHILD !== "1") {
       // publish arrives at t+30s: past the wake in wall-clock terms, yet
       // still ahead of the rendered clock.
       rows = [{ threadId: "t", snoozedUntil: mountedAt + 20_000, snoozedAt: mountedAt + 5_000 }];
-      await slot.behavior.emitRealtime("lifecycle", {});
+      await slot.behavior.emitRealtime("lifecycle", { kind: "lifecycle" });
       await act(async () => {
         jest.advanceTimersByTime(50);
       });
@@ -140,7 +144,7 @@ if (process.env.GTD_LIFECYCLE_TEST_CHILD !== "1") {
       await act(async () => {});
 
       rows = [{ threadId: "t", snoozedUntil: mountedAt + 10_000, snoozedAt: mountedAt }];
-      await slot.behavior.emitRealtime("lifecycle", {});
+      await slot.behavior.emitRealtime("lifecycle", { kind: "lifecycle" });
       await act(async () => {
         jest.advanceTimersByTime(50);
       });
@@ -150,6 +154,59 @@ if (process.env.GTD_LIFECYCLE_TEST_CHILD !== "1") {
         jest.advanceTimersByTime(10_100);
       });
       assert.equal(slot.container.textContent, "active");
+    });
+
+    it("sends the one-click action through the adaptive quick-snooze RPC", async () => {
+      function QuickSnoozeProbe({ subject }: { subject: PluginSidebarThread }) {
+        const lifecycle = useLifecycle();
+        return createElement(
+          "button",
+          {
+            onClick: () =>
+              lifecycle.quickSnooze(
+                subject.id,
+                subject.projectId,
+                "https://github.com/vercel-labs/just-bash/pull/1",
+              ),
+          },
+          lifecycle.quickSnoozeLabel(subject),
+        );
+      }
+
+      const slot = renderSlot(
+        { component: QuickSnoozeProbe },
+        { subject: thread("t") },
+        {
+          rpc: {
+            listLifecycle: () => ({
+              rows: [],
+              backoff: [{ threadId: "t", ladderStep: 2, snoozedAt: 200 }],
+              weekdayOnlyProjectIds: ["one"],
+            }),
+            quickSnooze: () => ({
+              snoozedUntil: Date.now() + 86_400_000,
+              ladderStep: 3,
+              ladderDays: 5,
+              shiftedOffWeekend: false,
+            }),
+          } as never,
+        },
+      );
+      await act(async () => {});
+      fireEvent.click(slot.getByRole("button"));
+      await act(async () => {});
+
+      assert.deepEqual(
+        slot.rpcCalls.find((call) => call.method === "quickSnooze"),
+        {
+          method: "quickSnooze",
+          input: {
+            threadId: "t",
+            projectId: "one",
+            pullRequestUrl: "https://github.com/vercel-labs/just-bash/pull/1",
+          },
+        },
+      );
     });
   });
 }
