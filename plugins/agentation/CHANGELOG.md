@@ -5,6 +5,14 @@
 ### Patch Changes
 
 - Expose the staged-annotation composer banner as a stable theme surface.
+- Declare the CLI with the SDK's `defineCli`; `--help` works on every command and user errors carry a hint. Requires plugin SDK 0.4.104.
+- Mark the RPC contract discoverable with per-method descriptions (`bb plugin rpc inspect agentation`).
+- Remove annotation mentions from the composer when their annotations are sent or discarded, and refresh the banner after the draft is submitted.
+- Map the app-overlay, browser-toolbar-action, and timeline-renderer plugin surfaces for annotations.
+- Map bb 0.44's sidebar header and sidebar navigation slots, plus the diff, source-code, sidebar-footer, and provider-input slots, to their public SDK registrations.
+- Name the sidebar row an annotation on bb's Navigation plugin points at, and the `navPanel` entry behind it.
+- Record whether an annotated plugin ships with bb (bundled thread list, Navigation) or was installed, and where from.
+- Keep turn assignments across a restart or plugin safe mode while their thread is still mid-turn, instead of re-staging them.
 
 ## [0.3.0](https://github.com/smsunarto/bb-plugins/compare/agentation/v0.2.3...agentation/v0.3.0) (2026-09-15)
 

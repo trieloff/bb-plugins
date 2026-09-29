@@ -6,7 +6,13 @@
 // understands. Here, uninstalling the plugin removes this database with it —
 // see `lib/warm-start.ts` for the browser-side copy of the same rows, which is
 // the one part it does not take.
-import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import {
+  cliCommand,
+  defineCli,
+  defineRpcContract,
+  PluginCliError,
+  type BbPluginApi,
+} from "@get-bb/plugin-sdk";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 // Relative, not the `@/` alias the frontend uses: bb loads this file directly
@@ -15,10 +21,15 @@ import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
 import { gtdSidebarHostContract } from "./lib/host-contract.ts";
 import { createCollapsedThreadsStore } from "./lib/collapsed-threads.ts";
 import { createThreadNester } from "./lib/nest-thread.ts";
+import { threadFamilyIds } from "./lib/thread-family.ts";
 import { isWithinSettledWindow } from "./lib/settled-threads.ts";
 import { createThreadNamer, subscribeToThreadNaming } from "./thread-namer.ts";
 import { createThreadTitleInference } from "./thread-title-inference.ts";
-import { classifyProjectRhythm } from "./lib/work-rhythm.ts";
+import {
+  classifyProjectRhythm,
+  recentThreadTurnStamps,
+  TURN_EVENT_PAGE_SIZE,
+} from "./lib/work-rhythm.ts";
 import { isReloadCancellation } from "./lib/shutdown.ts";
 import {
   afterRefusal,
@@ -1005,10 +1016,12 @@ export default async function plugin(bb: BbPluginApi) {
     bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "lifecycle", threadId: row.threadId });
   };
 
-  const clear = (threadId: string, kind: "deleted" | "lifecycle" = "lifecycle"): void => {
-    db.prepare(`DELETE FROM thread_lifecycle WHERE thread_id = ?`).run(threadId);
+  const clear = (threadId: string): void => {
+    const changes = db
+      .prepare(`DELETE FROM thread_lifecycle WHERE thread_id = ?`)
+      .run(threadId).changes;
     db.prepare(`DELETE FROM snoozed_pr_watch WHERE thread_id = ?`).run(threadId);
-    bb.realtime.publish(LIFECYCLE_CHANNEL, { kind, threadId });
+    if (changes > 0) bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "lifecycle", threadId });
   };
 
   interface BackoffRow {
@@ -1193,18 +1206,25 @@ export default async function plugin(bb: BbPluginApi) {
     for (const thread of recent) {
       if (shutdown.signal.aborted) return;
       try {
-        const events = await bb.sdk.threads.events.list({
-          threadId: thread.id,
-          types: ["client/turn/requested"],
-          limit: "500",
-          signal: shutdown.signal,
-        });
-        const stamps = turnsByProject.get(thread.projectId) ?? [];
-        for (const event of events) {
-          if (event.createdAt > windowStart) stamps.push(event.createdAt);
+        const recentStamps = await recentThreadTurnStamps(
+          (beforeSeq) =>
+            bb.sdk.threads.events.list({
+              threadId: thread.id,
+              types: ["client/turn/requested"],
+              order: "desc",
+              limit: String(TURN_EVENT_PAGE_SIZE),
+              ...(beforeSeq === undefined ? {} : { beforeSeq }),
+              signal: shutdown.signal,
+            }),
+          windowStart,
+        );
+        const projectStamps = turnsByProject.get(thread.projectId) ?? [];
+        projectStamps.push(...recentStamps);
+        turnsByProject.set(thread.projectId, projectStamps);
+      } catch (error) {
+        if (unreadable === 0 && !isReloadCancellation(error)) {
+          bb.log.warn(`project rhythm event read failed: ${String(error)}`);
         }
-        turnsByProject.set(thread.projectId, stamps);
-      } catch {
         unreadable += 1;
       }
     }
@@ -1303,12 +1323,11 @@ export default async function plugin(bb: BbPluginApi) {
     }
   };
 
-  /**
-   * Every id a settle archived, or the thread's own id when the row predates
-   * the cascade column. The fallback is exactly the old behaviour.
-   */
+  /** Legacy plugin-settled rows only; active snoozes must not unarchive a thread. */
   const archivedIdsFor = (threadId: string): string[] => {
-    const stored = readOne(threadId)?.archivedThreadIds ?? [];
+    const row = readOne(threadId);
+    if (row?.settledAt === null || row === undefined) return [];
+    const stored = row.archivedThreadIds;
     return stored.length === 0 ? [threadId] : stored;
   };
 
@@ -1342,6 +1361,54 @@ export default async function plugin(bb: BbPluginApi) {
       if (rows.length < ARCHIVED_PAGE_SIZE) break;
     }
     return collected;
+  };
+
+  const familyIds = (threadId: string) =>
+    threadFamilyIds(
+      threadId,
+      (parentThreadId, offset) =>
+        bb.sdk.threads.list({
+          archived: false,
+          includeHidden: true,
+          parentThreadId,
+          limit: ARCHIVED_PAGE_SIZE,
+          offset,
+        }),
+      ARCHIVED_PAGE_SIZE,
+    );
+
+  const writeFamilySnooze = (
+    rootId: string,
+    ids: readonly string[],
+    snoozedUntil: number,
+    snoozedAt: number,
+  ): void => {
+    const upsert = db.prepare(
+      `INSERT INTO thread_lifecycle
+         (thread_id, settled_at, snoozed_until, snoozed_at, archived_thread_ids)
+       VALUES (?, NULL, ?, ?, NULL)
+       ON CONFLICT(thread_id) DO UPDATE SET
+         settled_at = NULL,
+         snoozed_until = excluded.snoozed_until,
+         snoozed_at = excluded.snoozed_at,
+         archived_thread_ids = NULL`,
+    );
+    db.transaction(() => {
+      for (const id of ids) upsert.run(id, snoozedUntil, snoozedAt);
+    })();
+    bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "lifecycle", threadId: rootId });
+  };
+
+  const clearFamilySnooze = (rootId: string, ids: readonly string[]): void => {
+    const deleteLifecycle = db.prepare(`DELETE FROM thread_lifecycle WHERE thread_id = ?`);
+    const deleteWatch = db.prepare(`DELETE FROM snoozed_pr_watch WHERE thread_id = ?`);
+    db.transaction(() => {
+      for (const id of ids) {
+        deleteLifecycle.run(id);
+        deleteWatch.run(id);
+      }
+    })();
+    bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "lifecycle", threadId: rootId });
   };
 
   const wakeSnoozedForPullUrl = async (url: string, reason: string) => {
@@ -1826,24 +1893,21 @@ export default async function plugin(bb: BbPluginApi) {
       // is not on the settled shelf, so the thread has nowhere to be drawn
       // until bb reports it again.
       await unarchiveThreads(archivedIdsFor(threadId));
-      write({
-        threadId,
-        settledAt: null,
-        snoozedUntil,
-        snoozedAt: now,
-        archivedThreadIds: [],
-      });
+      const ids = await familyIds(threadId);
+      writeFamilySnooze(threadId, ids, snoozedUntil, now);
       rememberPullRequestUrl(threadId, pullRequestUrl);
       // Recorded, but it does not move the ladder. A preset is a wake time you
       // chose deliberately, so it is evidence about this thread rather than
       // evidence that the button's guess keeps missing.
-      recordSnoozeHistory({
-        threadId,
-        snoozedAt: now,
-        snoozedUntil,
-        ladderStep: -1,
-        kind: "preset",
-      });
+      for (const id of ids) {
+        recordSnoozeHistory({
+          threadId: id,
+          snoozedAt: now,
+          snoozedUntil,
+          ladderStep: -1,
+          kind: "preset",
+        });
+      }
       return { ok: true };
     },
     async quickSnooze({ threadId, projectId, pullRequestUrl }) {
@@ -1871,22 +1935,19 @@ export default async function plugin(bb: BbPluginApi) {
       });
 
       await unarchiveThreads(archivedIdsFor(threadId));
-      write({
-        threadId,
-        settledAt: null,
-        snoozedUntil: plan.snoozedUntil,
-        snoozedAt: now,
-        archivedThreadIds: [],
-      });
+      const ids = await familyIds(threadId);
+      writeFamilySnooze(threadId, ids, plan.snoozedUntil, now);
       rememberPullRequestUrl(threadId, pullRequestUrl);
-      writeBackoff(threadId, plan.step, now);
-      recordSnoozeHistory({
-        threadId,
-        snoozedAt: now,
-        snoozedUntil: plan.snoozedUntil,
-        ladderStep: plan.step,
-        kind: "quick",
-      });
+      for (const id of ids) {
+        writeBackoff(id, plan.step, now);
+        recordSnoozeHistory({
+          threadId: id,
+          snoozedAt: now,
+          snoozedUntil: plan.snoozedUntil,
+          ladderStep: plan.step,
+          kind: "quick",
+        });
+      }
       bb.log.info(
         `quick snooze ${threadId} step=${plan.step} days=${plan.ladderDays}` +
           `${plan.shiftedOffWeekend ? " shifted-off-weekend" : ""}${plan.reset ? " reset" : ""}`,
@@ -1899,7 +1960,7 @@ export default async function plugin(bb: BbPluginApi) {
       };
     },
     async unsnooze({ threadId }) {
-      clear(threadId);
+      clearFamilySnooze(threadId, await familyIds(threadId));
       return { ok: true };
     },
     async logPrDebug(payload) {
@@ -1975,7 +2036,7 @@ export default async function plugin(bb: BbPluginApi) {
   // A deleted thread must not leave a row behind that would park a future
   // thread reusing the id, and stale rows accumulate otherwise.
   bb.events.on("thread.deleted", ({ thread }) => {
-    clear(thread.id, "deleted");
+    clear(thread.id);
   });
 
   // One native feed routes pin and archive changes to only the client list
@@ -2186,37 +2247,34 @@ export default async function plugin(bb: BbPluginApi) {
     });
   });
 
-  bb.cli.register({
-    name: "gtd-sidebar",
-    summary: "Manage GTD Sidebar threads.",
-    commands: [
-      {
-        name: "rename",
-        summary: "Generate a new title for a thread.",
-        usage: "bb gtd-sidebar rename [<threadId>]",
+  bb.cli.register(
+    defineCli({
+      name: "gtd-sidebar",
+      summary: "Manage GTD Sidebar threads.",
+      usageErrorExitCode: 2,
+      commands: {
+        rename: cliCommand({
+          summary: "Generate a new title for a thread.",
+          positionals: [
+            {
+              name: "threadId",
+              description: "Thread to rename; defaults to the thread this command runs from.",
+            },
+          ],
+          async run({ positionals }, context) {
+            const threadId = positionals.threadId ?? context.threadId;
+            if (threadId === undefined) {
+              throw new PluginCliError("Pass a thread id or run this command from a thread.", {
+                code: "missing_thread",
+                exitCode: 2,
+              });
+            }
+            const result = await threadNamer.nameThread(threadId, { kind: "forced" });
+            if (!result.ok) throw new PluginCliError(result.error, { code: "rename_failed" });
+            return { exitCode: 0, stdout: `${result.title}\n` };
+          },
+        }),
       },
-    ],
-    async run(argv, context) {
-      const [command, ...args] = argv;
-      if (command !== "rename") {
-        return {
-          exitCode: 2,
-          stderr: `Unknown subcommand "${command ?? ""}". Use "bb gtd-sidebar rename [<threadId>]".\n`,
-        };
-      }
-
-      const threadId = args[0] ?? context.threadId;
-      if (threadId === undefined) {
-        return {
-          exitCode: 2,
-          stderr: "Pass a thread id or run this command from a thread.\n",
-        };
-      }
-
-      const result = await threadNamer.nameThread(threadId, { kind: "forced" });
-      return result.ok
-        ? { exitCode: 0, stdout: `${result.title}\n` }
-        : { exitCode: 1, stderr: `${result.error}\n` };
-    },
-  });
+    }),
+  );
 }

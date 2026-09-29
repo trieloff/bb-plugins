@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
-import plugin, { SMART_EMBED_INSTRUCTIONS } from "../src/server/server.ts";
+import plugin, { INLINE_VIS_INSTRUCTIONS, SMART_EMBED_INSTRUCTIONS } from "../src/server/server.ts";
 import { mentionProviders } from "../src/server/mentions.ts";
 import { WORKSPACE_CHANGED_CHANNEL } from "../src/shared/contract.ts";
 
@@ -15,32 +15,35 @@ test("the plugin loads against the fake host and registers every mention provide
   const { bb, harness } = createFakePluginHost({ pluginId: "kitchen-sink" });
   await plugin(bb);
 
-  expect(harness.registrations.rpcMethods).toEqual([
-    "renderEmbed",
-    "preparePreview",
-    "getAutorouterProjectIndex",
-    "saveAutorouterProjectIndex",
-    "updateAutorouterEnabled",
-    "updateAutorouterSettings",
-    "routeAutorouterPrompt",
+  expect(harness.registrations.rpcMethods).toEqual(["renderEmbed"]);
+  expect(
+    harness.registrations.experimental_publishedRpcMethods.map((entry) => [
+      entry.method,
+      entry.registrationDescription,
+      entry.methodDescription,
+    ]),
+  ).toEqual([
+    [
+      "renderEmbed",
+      "Smart Embed citations.",
+      "Render a Smart Embed: a source citation, a recorded turn or commit diff, or a saved patch.",
+    ],
   ]);
   expect(harness.registrations.mentionProviders.map((provider) => provider.id)).toEqual(
     mentionProviders.map((provider) => provider.id),
   );
 });
 
-test("the inline visualization RPC rejects extra input before reading the workspace", async () => {
-  const { bb, harness } = createFakePluginHost({ pluginId: "kitchen-sink" });
+test("a fresh install disables bb's built-in inline-vis, which claims the same directive", async () => {
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "kitchen-sink",
+    sdk: { plugins: { disable: () => ({ ok: true }) } },
+  });
   await plugin(bb);
+  expect(harness.sdk.callsTo("plugins.disable")).toEqual([]);
 
-  await expect(
-    harness.callRpc("preparePreview", {
-      threadId: "thread-1",
-      file: "demo.html",
-      extra: true,
-    }),
-  ).rejects.toMatchObject({ code: "invalid_input", issues: expect.any(Array) });
-  expect(harness.sdk.callsTo("threads.get")).toEqual([]);
+  await harness.lifecycle.install();
+  expect(harness.sdk.callsTo("plugins.disable")).toEqual([[{ pluginId: "inline-vis" }]]);
 });
 
 test("mention provider ids are unique and free of the wire separator", () => {
@@ -58,12 +61,13 @@ test("the manifest declares the skills root that holds every composer command", 
 test("each skill directory carries a SKILL.md whose frontmatter name matches the directory", async () => {
   const directories = (await readdir(skillsRoot)).sort();
   expect(directories).toEqual([
-    "index-projects",
     "inline-vis",
     "ship-it",
+    "smart-embeds",
     "subthread",
     "sync",
     "test-remotely",
+    "whiteboard",
   ]);
   for (const directory of directories) {
     const path = join(skillsRoot, directory, "SKILL.md");
@@ -93,19 +97,12 @@ test("sync routes GitButler repositories through the gitbutler skill", async () 
   expect(skill).toContain("but status");
 });
 
-test("project indexing is a user-only slash command with three examples per repository", async () => {
-  const skill = await readFile(join(skillsRoot, "index-projects", "SKILL.md"), "utf8");
-  expect(skill).toContain("disable-model-invocation: true");
-  expect(skill).toContain("exactly three");
-  expect(skill).toContain("saveAutorouterProjectIndex");
-});
-
 test("the measured baseline prompt is the shipped Smart Embed text", async () => {
   const baseline = await readFile(new URL("../eval/prompts/baseline.md", import.meta.url), "utf8");
   expect(baseline).toBe(`${SMART_EMBED_INSTRUCTIONS}\n`);
 });
 
-test("injects the Smart Embed instructions into every agent session", async () => {
+test("injects preview skill routing within the host's per-plugin character limit", async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "kitchen-sink" });
   await plugin(bb);
 
@@ -113,10 +110,16 @@ test("injects the Smart Embed instructions into every agent session", async () =
     threadId: "thread-1",
     projectId: "project-1",
   });
-  expect(instructions).toBe(SMART_EMBED_INSTRUCTIONS);
-  expect(instructions).toContain("::smart-diff");
-  expect(instructions).toContain("::smart-code");
-  expect(instructions).toContain("::smart-patch");
+  expect(instructions).toBe(`${INLINE_VIS_INSTRUCTIONS}\n\n${SMART_EMBED_INSTRUCTIONS}`);
+  // BB truncates contributeInstructions output after 4096 characters.
+  expect(instructions?.length).toBeLessThanOrEqual(4096);
+  const routedSkills = [...(instructions?.matchAll(/read the `([^`]+)` skill/g) ?? [])].map(
+    (match) => match[1],
+  );
+  expect(routedSkills).toEqual(["inline-vis", "smart-embeds"]);
+  for (const name of routedSkills) {
+    expect((await stat(join(skillsRoot, name!, "SKILL.md"))).isFile()).toBe(true);
+  }
 });
 
 test("publishes a workspace-changed signal when a thread settles, fails, or goes away", async () => {

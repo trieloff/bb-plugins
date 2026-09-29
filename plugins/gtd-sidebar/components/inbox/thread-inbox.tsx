@@ -8,39 +8,34 @@ import {
   experimental_useSidebarThreads as useSidebarThreads,
   useBbNavigate,
   useRpc,
+  useSdk,
   useSettings,
   type PluginSidebarThread,
+  type PluginSidebarThreadActions,
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import { Icon } from "@/components/ui/icon";
-import { cn } from "@/lib/utils";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ThreadCard } from "@/components/inbox/thread-card";
-import { SlimRow } from "@/components/inbox/slim-row";
-import type { ActiveThreadShelf, RowCommand } from "@/components/inbox/thread-actions";
-import type { gtdSidebarRpcContract } from "@/server";
-import { useCollapsedThreads } from "@/hooks/use-collapsed-threads";
-import { useNamingThreads } from "@/hooks/use-naming-threads";
+import { Icon } from "../ui/icon";
+import { cn } from "../../lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { ThreadCard } from "./thread-card";
+import { SlimRow } from "./slim-row";
+import type { ActiveThreadShelf, RowCommand } from "./thread-actions";
+import type { gtdSidebarRpcContract } from "../../server";
+import { useCollapsedThreads } from "../../hooks/use-collapsed-threads";
+import { useNamingThreads } from "../../hooks/use-naming-threads";
 import {
   useSidebarDrag,
   type SidebarDragApi,
   type SidebarProjectDrop,
-} from "@/hooks/use-nest-drag";
-import { usePortalScopeProps } from "@/lib/portal-scope";
-import { useLifecycle, type LifecycleApi } from "@/hooks/use-lifecycle";
-import { usePinnedOrder, type PinnedOrderApi } from "@/hooks/use-pinned-order";
-import { useSettledThreads, type SettledThreadsApi } from "@/hooks/use-settled-threads";
-import { useCommittedEvent } from "@/hooks/use-committed-event";
-import { forgetSidebarActions, publishSidebarActions } from "@/lib/sidebar-actions-bridge";
-import { TRAILING_GLYPH_BOX_CLASS } from "@/components/inbox/status-slot";
-import { filterByProject, nextThreadIdAfterSettle, threadDisplayTitle } from "@/lib/inbox";
+} from "../../hooks/use-nest-drag";
+import { usePortalScopeProps } from "../../lib/portal-scope";
+import { useLifecycle, type LifecycleApi } from "../../hooks/use-lifecycle";
+import { useSettledArchivePaging, useUnsettle } from "../../hooks/use-settled-threads";
+import { useCommittedEvent } from "../../hooks/use-committed-event";
+import { forgetSidebarActions, publishSidebarActions } from "../../lib/sidebar-actions-bridge";
+import { TRAILING_GLYPH_BOX_CLASS } from "./status-slot";
+import { archiveAsksFirst, filterByProject, nextThreadIdAfterSettle } from "../../lib/inbox";
 import {
   buildInboxTree,
   createShelfArrivals,
@@ -50,7 +45,7 @@ import {
   type InboxShelf,
   type InboxThreadNode,
   type VisibleInboxRow,
-} from "@/lib/inbox-tree";
+} from "../../lib/inbox-tree";
 import {
   applyProjectMove,
   groupCollapseKey,
@@ -60,15 +55,20 @@ import {
   settleProjectOrderOverride,
   shouldGroupByProject,
   type ProjectGroup as ProjectGroupRows,
-} from "@/lib/project-groups";
-import { ProjectGroup, SortableProjectGroup } from "@/components/inbox/project-group";
-import { mergeSettledThreads } from "@/lib/settled-threads";
-import { gitButlerLabelsMatch, resolveSidebarBranchLabel } from "@/lib/gitbutler";
-import { filterByMachine, sidebarMachines } from "@/lib/machines";
-import { MachineScopePicker } from "@/components/inbox/machine-scope-picker";
-import { MachineAppearanceProvider } from "@/components/inbox/machine-appearance";
+} from "../../lib/project-groups";
+import { ProjectGroup, SortableProjectGroup } from "./project-group";
+import { isShelvedThread } from "../../lib/settled-threads";
+import { gitButlerLabelsMatch, resolveSidebarBranchLabel } from "../../lib/gitbutler";
+import { filterByMachine, sidebarMachines } from "../../lib/machines";
+import { MachineScopePicker } from "./machine-scope-picker";
+import { MachineAppearanceProvider } from "./machine-appearance";
+import { RenameProvider } from "./inline-rename";
+import { CompactViewportOverrideProvider } from "../ui/hooks/use-compact-viewport";
 
 const ALL_PROJECTS = "__all__";
+// The Settled shelf is a view of bb's archive, so the host list is asked for
+// archived threads too; `isShelvedThread` cuts it to the shelf's window.
+const SIDEBAR_LIFECYCLES = ["active", "archived"] as const;
 
 const EMPTY_STATE_CLASS = "px-2 py-6 text-center text-xs text-muted-foreground";
 const GITBUTLER_REFRESH_MS = 30_000;
@@ -77,26 +77,40 @@ const MOBILE_SCROLL_FADE_STYLE: CSSProperties = {
   WebkitMaskImage: "linear-gradient(to bottom, black 0, black calc(100% - 2rem), transparent 100%)",
 };
 
-export function ThreadInbox({
+export function ThreadInbox(props: PluginThreadListProps) {
+  // One subscription to bb's actions for the whole list; rows never take one.
+  const threadActions = useSidebarThreadActions();
+  // bb's slot prop, not a media query, decides compact for the vendored
+  // registry hooks, so the rename editor and the rows agree.
+  return (
+    <CompactViewportOverrideProvider isCompactViewport={props.isCompactViewport}>
+      <RenameProvider renameThread={threadActions.rename}>
+        <InboxList {...props} threadActions={threadActions} />
+      </RenameProvider>
+    </CompactViewportOverrideProvider>
+  );
+}
+
+function InboxList({
   activeThreadId,
   isCompactViewport,
   onNavigate,
   searchQuery,
-}: PluginThreadListProps) {
-  const { status, threads: hostThreads, projects } = useSidebarThreads();
+  threadActions,
+}: PluginThreadListProps & { threadActions: PluginSidebarThreadActions }) {
+  const sidebar = useSidebarThreads({ experimental_lifecycles: SIDEBAR_LIFECYCLES });
+  const { status, projects } = sidebar;
   const now = useMinuteClock();
   const lifecycle = useLifecycle();
   const namingThreads = useNamingThreads();
-  // bb's view never carries an archived thread, so the Settled shelf's rows
-  // come from a second read and are merged in before anything partitions.
-  const settledThreads = useSettledThreads(now);
-  // bb's pinned order travels the same way: `pinSortKey` is dropped by the
-  // host's thread mapping, so the Pinned shelf re-reads it via the backend.
-  const pinnedOrder = usePinnedOrder();
+  // The cut is made against the list's own clock, so a row ages off the shelf
+  // while the sidebar sits open rather than on the next unrelated refresh.
+  useSettledArchivePaging(sidebar, now);
   const threads = useMemo(
-    () => mergeSettledThreads(hostThreads, settledThreads.threads),
-    [hostThreads, settledThreads.threads],
+    () => sidebar.threads.filter((thread) => isShelvedThread(thread, now)),
+    [now, sidebar.threads],
   );
+  const unsettle = useUnsettle();
   // bb's own cached roster, so no glyph waits on a round trip of this plugin's.
   const { providers } = useProviders();
   const providerInfoById = useMemo(
@@ -105,7 +119,7 @@ export function ThreadInbox({
   );
   const [scope, setScope] = useState<string>(ALL_PROJECTS);
   const [machineScope, setMachineScope] = useState<string | null>(null);
-  const machines = sidebarMachines(threads);
+  const machines = sidebarMachines(threads, sidebar.experimental_hosts);
   // Optional enhancements stay off until the SDK confirms an explicit opt-in.
   const { values: settingValues } = useSettings();
   const showProviderIcon = settingValues?.showProviderIcon === true;
@@ -140,8 +154,6 @@ export function ThreadInbox({
   const { tree, shelves, toggleThread, revealFamily } = useInboxTree(
     threads,
     lifecycle,
-    settledThreads,
-    pinnedOrder,
     scope,
     machineScope,
     searchQuery,
@@ -199,12 +211,17 @@ export function ThreadInbox({
       ),
     [pinned, nextAction, waiting, showWaiting, searching, grouped, isGroupCollapsed],
   );
-  const navigate = useBbNavigate();
+  // A machine scope carries into the composer, which preselects that machine
+  // for the new environment when it can host one.
   const onNewThread = useCommittedEvent((projectId: string) => {
-    navigate.toProject(projectId);
+    threadActions.openNewThread({
+      projectId,
+      hostId: machineScope ?? undefined,
+      focusPrompt: true,
+    });
     onNavigate();
   });
-  const rpc = useRpc<typeof gtdSidebarRpcContract>();
+  const sdk = useSdk();
   // One drag context for both payloads (lib/sidebar-drag): a row onto a row
   // nests, a row onto a project header lifts it back out, and a group header
   // onto another group reorders its project. Desktop only: the compact
@@ -213,7 +230,7 @@ export function ThreadInbox({
   // row a new `drag` prop and redraw it.
   const titleFor = useCommittedEvent((threadId: string) => {
     const thread = threads.find((candidate) => candidate.id === threadId);
-    return thread === undefined ? null : threadDisplayTitle(thread);
+    return thread === undefined ? null : thread.displayTitle;
   });
   // The pointerup that ends a drag still fires click where it lands; the
   // guard below keeps that trailing click from folding a group or opening a
@@ -225,15 +242,18 @@ export function ThreadInbox({
       if (args === null) return;
       const optimistic = applyProjectMove(orderedProjectIds, projectId, args);
       setProjectOrderOverride(optimistic);
-      // Settle from the RPC's canonical order too: bb returns its current list
-      // for an unchanged reorder but emits no project-order-changed event.
+      // Settle from bb's canonical order too: it returns its current list for
+      // an unchanged reorder but emits no project-order-changed event. bb
+      // refuses to move the personal project; a group header never sends it,
+      // so a rejection here is the host unreachable or the project gone, and
+      // the shelf keeps bb's last order.
       const settle = (order: readonly string[] | null) => {
         setProjectOrderOverride((current) =>
           settleProjectOrderOverride(current, optimistic, order),
         );
       };
-      void rpc.call("reorderProject", { projectId, ...args }).then(
-        (result) => settle(result.ok ? result.projectIds : null),
+      void sdk.projects.reorder({ projectId, ...args }).then(
+        (projects) => settle(projects.map((project) => project.id)),
         () => settle(null),
       );
     },
@@ -254,11 +274,8 @@ export function ThreadInbox({
       // bb republishes project-order-changed, which refetches the sidebar's
       // project list; no plugin publish needed.
       if (args !== null) {
-        void rpc.call("reorderProject", { projectId, ...args }).then(
-          (result) => {
-            if (!result.ok) toast.error("Couldn’t move the project.");
-            return undefined;
-          },
+        void sdk.projects.reorder({ projectId, ...args }).then(
+          () => undefined,
           (error: unknown) => {
             toast.error(error instanceof Error ? error.message : "Couldn’t move the project.");
             return undefined;
@@ -329,8 +346,10 @@ export function ThreadInbox({
     activeThreadId,
     onNavigate,
     lifecycle,
-    settledThreads,
+    unsettle,
     visibleActiveRows,
+    threads: sidebar.threads,
+    threadActions,
   });
 
   return (
@@ -397,7 +416,7 @@ export function ThreadInbox({
           >
             <InboxContent
               status={status}
-              ready={lifecycle.shelvesReady && settledThreads.ready}
+              ready={lifecycle.shelvesReady && sidebar.experimental_archived?.status !== "loading"}
               count={shelvedTotal}
               searchQuery={searchQuery}
             >
@@ -442,7 +461,7 @@ export function ThreadInbox({
                             gitButlerLabels,
                           )}
                           isActive={thread.id === activeThreadId}
-                          canPark={lifecycle.canPark(thread)}
+                          canPark={canParkFamily(row.node, lifecycle)}
                           quickSnoozeLabel={lifecycle.quickSnoozeLabel(thread)}
                           isCompactViewport={isCompactViewport}
                           command={command}
@@ -488,6 +507,12 @@ export function ThreadInbox({
                           isActive={thread.id === activeThreadId}
                           shelf={shelf}
                           wakeAt={wakeAtFor(thread)}
+                          depth={row.depth}
+                          childCount={row.node.children.length}
+                          expanded={row.expanded}
+                          guides={row.guides}
+                          lastChild={row.lastChild}
+                          toggleThread={toggleThread}
                           now={now}
                           isCompactViewport={isCompactViewport}
                           command={command}
@@ -523,6 +548,17 @@ function threadDropAllowed(
 ): boolean {
   const source = drag?.source;
   return source?.kind === "thread" && nestDropAllowed(tree, source.threadId, threadId);
+}
+
+/** A family can park only when every member can park. */
+function canParkFamily(node: InboxThreadNode, lifecycle: LifecycleApi): boolean {
+  const pending = [node];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (!lifecycle.canPark(current.thread)) return false;
+    pending.push(...current.children);
+  }
+  return true;
 }
 
 /** Whether the dragged row may lift to `projectId`'s top level; false between drags. */
@@ -572,32 +608,53 @@ function useRowCommands({
   activeThreadId,
   onNavigate,
   lifecycle,
-  settledThreads,
+  unsettle,
   visibleActiveRows,
+  threads,
+  threadActions,
 }: {
   activeThreadId: PluginThreadListProps["activeThreadId"];
   onNavigate: PluginThreadListProps["onNavigate"];
   lifecycle: LifecycleApi;
-  settledThreads: SettledThreadsApi;
+  unsettle: (threadId: string) => void;
   visibleActiveRows: readonly {
     shelf: ActiveThreadShelf;
     row: VisibleInboxRow;
   }[];
+  threads: readonly PluginSidebarThread[];
+  threadActions: PluginSidebarThreadActions;
 }) {
-  const threadActions = useSidebarThreadActions();
   const navigate = useBbNavigate();
   // bb's archive sends the viewer to the compose screen once the mutation
   // resolves. Route changes commit inside a React transition, so against a
   // local server that lands before the neighbour's route does and wins. The
   // neighbour is therefore opened twice if need be: eagerly, and again from
   // this effect once the view has left the settled thread for nothing.
-  const pendingAdvanceRef = useRef<{ settledThreadId: string; nextThreadId: string } | null>(null);
+  const pendingAdvanceRef = useRef<{
+    settledThreadId: string;
+    nextThreadId: string;
+    /** bb asked first, so the advance also waits for the list to drop the thread. */
+    awaitsArchive: boolean;
+  } | null>(null);
   useEffect(() => {
     const pending = pendingAdvanceRef.current;
     if (pending === null || activeThreadId === pending.settledThreadId) return;
+    if (activeThreadId !== null) {
+      pendingAdvanceRef.current = null;
+      return;
+    }
+    // A cancelled confirmation leaves the thread live; an empty route is then
+    // the composer opened by hand, not the archive landing, so stay put. The
+    // route and the list refresh land in either order, so both are watched.
+    if (
+      pending.awaitsArchive &&
+      threads.some((entry) => entry.id === pending.settledThreadId && !entry.isArchived)
+    ) {
+      return;
+    }
     pendingAdvanceRef.current = null;
-    if (activeThreadId === null) threadActions.open(pending.nextThreadId);
-  }, [activeThreadId, threadActions]);
+    threadActions.open(pending.nextThreadId);
+  }, [activeThreadId, threads, threadActions]);
 
   const settle = useCommittedEvent((threadId: string) => {
     const settled = visibleActiveRows.find((entry) => entry.row.node.thread.id === threadId);
@@ -618,9 +675,14 @@ function useRowCommands({
       }
       const nextThreadId = nextThreadIdAfterSettle(section, threadId, activeThreadId);
       if (nextThreadId !== null) {
-        pendingAdvanceRef.current = { settledThreadId: threadId, nextThreadId };
-        threadActions.open(nextThreadId);
-        onNavigate();
+        const awaitsArchive = archiveAsksFirst(threads, threadId);
+        pendingAdvanceRef.current = { settledThreadId: threadId, nextThreadId, awaitsArchive };
+        // A parent waits on bb's confirmation, so only the effect above
+        // advances, once the archive lands. A cancel leaves the user in place.
+        if (!awaitsArchive) {
+          threadActions.open(nextThreadId);
+          onNavigate();
+        }
       }
     }
     threadActions.archive(threadId);
@@ -656,7 +718,7 @@ function useRowCommands({
         return;
       case "restore":
         if (command.shelf === "snoozed") lifecycle.unsnooze(command.threadId);
-        else settledThreads.unsettle(command.threadId);
+        else unsettle(command.threadId);
         return;
       case "pin":
         void threadActions.setPinned(command.threadId, command.pinned);
@@ -675,8 +737,6 @@ function useRowCommands({
 function useInboxTree(
   threads: readonly PluginSidebarThread[],
   lifecycle: LifecycleApi,
-  settledThreads: SettledThreadsApi,
-  pinnedOrder: PinnedOrderApi,
   scope: string,
   machineScope: string | null,
   searchQuery: string,
@@ -700,11 +760,9 @@ function useInboxTree(
         {
           arrivals,
           snoozedAtFor: lifecycle.snoozedAtFor,
-          settledAtFor: settledThreads.settledAtFor,
-          pinOrderKeyFor: pinnedOrder.pinOrderKeyFor,
         },
       ),
-    [lifecycle, settledThreads, pinnedOrder, scope, machineScope, searchQuery, threads, arrivals],
+    [lifecycle, scope, machineScope, searchQuery, threads, arrivals],
   );
   const shelves = useMemo(() => {
     const rows = (shelf: (typeof tree)[number]["shelf"]) =>
@@ -769,7 +827,9 @@ function useGitButlerLabels(
         ...new Set(
           threads.flatMap((thread) => {
             const environment = thread.environment;
-            return environment?.workspaceDisplayKind === "other" && environment.id !== null
+            // A worktree is bb's own branch; only a plain checkout can hold
+            // GitButler's applied branches, and null means bb does not know yet.
+            return environment?.isWorktree === false && environment.id !== null
               ? [environment.id]
               : [];
           }),

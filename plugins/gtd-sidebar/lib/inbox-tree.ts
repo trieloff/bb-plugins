@@ -1,5 +1,5 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
-import { activeSectionFor, effectiveParentThreadId, threadDisplayTitle } from "./inbox.ts";
+import { activeSectionFor, effectiveParentThreadId } from "./inbox.ts";
 
 export type InboxLifecycle = "active" | "snoozed" | "settled";
 export type InboxShelf = "pinned" | "nextAction" | "waiting" | "snoozed" | "settled";
@@ -91,13 +91,6 @@ export interface InboxSort {
   arrivals?: ShelfArrivals;
   /** The lifecycle row's `snoozedAt` — the Snoozed shelf's exact arrival. */
   snoozedAtFor?: (thread: PluginSidebarThread) => number | null;
-  /** bb's `archivedAt` — the Settled shelf's exact arrival. */
-  settledAtFor?: (thread: PluginSidebarThread) => number | null;
-  /**
-   * bb's `pinSortKey` for the thread — the Pinned shelf's order, shared with
-   * the built-in sidebar's drag order. Null while the keys are still loading.
-   */
-  pinOrderKeyFor?: (thread: PluginSidebarThread) => string | null;
   /** Clock for stamping shelf moves this build observes. */
   now?: number;
 }
@@ -105,8 +98,6 @@ export interface InboxSort {
 interface ResolvedSort {
   arrivals: ShelfArrivals;
   snoozedAtFor(thread: PluginSidebarThread): number | null;
-  settledAtFor(thread: PluginSidebarThread): number | null;
-  pinOrderKeyFor(thread: PluginSidebarThread): string | null;
   now: number;
 }
 
@@ -128,7 +119,7 @@ function shelfEnteredAt(
     shelf === "snoozed"
       ? sort.snoozedAtFor(thread)
       : shelf === "settled"
-        ? sort.settledAtFor(thread)
+        ? thread.archivedAt
         : null;
   const seed =
     exact ??
@@ -146,29 +137,30 @@ function createInboxNode(
 ): InboxThreadNode {
   const lifecycle = thread.isArchived ? "settled" : lifecycleFor(thread);
   const shelf = ownShelf(thread, lifecycle);
-  const matchesTitle = threadDisplayTitle(thread).toLowerCase().includes(normalizedQuery);
+  const matchesTitle = thread.displayTitle.toLowerCase().includes(normalizedQuery);
   return {
     thread,
     lifecycle,
     children: [],
     shelf,
     shelfEnteredAt: shelfEnteredAt(thread, shelf, sort),
-    pinOrderKey: thread.isPinned ? sort.pinOrderKeyFor(thread) : null,
+    // bb's own pinned order, shared with the built-in sidebar's drag order.
+    pinOrderKey: thread.isPinned ? thread.pinSortKey : null,
     statusThread: thread,
     matchesSearch: matchesTitle,
     matchesTitle,
   };
 }
 
-function activeParentIds(nodes: ReadonlyMap<string, InboxThreadNode>): Map<string, string> {
+function linkedParentIds(nodes: ReadonlyMap<string, InboxThreadNode>): Map<string, string> {
   const parents = new Map<string, string>();
   for (const node of nodes.values()) {
     const parentId = effectiveParentThreadId(node.thread);
     if (
       parentId &&
       parentId !== node.thread.id &&
-      node.lifecycle === "active" &&
-      nodes.get(parentId)?.lifecycle === "active"
+      node.lifecycle !== "settled" &&
+      nodes.get(parentId)?.lifecycle === node.lifecycle
     ) {
       parents.set(node.thread.id, parentId);
     }
@@ -290,8 +282,6 @@ export function buildInboxTree(
   const resolved: ResolvedSort = {
     arrivals: sort.arrivals ?? createShelfArrivals(),
     snoozedAtFor: sort.snoozedAtFor ?? (() => null),
-    settledAtFor: sort.settledAtFor ?? (() => null),
-    pinOrderKeyFor: sort.pinOrderKeyFor ?? (() => null),
     now: sort.now ?? Date.now(),
   };
   const nodes = new Map(
@@ -300,7 +290,7 @@ export function buildInboxTree(
       createInboxNode(thread, lifecycleFor, normalizedQuery, resolved),
     ]),
   );
-  const parents = activeParentIds(nodes);
+  const parents = linkedParentIds(nodes);
   const roots: InboxThreadNode[] = [];
   for (const node of nodes.values()) {
     const parentId = parents.get(node.thread.id);
@@ -351,7 +341,7 @@ export function visibleInboxRows(
         depth: row.depth + 1,
         parentId: row.node.thread.id,
         parentProjectId: row.node.thread.projectId,
-        parentTitle: threadDisplayTitle(row.node.thread),
+        parentTitle: row.node.thread.displayTitle,
         guides: row.depth === 0 ? "" : row.guides + (row.lastChild ? "0" : "1"),
         lastChild: index === children.length - 1,
       });

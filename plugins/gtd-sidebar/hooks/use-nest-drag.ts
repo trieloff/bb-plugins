@@ -16,14 +16,18 @@ import {
 } from "@dnd-kit/core";
 import { hasSortableData, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { gtdSidebarRpcContract } from "@/server";
-import { useCommittedEvent } from "@/hooks/use-committed-event";
-import type { InboxShelf } from "@/lib/inbox-tree";
-import { projectDropEdge, type ProjectDropEdge } from "@/lib/project-groups";
-import { DRAG_KIND, sidebarDragPayload, type SidebarDragPayload } from "@/lib/sidebar-drag";
+import type { gtdSidebarRpcContract } from "../server";
+import { useCommittedEvent } from "./use-committed-event";
+import type { InboxShelf } from "../lib/inbox-tree";
+import { projectDropEdge, type ProjectDropEdge } from "../lib/project-groups";
+import { DRAG_KIND, sidebarDragPayload, type SidebarDragPayload } from "../lib/sidebar-drag";
 
-/** How far the pointer travels before a press becomes a drag; a click stays a click. */
-const DRAG_DISTANCE_PX = 6;
+/**
+ * How far the pointer travels before a press becomes a drag; a click stays a
+ * click. bb's own sidebar settled on 8px (get-bb/bb#4185), since click jitter
+ * crossed the smaller threshold.
+ */
+const DRAG_DISTANCE_PX = 8;
 
 /** Droppable ids: one per thread row, one per project header per shelf. */
 export function threadDropId(threadId: string): string {
@@ -91,7 +95,7 @@ const sidebarModifiers: Modifier[] = [
  *   redraws off bb's thread feed, so no local reorder happens.
  * - a project group header dragged onto another header in its shelf reorders
  *   the project; `onProjectDrop` resolves the reorder against bb's full
- *   project order and writes it through `reorderProject`.
+ *   project order and writes it through bb's own `projects.reorder`.
  *
  * Which thread targets may take the drop is decided by the tree
  * (`nestDropAllowed`, `unnestDropAllowed`); a refused target is a disabled

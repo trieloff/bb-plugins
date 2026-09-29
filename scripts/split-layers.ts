@@ -154,7 +154,8 @@ for (const layer of manifest.layers) {
       fail(`${layer.branch}: verify failed: ${manifest.verify}`);
     }
   }
-  run("git", ["add", "-A"]);
+  const layerPaths = [...new Set([...(layer.files ?? []), ...Object.keys(layer.stage ?? {})])];
+  run("git", ["add", "-A", "--", ...layerPaths]);
   run("git", ["commit", "-m", layer.message]);
   console.log(`   committed ${run("git", ["rev-parse", "--short", "HEAD"]).trim()}`);
 }

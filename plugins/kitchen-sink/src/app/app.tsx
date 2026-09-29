@@ -18,16 +18,16 @@ import {
 import { embedCache, embedCacheKey, type EmbedRequest } from "./embed-cache.ts";
 import { UnityCitationView } from "@bb-plugins/unity-inspector/app";
 import { DevinIcon } from "./devin-branding.tsx";
+import { SmartImageCompareDirective } from "./smart-image-compare.tsx";
 import { InlineVisDirective } from "./inline-vis.tsx";
 import "./app.css";
 import "./timeline-motion/timeline-motion.css";
 import { mountTimelineMotion } from "./timeline-motion/timeline-motion.ts";
-import { AutorouterAction } from "./autorouter/action.tsx";
-import { AutorouterSettingsPanel } from "./autorouter/settings.tsx";
 import {
   PROBE_GROUP_TITLE,
   ThreadActivityProbe,
 } from "./timeline-motion/thread-activity-probe.tsx";
+import { JUMP_TO_LATEST_COMMAND, jumpToLatestEvent } from "./timeline-motion/jump-to-latest.ts";
 
 type SourceExcerpt = Pick<
   Extract<RenderEmbedOutput, { status: "ready"; kind: "code" }>,
@@ -291,18 +291,6 @@ export default definePluginApp((app) => {
     providerId: "acp-devin",
     icon: DevinIcon,
   });
-  app.slots.navPanel({
-    id: "autorouter-settings",
-    title: "Autorouter",
-    icon: "Settings",
-    path: "autorouter",
-    component: AutorouterSettingsPanel,
-  });
-  app.composer.customize({
-    id: "autorouter",
-    scopes: ["new-thread", "thread"],
-    actions: [{ id: "toggle", component: AutorouterAction }],
-  });
   app.slots.experimental_threadHeaderAction({
     id: "thread-activity-probe",
     title: PROBE_GROUP_TITLE,
@@ -312,8 +300,16 @@ export default definePluginApp((app) => {
     id: "timeline-motion",
     mount: ({ signal }) => mountTimelineMotion(document, signal),
   });
+  app.commands.register({
+    ...JUMP_TO_LATEST_COMMAND,
+    isAvailable: ({ threadId }) => threadId !== null,
+    run: ({ threadId }) => {
+      if (threadId !== null) jumpToLatestEvent(document, threadId);
+    },
+  });
   app.slots.messageDirective({ id: "smart-diff", component: SmartChangeDirective });
   app.slots.messageDirective({ id: "smart-patch", component: SmartPatchDirective });
   app.slots.messageDirective({ id: "smart-code", component: SmartCodeDirective });
   app.slots.messageDirective({ id: "inline-vis", component: InlineVisDirective });
+  app.slots.messageDirective({ id: "smart-image-compare", component: SmartImageCompareDirective });
 });

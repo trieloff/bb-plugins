@@ -14,13 +14,6 @@ export function activeSectionFor(thread: PluginSidebarThread): ActiveSection {
   return thread.hasPendingInteraction || !isThreadWorking(thread) ? "next-action" : "waiting";
 }
 
-export function threadDisplayTitle(thread: PluginSidebarThread): string {
-  const title = thread.title?.trim();
-  if (title) return title;
-  const fallback = thread.titleFallback?.trim();
-  return fallback ? fallback : "Untitled thread";
-}
-
 export interface ProjectScope {
   /** Project id, or null for "all projects". */
   id: string | null;
@@ -52,6 +45,19 @@ export function nextThreadIdAfterSettle<T extends { readonly id: string }>(
   const settledIndex = sectionThreads.findIndex((thread) => thread.id === settledThreadId);
   if (settledIndex === -1) return null;
   return sectionThreads[settledIndex + 1]?.id ?? sectionThreads[settledIndex - 1]?.id ?? null;
+}
+
+/**
+ * Whether bb will ask before archiving this thread. bb archives a thread with
+ * its children and confirms first only when it has any (get-bb/bb#4205), so
+ * the settle waits for that answer before it leaves the thread. Counted on
+ * bb's raw parent link, forks included, the same link bb's count follows.
+ */
+export function archiveAsksFirst(
+  threads: readonly Pick<PluginSidebarThread, "parentThreadId">[],
+  threadId: string,
+): boolean {
+  return threads.some((thread) => thread.parentThreadId === threadId);
 }
 
 export function effectiveParentThreadId(thread: PluginSidebarThread): string | null {

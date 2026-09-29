@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRealtime, useRealtimeConnectionState } from "@get-bb/plugin-sdk/app";
-import { refreshRetryDelayMs } from "@/lib/lifecycle";
+import { refreshRetryDelayMs } from "../lib/lifecycle";
 
 const SHELF_GATE_MS = 250;
 const LIFECYCLE_BATCH_MS = 50;
@@ -19,25 +19,12 @@ type RefreshState =
   | { kind: "disposed" };
 
 type RefreshMode = "batch" | "immediate";
-export type LifecycleRefreshKind =
-  | "archive"
-  | "collapsed"
-  | "deleted"
-  | "lifecycle"
-  | "pin"
-  | "naming";
+export type LifecycleRefreshKind = "collapsed" | "lifecycle" | "naming";
 
 function refreshKind(payload: unknown): LifecycleRefreshKind | null {
   if (typeof payload !== "object" || payload === null || !("kind" in payload)) return null;
   const kind = payload.kind;
-  return kind === "archive" ||
-    kind === "collapsed" ||
-    kind === "deleted" ||
-    kind === "lifecycle" ||
-    kind === "naming" ||
-    kind === "pin"
-    ? kind
-    : null;
+  return kind === "collapsed" || kind === "lifecycle" || kind === "naming" ? kind : null;
 }
 
 /**

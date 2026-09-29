@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classifyProjectRhythm, isWeekend } from "../lib/work-rhythm.ts";
+import {
+  classifyProjectRhythm,
+  isWeekend,
+  recentThreadTurnStamps,
+  TURN_EVENT_PAGE_SIZE,
+} from "../lib/work-rhythm.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -28,6 +33,34 @@ function history(spanDays: number, pick: (date: Date) => boolean, perDay: number
 
 const weekdays = (date: Date) => !isWeekend(date);
 const everyDay = () => true;
+
+describe("recentThreadTurnStamps", () => {
+  const events = Array.from({ length: 230 }, (_, index) => ({
+    seq: 230 - index,
+    createdAt: 2_000 - index,
+  }));
+  const pageReader =
+    (calls: Array<string | undefined>) => async (beforeSeq: string | undefined) => {
+      calls.push(beforeSeq);
+      const start =
+        beforeSeq === undefined ? 0 : events.findIndex((event) => event.seq < Number(beforeSeq));
+      return events.slice(start, start + TURN_EVENT_PAGE_SIZE);
+    };
+
+  it("reads up to five BB-sized pages, newest first", async () => {
+    const calls: Array<string | undefined> = [];
+    const stamps = await recentThreadTurnStamps(pageReader(calls), 0);
+    assert.equal(stamps.length, 230);
+    assert.deepEqual(calls, [undefined, "131", "31"]);
+  });
+
+  it("stops when a page passes the rhythm window", async () => {
+    const calls: Array<string | undefined> = [];
+    const stamps = await recentThreadTurnStamps(pageReader(calls), 1_850);
+    assert.equal(stamps.length, 150);
+    assert.deepEqual(calls, [undefined, "131"]);
+  });
+});
 
 describe("classifyProjectRhythm", () => {
   it("calls a month of weekday-only work a weekday-only project", () => {

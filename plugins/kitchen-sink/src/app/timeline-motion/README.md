@@ -58,4 +58,18 @@ and anchoring styles. It restores the native `scrollTop` descriptor unless anoth
 plugin has replaced that descriptor afterward. In that case, the later patch
 stays installed and this plugin's router becomes a native passthrough.
 
-Thread motion has no separate settings or CLI commands.
+The plugin's "Smooth thread scrolling" setting (Tools → Kitchen Sink, on by
+default) turns the animation off without unloading the plugin. Off settles any
+animation in flight at its destination, releases every timeline, and passes
+scroll writes straight through until turned on again. The thread-header marker
+carries the value from `useSettings()` to the router, so a pane learns the
+setting when its header renders. Thread switch fades are not affected.
+
+Thread motion has no CLI commands. It registers one command-palette entry,
+"Jump to latest event" (default shortcut Mod+Shift+J, rebindable under Keyboard
+Settings as `plugin:kitchen-sink/jump-to-latest-event`). It scrolls the pane
+showing the current thread to its live tail: it clicks bb's own "Scroll to
+latest event" button when that is showing, and otherwise sends the timeline to
+its bottom through the animated router. The pane is found through the same
+hidden thread-header marker the scroll router reads, so a split layout scrolls
+the right pane. The entry is hidden on surfaces without a thread.

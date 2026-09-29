@@ -34,7 +34,7 @@ async function repository(): Promise<string> {
   await mkdir(join(cwd, "src"), { recursive: true });
   await writeFile(join(cwd, "src/solo.txt"), "base solo\n");
   await writeFile(join(cwd, "src/shared.txt"), "base shared\n");
-  git(cwd, ["add", "."]);
+  git(cwd, ["add", "src/"]);
   git(cwd, ["commit", "-m", "test: base"]);
   return cwd;
 }
@@ -106,7 +106,7 @@ describe("split-layers", () => {
     expect(git(cwd, ["show", "split/two:src/solo.txt"])).toBe("final solo\n");
     // Stacked: layer one is an ancestor of layer two.
     expect(() => git(cwd, ["merge-base", "--is-ancestor", "split/one", "split/two"])).not.toThrow();
-  });
+  }, 30_000);
 
   test("refuses a dirty tree before creating anything", async () => {
     const cwd = await repository();

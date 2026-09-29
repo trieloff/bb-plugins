@@ -11,28 +11,30 @@ import {
 import {
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
+  useSidebarThreadShortcut,
   type PluginSidebarPullRequest,
   type PluginSidebarThread,
+  type PluginSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
-import { Icon, type IconName } from "@/components/ui/icon";
-import { cn } from "@/lib/utils";
-import { RowContextMenu } from "@/components/inbox/row-context-menu";
-import { LIST_HOVER_TRANSITION } from "@/components/inbox/row-motion";
-import { CompactThreadActionMenu } from "@/components/inbox/thread-action-menu";
+import { Icon, type IconName } from "../ui/icon";
+import { cn } from "../../lib/utils";
+import { RowContextMenu } from "./row-context-menu";
+import { useThreadRename, type ThreadRename } from "./inline-rename";
+import { LIST_HOVER_TRANSITION } from "./row-motion";
+import { CompactThreadActionMenu } from "./thread-action-menu";
 import {
   buildThreadActionPlan,
   findThreadAction,
   type ActiveThreadShelf,
   type DispatchRowCommand,
   type ThreadActionPlan,
-} from "@/components/inbox/thread-actions";
-import { ProviderGlyph, type ProviderGlyphInfo } from "@/components/inbox/provider-glyph";
-import { STATUS_SLOT_CLASS, StatusOrTime } from "@/components/inbox/status-slot";
-import { FadingText, HostLead, ThreadDetails } from "@/components/inbox/thread-details";
-import { threadDisplayTitle } from "@/lib/inbox";
-import { useIosLongPress } from "@/hooks/use-ios-long-press";
-import { useCommittedEvent } from "@/hooks/use-committed-event";
-import { useNestRow, type SidebarDragApi } from "@/hooks/use-nest-drag";
+} from "./thread-actions";
+import { ProviderGlyph, type ProviderGlyphInfo } from "./provider-glyph";
+import { STATUS_SLOT_CLASS, StatusOrTime } from "./status-slot";
+import { FadingText, HostLead, ThreadDetails } from "./thread-details";
+import { useIosLongPress } from "../../hooks/use-ios-long-press";
+import { useCommittedEvent } from "../../hooks/use-committed-event";
+import { useNestRow, type SidebarDragApi } from "../../hooks/use-nest-drag";
 
 /** Horizontal step per nesting level, in px. Mirrors --gtd-depth-step in app.css. */
 const DEPTH_STEP = 8;
@@ -201,16 +203,19 @@ const ThreadCardBody = memo(function ThreadCardBody({
   };
 
   const compact = !isCompactViewport && (compactThreads || depth > 0);
+  const shortcut = useSidebarThreadShortcut(thread.id);
   const showActions = shelf === "nextAction" || canPark;
   const relation = parentTitle
     ? `Child of ${parentTitle}`
     : childCount > 0
       ? `${childCount} subthreads`
       : undefined;
-  const titleText = threadDisplayTitle(thread);
+  const titleText = thread.displayTitle;
+  const rename = useThreadRename(thread.id, titleText);
 
   const title = (
     <ThreadTitle
+      editor={rename.editor}
       title={titleText}
       isNaming={isNaming}
       isActive={isActive}
@@ -233,6 +238,7 @@ const ThreadCardBody = memo(function ThreadCardBody({
       title={rowTitle}
       thread={statusThread}
       now={now}
+      shortcut={shortcut}
       activity={thread.activity}
       pullRequest={pullRequest}
       interactive={interactive}
@@ -240,10 +246,17 @@ const ThreadCardBody = memo(function ThreadCardBody({
   );
 
   return (
-    <RowContextMenu thread={thread} command={command} plan={plan} disabled={isCompactViewport}>
+    <RowContextMenu
+      thread={thread}
+      command={command}
+      plan={plan}
+      rename={rename}
+      disabled={isCompactViewport}
+    >
       <li className="list-none">
         <div
           ref={setCardRef}
+          data-sidebar-rename-row=""
           data-sidebar-thread-active={isActive ? "true" : undefined}
           data-sidebar-thread-focused={isFocusedInSplit}
           {...handlers}
@@ -279,6 +292,7 @@ const ThreadCardBody = memo(function ThreadCardBody({
             provider={provider}
             relation={relation}
             showDetails={compact}
+            shortcut={shortcut}
             threadId={thread.id}
             title={titleText}
             shelf={shelf}
@@ -292,6 +306,7 @@ const ThreadCardBody = memo(function ThreadCardBody({
             onNestPointerDown={onNestPointerDown}
             onNestKeyDown={onNestKeyDown}
             nestActive={drag?.source?.kind === "thread"}
+            rename={rename}
             command={command}
           />
           {isCompactViewport ? (
@@ -321,6 +336,7 @@ const ThreadCardBody = memo(function ThreadCardBody({
                 title={rowTitle}
                 thread={statusThread}
                 now={now}
+                shortcut={shortcut}
                 plan={plan}
                 compact={compact}
                 showActions={showActions}
@@ -397,6 +413,7 @@ function summaryHeight(mobile: boolean, compact: boolean) {
 }
 
 function ThreadTitle({
+  editor,
   title,
   isNaming,
   isActive,
@@ -404,6 +421,8 @@ function ThreadTitle({
   isChild,
   mobile,
 }: {
+  /** The in-place rename editor, drawn instead of the title while open. */
+  editor: ReactNode;
   title: string;
   isNaming: boolean;
   isActive: boolean;
@@ -414,22 +433,28 @@ function ThreadTitle({
   // A read child sits at the slim-row tone so it reads as secondary to its
   // parent; unread children keep full color and weight so attention pops.
   const muted = isChild && !isActive && !isUnread;
+  // The editor takes the title's own classes, so a rename keeps its size,
+  // weight and tone in every row state.
+  const typography = cn(
+    "gtd-thread-title min-w-0 flex-1",
+    mobile && "gtd-mobile-title",
+    isActive
+      ? "text-sidebar-accent-foreground"
+      : muted
+        ? mobile
+          ? "text-muted-foreground"
+          : "text-muted-foreground/70"
+        : "text-sidebar-foreground",
+    isUnread && "font-medium",
+  );
+  if (editor !== null) {
+    return <span className={cn(typography, "pointer-events-auto relative z-10")}>{editor}</span>;
+  }
   return (
     <span
       data-gtd-naming={isNaming || undefined}
       aria-busy={isNaming || undefined}
-      className={cn(
-        "gtd-thread-title min-w-0 flex-1",
-        mobile && "gtd-mobile-title",
-        isActive
-          ? "text-sidebar-accent-foreground"
-          : muted
-            ? mobile
-              ? "text-muted-foreground"
-              : "text-muted-foreground/70"
-            : "text-sidebar-foreground",
-        isUnread && "font-medium",
-      )}
+      className={typography}
     >
       <FadingText text={title} />
     </span>
@@ -446,6 +471,7 @@ function MobileThreadSummary({
   title,
   thread,
   now,
+  shortcut,
   activity,
   pullRequest,
   interactive,
@@ -453,6 +479,7 @@ function MobileThreadSummary({
   title: ReactNode;
   thread: PluginSidebarThread;
   now: number;
+  shortcut: PluginSidebarThreadShortcut | null;
   activity: PluginSidebarThread["activity"];
   pullRequest: PluginSidebarPullRequest | null;
   interactive: boolean;
@@ -470,14 +497,14 @@ function MobileThreadSummary({
           />
         ) : null}
         <span className={STATUS_SLOT_CLASS}>
-          <StatusOrTime thread={thread} now={now} />
+          <StatusOrTime thread={thread} now={now} shortcut={shortcut} />
         </span>
       </span>
     </>
   );
 }
 
-function ThreadHierarchy({
+export function ThreadHierarchy({
   threadId,
   title,
   depth,
@@ -553,6 +580,7 @@ function ThreadRowLink({
   provider,
   relation,
   showDetails,
+  shortcut,
   threadId,
   title,
   shelf,
@@ -566,6 +594,7 @@ function ThreadRowLink({
   onNestPointerDown,
   onNestKeyDown,
   nestActive,
+  rename,
   command,
 }: {
   thread: PluginSidebarThread;
@@ -574,6 +603,7 @@ function ThreadRowLink({
   provider?: ProviderGlyphInfo;
   relation: string | undefined;
   showDetails: boolean;
+  shortcut: PluginSidebarThreadShortcut | null;
   threadId: string;
   title: string;
   shelf: ActiveThreadShelf;
@@ -589,6 +619,7 @@ function ThreadRowLink({
   onNestKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   /** A nest drag is live somewhere in the list. */
   nestActive: boolean;
+  rename: ThreadRename;
   command: DispatchRowCommand;
 }) {
   return (
@@ -607,8 +638,10 @@ function ThreadRowLink({
         // Both attributes, or bb's nine thread shortcuts stop finding rows.
         data-sidebar-thread-shortcut-target=""
         data-sidebar-thread-id={threadId}
+        data-sidebar-rename-anchor=""
         href="#"
         aria-label={title}
+        aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
         aria-current={isActive ? "page" : undefined}
         onKeyDown={(event) => {
           // Space picks the row up (see use-nest-drag); while a drag is live
@@ -641,9 +674,11 @@ function ThreadRowLink({
           onNestPointerDown(event);
           onSplitPointerDown?.(event);
         }}
+        onDoubleClick={rename.onDoubleClick}
         onClick={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
+          if (rename.isEditing) return;
           command({
             kind: "open",
             threadId: threadId,
@@ -661,6 +696,7 @@ function DesktopThreadSummary({
   title,
   thread,
   now,
+  shortcut,
   plan,
   compact,
   showActions,
@@ -671,6 +707,7 @@ function DesktopThreadSummary({
   title: ReactNode;
   thread: PluginSidebarThread;
   now: number;
+  shortcut: PluginSidebarThreadShortcut | null;
   plan: ThreadActionPlan;
   compact: boolean;
   showActions: boolean;
@@ -689,7 +726,7 @@ function DesktopThreadSummary({
           <PullRequestNumber pullRequest={pullRequest} interactive />
         ) : null}
         <span className={STATUS_SLOT_CLASS}>
-          <StatusOrTime thread={thread} now={now} />
+          <StatusOrTime thread={thread} now={now} shortcut={shortcut} />
         </span>
       </span>
       {showActions ? (

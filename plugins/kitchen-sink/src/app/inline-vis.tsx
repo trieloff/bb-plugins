@@ -1,4 +1,10 @@
-import { Markdown, useRpc, type PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_usePluginId,
+  Markdown,
+  useBbNavigate,
+  useSdk,
+  type PluginMessageDirectiveProps,
+} from "@get-bb/plugin-sdk/app";
 import {
   useEffect,
   useLayoutEffect,
@@ -8,22 +14,16 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  PREVIEW_SOURCES,
-  type InlineVisRpcContract,
-  type PreparePreviewOutput,
-  type PreviewSource,
-} from "../shared/contract.ts";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmbedHeader } from "./embed-header.tsx";
 import {
-  buildPreviewUrl,
-  INLINE_VIDEO_MESSAGE,
-  prepareInlineVideos,
-  type InlineVideoAsset,
-} from "./inline-video.ts";
+  INLINE_ASSET_MESSAGE,
+  prepareInlineAssets,
+  type InlinePreviewAsset,
+} from "./inline-assets.ts";
+import { previewMarkdown } from "./preview-markdown.ts";
 import { createPreviewExpansion } from "./inline-vis-expansion.ts";
-
-type MarkdownPreview = Extract<PreparePreviewOutput, { kind: "markdown" }>;
+import { loadPreview } from "./load-preview.ts";
 
 type LoadState =
   | { status: "loading" }
@@ -31,29 +31,21 @@ type LoadState =
       status: "ready";
       kind: "html";
       file: string;
-      source: PreviewSource;
+      hostId: string;
+      url: string;
       srcDoc?: string;
-      assets: InlineVideoAsset[];
+      assets: InlinePreviewAsset[];
       token?: string;
     }
   | {
       status: "ready";
       kind: "markdown";
       file: string;
-      source: PreviewSource;
-      markdown: MarkdownPreview;
+      hostId: string;
+      url: string;
+      content: string;
     }
   | { status: "error"; message: string };
-
-/** Thread-storage artifacts have no workspace viewer, so their header omits the open action. */
-const OPENS_WORKSPACE: Record<PreviewSource, boolean> = {
-  workspace: true,
-  "thread-storage": false,
-};
-
-function isPreviewSource(value: string): value is PreviewSource {
-  return (PREVIEW_SOURCES as readonly string[]).includes(value);
-}
 
 export const DEFAULT_HEIGHT_PX = 224;
 export const MIN_HEIGHT_PX = 120;
@@ -101,13 +93,14 @@ export function InlineVisDirective({
   if (!file)
     return (
       <Alert source={source}>
-        inline-vis requires a file attribute, e.g. <code>::inline-vis{'{file="demo.html"}'}</code>
+        inline-vis requires a file attribute, e.g.{" "}
+        <code>::inline-vis{'{file="/absolute/path/demo.html"}'}</code>
       </Alert>
     );
-  if (previewSource !== undefined && !isPreviewSource(previewSource))
+  if (previewSource !== undefined)
     return (
       <Alert source={source}>
-        inline-vis source must be <code>workspace</code> or <code>thread-storage</code>.
+        inline-vis no longer accepts source. Provide an absolute file path.
       </Alert>
     );
   if (height === null)
@@ -118,7 +111,7 @@ export function InlineVisDirective({
     );
   return (
     <CollapsiblePreview
-      key={`${message.threadId}:${message.id}:${previewSource ?? "workspace"}:${file}`}
+      key={`${message.threadId}:${message.id}:${file}`}
       attributes={attributes}
       source={source}
       message={message}
@@ -128,7 +121,8 @@ export function InlineVisDirective({
 }
 
 function CollapsiblePreview(props: PluginMessageDirectiveProps) {
-  const [expansion] = useState(createPreviewExpansion);
+  const pluginId = experimental_usePluginId();
+  const [expansion] = useState(() => createPreviewExpansion(`${pluginId}.inline-vis.collapsed`));
   const card = useRef<HTMLElement>(null);
   const expanded = useSyncExternalStore(expansion.subscribe, expansion.getSnapshot, () => false);
   useLayoutEffect(
@@ -157,12 +151,11 @@ function ExpandedPreview({
   attributes,
   source,
   message,
-  openWorkspaceFile,
   onToggle,
 }: PluginMessageDirectiveProps & { onToggle: () => void }) {
-  const rpc = useRpc<InlineVisRpcContract>();
+  const sdk = useSdk();
+  const navigate = useBbNavigate();
   const file = attributes.file?.trim() ?? "";
-  const previewSource = attributes.source?.trim();
   const previewHeight = parsePreviewHeight(attributes.height);
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const frame = useRef<HTMLIFrameElement>(null);
@@ -171,13 +164,13 @@ function ExpandedPreview({
     const deliver = (event: MessageEvent) => {
       if (
         event.source !== frame.current?.contentWindow ||
-        event.data?.type !== "bb:inline-video-ready" ||
+        event.data?.type !== "bb:inline-preview-ready" ||
         event.data.token !== state.token
       )
         return;
       window.removeEventListener("message", deliver);
       frame.current?.contentWindow?.postMessage(
-        { type: INLINE_VIDEO_MESSAGE, token: state.token, assets: state.assets },
+        { type: INLINE_ASSET_MESSAGE, token: state.token, assets: state.assets },
         "*",
       );
     };
@@ -191,35 +184,27 @@ function ExpandedPreview({
     setState({ status: "loading" });
     void (async () => {
       try {
-        const result = await rpc.call("preparePreview", {
-          threadId: message.threadId,
-          file,
-          ...(previewSource === undefined ? {} : { source: previewSource }),
-        });
+        const result = await loadPreview(sdk, message.threadId, file, controller.signal);
         if (result.kind === "markdown") {
           if (!cancelled)
             setState({
               status: "ready",
               kind: "markdown",
               file: result.file,
-              source: result.source,
-              markdown: result,
+              hostId: result.hostId,
+              url: result.url,
+              content: previewMarkdown(result.content, result.url),
             });
           return;
         }
-        const videos = await prepareInlineVideos(
-          result.html,
-          message.threadId,
-          result.file,
-          controller.signal,
-          result.source,
-        );
+        const videos = await prepareInlineAssets(result.html, result.url, controller.signal);
         if (!cancelled)
           setState({
             status: "ready",
             kind: "html",
             file: result.file,
-            source: result.source,
+            hostId: result.hostId,
+            url: result.url,
             ...videos,
           });
       } catch (error) {
@@ -235,7 +220,7 @@ function ExpandedPreview({
       cancelled = true;
       controller.abort();
     };
-  }, [file, message.threadId, previewSource, rpc]);
+  }, [file, message.threadId, sdk]);
 
   if (state.status === "error") {
     return (
@@ -270,9 +255,9 @@ function ExpandedPreview({
           aria-busy="true"
           aria-label={`Loading visualization ${file}`}
           style={{ height: previewHeight ?? DEFAULT_HEIGHT_PX }}
-          className="inline-vis-loading"
+          className="block w-full p-3"
         >
-          <span className="inline-vis-skeleton" />
+          <Skeleton className="size-full" />
         </output>
       </>
     );
@@ -284,23 +269,23 @@ function ExpandedPreview({
         path={state.file}
         label={state.file}
         kind="preview"
-        openWorkspaceFile={OPENS_WORKSPACE[state.source] ? openWorkspaceFile : null}
+        openWorkspaceFile={() =>
+          navigate.experimental_openFilePreview({
+            target: { kind: "host", hostId: state.hostId, path: state.file },
+            location: null,
+          })
+        }
         expanded
         onToggle={onToggle}
       />
       {state.kind === "markdown" ? (
         <div style={{ height: previewHeight ?? DEFAULT_HEIGHT_PX }} className="inline-vis-markdown">
-          <Markdown
-            content={state.markdown.content}
-            experimental_document={state.markdown.document}
-          />
+          <Markdown content={state.content} />
         </div>
       ) : (
         <iframe
           title={`inline-vis: ${state.file}`}
-          src={
-            state.srcDoc ? undefined : buildPreviewUrl(message.threadId, state.file, state.source)
-          }
+          src={state.srcDoc ? undefined : state.url}
           srcDoc={state.srcDoc}
           ref={frame}
           sandbox="allow-scripts"

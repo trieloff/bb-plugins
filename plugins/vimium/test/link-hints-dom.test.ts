@@ -1,7 +1,7 @@
 import "./helpers/dom.ts";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
-import { mountLinkHints } from "../src/app/link-hints.ts";
+import { mountLinkHints, setWindowedThreadOpener } from "../src/app/link-hints.ts";
 
 function contextWith(signal: AbortSignal): PluginContentScriptContext {
   return { pluginId: "vimium", generation: 1, signal };
@@ -118,6 +118,21 @@ function markers(): string[] {
   );
 }
 
+// The hint code polls on chained timers, which drift when the whole suite runs
+// in parallel. Retry an assertion until it holds instead of racing a sleep.
+async function eventually(assertion: () => void, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+}
+
 /**
  * A dropdown trigger that appends a two-item menu on click, like a Radix
  * portal; picking an item records it and, unless the popup is persistent
@@ -126,7 +141,7 @@ function markers(): string[] {
 function installMenuTrigger(
   trigger: HTMLElement,
   picked: string[],
-  options: { closeOnPick?: boolean; names?: readonly string[] } = {},
+  options: { closeOnPick?: boolean; names?: readonly string[]; search?: string } = {},
 ): void {
   const closeOnPick = options.closeOnPick ?? true;
   const names = options.names ?? ["Sol", "Luna"];
@@ -134,6 +149,11 @@ function installMenuTrigger(
     const menu = document.createElement("div");
     menu.id = "trigger-menu";
     menu.setAttribute("role", "menu");
+    if (options.search) {
+      const input = document.createElement("input");
+      input.setAttribute("aria-label", options.search);
+      menu.appendChild(input);
+    }
     for (const name of names) {
       const item = document.createElement("div");
       item.setAttribute("role", "menuitem");
@@ -153,6 +173,7 @@ function installMenuTrigger(
 }
 
 afterEach(() => {
+  setWindowedThreadOpener(null);
   document.body.innerHTML = "";
 });
 
@@ -413,14 +434,14 @@ describe("mountLinkHints", () => {
       '<div id="editor" role="textbox"></div>' +
       '<button id="actions" aria-label="Prompt actions" aria-haspopup="menu">+</button>' +
       '<button id="permission" aria-label="Permission mode" aria-haspopup="menu">Ask</button>' +
-      '<button id="machine" aria-label="Environment" aria-haspopup="menu">Mac</button>' +
+      '<button id="machine" aria-label="Machine" aria-haspopup="menu">Mac</button>' +
       '<button id="branch" aria-label="Branch" aria-haspopup="menu">main</button>' +
       '<button id="send" data-promptbox-submit-action>Send</button></div>' +
       '<button id="new-thread" aria-label="New thread (⌘ N)">New thread</button>' +
       '<button id="search" aria-label="Search threads (⌘ K)">Search</button>' +
       '<button id="back" aria-label="Go back">Back</button>' +
       '<button id="forward" aria-label="Go forward">Forward</button>' +
-      '<button id="extensions" aria-roledescription="sortable">Extensions</button>' +
+      '<div data-sidebar-navigation-item="__bb__/extensions"><button id="extensions">Plugins</button></div>' +
       '<a id="settings" href="/settings">Settings</a>' +
       '<button id="sidebar" aria-label="Toggle sidebar (⌘ B)">Sidebar</button>' +
       '<button id="right-panel" aria-label="Show right panel (⌘ J)">Panel</button>' +
@@ -495,6 +516,7 @@ describe("mountLinkHints", () => {
     const picked: string[] = [];
     installMenuTrigger(project, picked, {
       names: ["bb", "New project", "docs", "Don’t work in a project"],
+      search: "Search projects",
     });
 
     pressKey("f");
@@ -502,14 +524,18 @@ describe("mountLinkHints", () => {
 
     pressKey("p");
     expect(document.querySelector(".vimium-hint-layer")).toBeNull();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "i", "j", "x"]);
+    await eventually(() => expect(markers()).toEqual(["f", "n", "j", "x"]));
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]')!;
+    search.focus();
+    expect(pressKey("i", search)).toBe(true);
+    expect(document.activeElement).toBe(search);
+    expect(markers()).toEqual([]);
 
     void dispose();
     controller.abort();
   });
 
-  test("the provider dialog numbers tabs and gives search plus choices single keys", async () => {
+  test("the provider dialog numbers tabs and gives Fast mode plus choices single keys", async () => {
     const controller = newController();
     const dispose = mountLinkHints(contextWith(controller.signal));
 
@@ -517,16 +543,20 @@ describe("mountLinkHints", () => {
       '<div data-app-composer><button id="model" aria-label="Provider, model and reasoning" aria-haspopup="dialog">Model</button></div>';
     const trigger = document.getElementById("model") as HTMLElement;
     giveRect(trigger, 10, 10);
+    let fastToggles = 0;
     trigger.addEventListener("click", () => {
       const dialog = document.createElement("div");
       dialog.id = "model-dialog";
       dialog.setAttribute("role", "dialog");
       dialog.innerHTML =
-        '<button id="codex">Codex</button><button id="claude">Claude</button>' +
+        '<div><button id="codex">Codex</button><button id="claude">Claude</button></div>' +
         '<div class="overflow-y-auto"><input id="model-search" placeholder="Search models">' +
         '<button id="sol">Sol</button><button id="terra">Terra</button>' +
         '<button id="none">none</button><button id="high">high</button>' +
-        '<button id="fast" role="switch">Fast mode</button></div>';
+        '<button id="fast" role="switch" aria-label="Fast mode">Fast mode</button></div>';
+      dialog.querySelector("#fast")?.addEventListener("click", () => {
+        fastToggles += 1;
+      });
       document.body.appendChild(dialog);
       for (const [index, target] of [
         ...dialog.querySelectorAll<HTMLElement>("button,input"),
@@ -538,12 +568,65 @@ describe("mountLinkHints", () => {
 
     pressKey("f");
     pressKey("m");
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["1", "2", "i", "f", "j", "d", "k", "qs"]);
+    await eventually(() => expect(markers()).toEqual(["1", "2", "f", "j", "d", "k", "t"]));
+
+    pressKey("t");
+    expect(fastToggles).toBe(1);
+    await eventually(() => expect(markers()).toEqual(["1", "2", "f", "j", "d", "k", "t"]));
 
     pressKey("i");
-    expect((document.activeElement as HTMLElement).id).toBe("model-search");
+    expect((document.activeElement as HTMLElement).id).not.toBe("model-search");
     expect(document.querySelector(".vimium-hint-layer")).toBeNull();
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("Escape dismisses model and project pickers along with their scoped hints", async () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+
+    for (const picker of [
+      {
+        key: "m",
+        trigger:
+          '<button id="trigger" aria-label="Provider, model and reasoning" aria-haspopup="dialog">Model</button>',
+        role: "dialog",
+        search: "Search models",
+      },
+      {
+        key: "p",
+        trigger:
+          '<button id="trigger" data-promptbox-project-control aria-haspopup="menu">Project</button>',
+        role: "menu",
+        search: "Search projects",
+      },
+    ]) {
+      document.body.innerHTML = `<div data-app-composer>${picker.trigger}</div>`;
+      const trigger = document.getElementById("trigger") as HTMLElement;
+      giveRect(trigger, 10, 10);
+      trigger.addEventListener("click", () => {
+        const popup = document.createElement("div");
+        popup.id = "picker";
+        popup.setAttribute("role", picker.role);
+        popup.innerHTML = `<input aria-label="${picker.search}"><button>Choice</button>`;
+        document.body.appendChild(popup);
+        giveRect(popup.querySelector("button") as HTMLElement, 10, 40);
+        trigger.setAttribute("aria-controls", popup.id);
+        popup.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") popup.remove();
+        });
+      });
+
+      pressKey(picker.key);
+      await eventually(() => expect(markers()).not.toEqual([]));
+      const popup = document.getElementById("picker") as HTMLElement;
+      const search = popup.querySelector("input") as HTMLInputElement;
+      search.focus();
+      expect(pressKey("Escape", search)).toBe(true);
+      expect(popup.isConnected).toBe(false);
+      expect(markers()).toEqual([]);
+    }
 
     void dispose();
     controller.abort();
@@ -563,8 +646,7 @@ describe("mountLinkHints", () => {
 
     pressKey("f");
     pressKey("k");
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["a", "s", "d", "f", "g", "h"]);
+    await eventually(() => expect(markers()).toEqual(["a", "s", "d", "f", "g", "h"]));
 
     void dispose();
     controller.abort();
@@ -699,9 +781,7 @@ describe("mountLinkHints", () => {
     pressKey("d");
     expect(markers()).toEqual([]);
 
-    // The reprompt polls on a 60ms timer, so give it two ticks.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
 
     pressKey("j");
     expect(picked).toEqual(["Luna"]);
@@ -723,16 +803,14 @@ describe("mountLinkHints", () => {
     pressKey("f");
     pressKey("d");
     pressKey("d");
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
 
     // The chord is swallowed at once, then the dismissal poll gives up on the
     // Escape-deaf test menu (~8 ticks of 60ms) and prompts over it anyway:
     // trigger plus both menu items, with general labels.
     const propagated = pressKey("F", window, { code: "KeyF", metaKey: true, shiftKey: true });
     expect(propagated).toBe(false);
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(markers()).toEqual(["dd", "df", "dw"]);
+    await eventually(() => expect(markers()).toEqual(["dd", "df", "dw"]));
 
     void dispose();
     controller.abort();
@@ -761,8 +839,7 @@ describe("mountLinkHints", () => {
 
     pressKey("F", window, { code: "KeyF", metaKey: true, shiftKey: true });
     expect(markers()).toEqual([]);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(markers()).toEqual(["dd"]);
+    await eventually(() => expect(markers()).toEqual(["dd"]));
 
     void dispose();
     controller.abort();
@@ -781,8 +858,7 @@ describe("mountLinkHints", () => {
     pressKey("f");
     pressKey("d");
     pressKey("d");
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
 
     pressKey("f");
     expect(picked).toEqual(["Sol"]);
@@ -790,8 +866,7 @@ describe("mountLinkHints", () => {
 
     // The after-pick poll waits ~6 ticks of 80ms for the popup to close, then
     // follows it with a fresh scoped prompt.
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
 
     void dispose();
     controller.abort();
@@ -809,13 +884,11 @@ describe("mountLinkHints", () => {
     pressKey("f");
     pressKey("d");
     pressKey("d");
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
 
     document.getElementById("trigger-menu")?.remove();
     // The popup watcher polls on a 100ms timer.
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(document.querySelector(".vimium-hint-layer")).toBeNull();
+    await eventually(() => expect(document.querySelector(".vimium-hint-layer")).toBeNull());
 
     void dispose();
     controller.abort();
@@ -840,15 +913,13 @@ describe("mountLinkHints", () => {
     pressKey("f");
     pressKey("d");
     pressKey("d");
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
 
     pressKey("f");
     expect(picked).toEqual(["Sol"]);
     // The refocus poll waits for the menu to close, then claims focus on the
     // next 80ms tick.
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(focusCalls).toBeGreaterThanOrEqual(1);
+    await eventually(() => expect(focusCalls).toBeGreaterThanOrEqual(1));
 
     void dispose();
     controller.abort();
@@ -882,8 +953,7 @@ describe("mountLinkHints", () => {
     expect(document.querySelector(".vimium-hint-layer")).toBeNull();
 
     expect(pressKey("m")).toBe(false);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(markers()).toEqual(["f", "j"]);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
     pressKey("j");
     expect(picked).toEqual(["Luna"]);
 
@@ -893,6 +963,187 @@ describe("mountLinkHints", () => {
     expect(pressKey("m", editor)).toBe(true);
     expect(clicked).toEqual(["new-thread", "settings"]);
     expect(picked).toEqual(["Luna"]);
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("s uses BB's visible search button when the sidebar provides one", () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML = '<button aria-label="Search threads" id="search">Search</button>';
+    const search = document.getElementById("search") as HTMLElement;
+    giveRect(search, 10, 10);
+    let clicks = 0;
+    search.addEventListener("click", () => {
+      clicks += 1;
+    });
+
+    expect(pressKey("s")).toBe(false);
+    expect(clicks).toBe(1);
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("n and s find BB's navigation rows by item id when their shortcut is unbound", () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    // BB 0.44's Navigation plugin drops the aria-label without a shortcut, and
+    // nests each row's options button one level deeper than the row button.
+    document.body.innerHTML =
+      '<div data-sidebar-navigation-item="__bb__/new-thread"><button id="new-thread">New thread</button>' +
+      '<div><button id="new-thread-options" aria-label="New thread options">…</button></div></div>' +
+      '<div data-sidebar-navigation-item="__bb__/search-threads"><button id="search">Search threads</button>' +
+      '<div><button id="search-options" aria-label="Search threads options">…</button></div></div>';
+    const clicked: string[] = [];
+    for (const [index, id] of [
+      "new-thread-options",
+      "new-thread",
+      "search-options",
+      "search",
+    ].entries()) {
+      const element = document.getElementById(id) as HTMLElement;
+      giveRect(element, 10, 10 + index * 30);
+      element.addEventListener("click", () => clicked.push(id));
+    }
+
+    expect(pressKey("n")).toBe(false);
+    expect(pressKey("s")).toBe(false);
+    expect(clicked).toEqual(["new-thread", "search"]);
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("s never picks the Search threads row's options button", () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    // BB 0.44 disables the row while thread.search is unavailable and keeps
+    // the options button, labeled "Search threads options", always visible
+    // on coarse-pointer devices.
+    document.body.innerHTML =
+      '<div data-sidebar-navigation-item="__bb__/search-threads"><button id="search" disabled>Search threads</button>' +
+      '<div><button id="search-options" aria-label="Search threads options">…</button></div></div>';
+    const clicked: string[] = [];
+    for (const [index, id] of ["search", "search-options"].entries()) {
+      const element = document.getElementById(id) as HTMLElement;
+      giveRect(element, 10, 10 + index * 30);
+      element.addEventListener("click", () => clicked.push(id));
+    }
+
+    expect(pressKey("s")).toBe(true);
+    expect(clicked).toEqual([]);
+    pressKey("f");
+    expect(markers()).toEqual(["dd"]);
+    pressKey("Escape");
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("Cmd+F leaves hint mode and reaches BB's find in window", () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML = '<button id="only">Only</button>';
+    giveRect(document.getElementById("only") as HTMLElement, 10, 10);
+
+    pressKey("f");
+    expect(markers()).toEqual(["dd"]);
+    expect(pressKey("f", window, { code: "KeyF", metaKey: true })).toBe(true);
+    expect(document.querySelector(".vimium-hint-layer")).toBeNull();
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("s opens Search threads through the Quick palette when GTD omits the button", async () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML =
+      '<div data-app-composer><div id="composer" role="textbox"></div></div>';
+    let paletteOpens = 0;
+    let searchOpens = 0;
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key !== "k" || (!event.metaKey && !event.ctrlKey)) return;
+        event.preventDefault();
+        paletteOpens += 1;
+        const dialog = document.createElement("div");
+        dialog.setAttribute("role", "dialog");
+        dialog.innerHTML =
+          '<input aria-label="Search commands" />' +
+          '<div role="option" data-palette-action-kind="drill-in">Search threads…</div>';
+        document.body.appendChild(dialog);
+        const option = dialog.querySelector<HTMLElement>('[role="option"]')!;
+        giveRect(option, 10, 10);
+        option.addEventListener("click", () => {
+          searchOpens += 1;
+        });
+      },
+      { signal: controller.signal },
+    );
+
+    expect(pressKey("s", document.getElementById("composer") as HTMLElement)).toBe(true);
+    expect(paletteOpens).toBe(0);
+    expect(pressKey("s")).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(paletteOpens).toBe(1);
+    expect(searchOpens).toBe(1);
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("model picker gives provider tabs digits and reasoning radios choice keys", async () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML =
+      '<div data-app-composer><button id="model" aria-label="Provider, model and reasoning" aria-haspopup="dialog">Model</button></div>';
+    const trigger = document.getElementById("model") as HTMLElement;
+    giveRect(trigger, 10, 10);
+    trigger.addEventListener("click", () => {
+      const dialog = document.createElement("div");
+      dialog.id = "model-popup";
+      dialog.setAttribute("role", "dialog");
+      dialog.innerHTML =
+        '<div id="provider-tabs"><button id="provider-codex">Codex</button>' +
+        '<button id="provider-claude">Claude Code</button></div>' +
+        '<input id="model-search" aria-label="Search models" />' +
+        '<div class="overflow-y-auto"><button id="model-option" role="option">Sol</button></div>' +
+        '<div role="radiogroup" tabindex="0"><button id="reasoning-low" role="radio">Low</button>' +
+        '<button id="reasoning-high" role="radio">High</button></div>';
+      document.body.appendChild(dialog);
+      for (const [index, element] of [
+        ...dialog.querySelectorAll<HTMLElement>("button, input"),
+      ].entries()) {
+        giveRect(element, 10, 40 + index * 30);
+      }
+      trigger.setAttribute("aria-controls", dialog.id);
+    });
+
+    expect(pressKey("m")).toBe(false);
+    await eventually(() => expect(markers()).toEqual(["1", "2", "f", "j", "d"]));
+
+    void dispose();
+    controller.abort();
+  });
+
+  test("l opens the renamed Machine control", async () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML =
+      '<div data-app-composer><button id="machine" aria-label="Machine" aria-haspopup="menu">Personal Mac</button></div>';
+    const machine = document.getElementById("machine") as HTMLElement;
+    giveRect(machine, 10, 10);
+    const picked: string[] = [];
+    installMenuTrigger(machine, picked);
+
+    expect(pressKey("l")).toBe(false);
+    await eventually(() => expect(markers()).toEqual(["f", "j"]));
+    pressKey("f");
+    expect(picked).toEqual(["Sol"]);
 
     void dispose();
     controller.abort();
@@ -947,6 +1198,62 @@ describe("mountLinkHints", () => {
     pressKey("]");
     pressKey("[");
     expect(clicked).toEqual(["t3", "t1", "t1", "t1", "t3"]);
+
+    window.history.pushState({}, "", "/");
+    void dispose();
+    controller.abort();
+  });
+
+  test("thread stepping includes BB's unmounted sidebar rows in list order", () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML =
+      '<a data-sidebar-thread-id="thr_1" data-sidebar-thread-shortcut-target href="#">One</a>' +
+      '<div data-sidebar-windowed-nav="thr_2:proj_a thr_3:proj_a"></div>' +
+      '<a data-sidebar-thread-id="thr_4" data-sidebar-thread-shortcut-target href="#">Four</a>';
+    const opened: string[] = [];
+    setWindowedThreadOpener((id) => opened.push(id));
+
+    window.history.pushState({}, "", "/threads/thr_1");
+    expect(pressKey("]")).toBe(false);
+    expect(opened).toEqual(["thr_2"]);
+    window.history.pushState({}, "", "/threads/thr_3");
+    expect(pressKey("[")).toBe(false);
+    expect(opened).toEqual(["thr_2", "thr_2"]);
+
+    // Without the SDK bridge, the key falls through instead of claiming a
+    // navigation that cannot happen.
+    setWindowedThreadOpener(null);
+    window.history.pushState({}, "", "/threads/thr_1");
+    expect(pressKey("]")).toBe(true);
+    expect(opened).toEqual(["thr_2", "thr_2"]);
+
+    window.history.pushState({}, "", "/");
+    void dispose();
+    controller.abort();
+  });
+
+  test("thread stepping skips rows listed in the sidebar's overflow popover", () => {
+    const controller = newController();
+    const dispose = mountLinkHints(contextWith(controller.signal));
+    document.body.innerHTML =
+      '<a id="t1" data-sidebar-thread-shortcut-target data-sidebar-thread-id="thr_1" href="#">One</a>' +
+      '<div data-sidebar-overflow="true">' +
+      '<a id="hidden" data-sidebar-thread-shortcut-target data-sidebar-thread-id="thr_hidden" href="#">Hidden</a></div>' +
+      '<a id="t2" data-sidebar-thread-shortcut-target data-sidebar-thread-id="thr_2" href="#">Two</a>';
+    const clicked: string[] = [];
+    for (const id of ["t1", "hidden", "t2"]) {
+      document.getElementById(id)?.addEventListener("click", (event) => {
+        event.preventDefault();
+        clicked.push(id);
+      });
+    }
+
+    window.history.pushState({}, "", "/threads/thr_1");
+    expect(pressKey("]")).toBe(false);
+    window.history.pushState({}, "", "/threads/thr_2");
+    expect(pressKey("[")).toBe(false);
+    expect(clicked).toEqual(["t2", "t1"]);
 
     window.history.pushState({}, "", "/");
     void dispose();

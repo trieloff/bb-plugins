@@ -15,8 +15,9 @@ MIT License, Copyright (c) 2026 Michael Yong.
 | What                                                                                                                         | Where it ships                                  |
 | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | The whole plugin, forked from `examples/plugins/t3sidebar` at commit `f13c2d35f96540012b305f3b555839b30e1b6163` (2026-08-07) | `dist/app.js`, `dist/server.js`, `dist/app.css` |
-| Codex structured-inference transport from `plugins/provider-codex/src/ai`                                                    | `dist/host.js`                                  |
-| Provider brand-mark geometry, lifted from bb's own icon components                                                           | `dist/app.js`                                   |
+| Codex inference transport, `plugins/provider-codex/src/ai` at `desktop-v0.44.0` (`0baa605b32a0`), unmodified                 | `dist/host.js`                                  |
+| Inline thread rename from `plugins/thread-list/app/rows/SidebarInlineRename.tsx` at `desktop-v0.44.0` (`0baa605b32a0`)       | `dist/app.js`                                   |
+| `use-compact-viewport` and `use-media-query` from bb's plugin component registry at `desktop-v0.44.0`                        | `dist/app.js`                                   |
 | shadcn/ui-derived components, vendored through bb's plugin component registry                                                | `dist/app.js`                                   |
 
 Source: <https://github.com/get-bb/bb>
@@ -91,6 +92,17 @@ Source: <https://github.com/uidotdev/usehooks>
 
 ---
 
+## @samasante/liquid-glass
+
+MIT License, Copyright (c) Sam Asante.
+
+`Glass` frosts and refracts the thread menus. The menu optics follow its
+`GlassContextMenu` example. Compiled into `dist/app.js`.
+
+Source: <https://github.com/samasante/liquid-glass>
+
+---
+
 ## Not shipped here
 
 React, `clsx`, `tailwind-merge`, `@radix-ui/react-select`,
@@ -102,14 +114,13 @@ licences travel with bb, not with this plugin.
 
 ## Trademarks and brand marks
 
-The provider glyphs drawn from `lib/provider-marks.ts` depict third-party brands:
-OpenAI, Claude, Pi, Cursor, Grok Build, Hermes Agent, opencode and oh-my-pi. Each mark
+The provider icons depict third-party brands. bb draws them through
+`experimental_ProviderIcon`; this package ships none of their artwork. Each mark
 belongs to its owner.
 
 **No licence above grants trademark rights**, and none is claimed here. The marks
-identify the agent a user has chosen to run, which is nominative use. A host-served
-logo always takes precedence over the vendored geometry and is drawn as a muted
-silhouette rather than in brand color.
+identify the agent a user has chosen to run, which is nominative use. They are drawn
+in one muted tint rather than in brand color.
 
 ---
 

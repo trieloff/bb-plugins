@@ -8,26 +8,28 @@ import {
 } from "react";
 import {
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
+  useSidebarThreadShortcut,
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
-import { Icon } from "@/components/ui/icon";
-import { cn } from "@/lib/utils";
-import { RowContextMenu } from "@/components/inbox/row-context-menu";
-import { LIST_HOVER_TRANSITION } from "@/components/inbox/row-motion";
-import { CompactThreadActionMenu } from "@/components/inbox/thread-action-menu";
+import { Icon } from "../ui/icon";
+import { cn } from "../../lib/utils";
+import { RowContextMenu } from "./row-context-menu";
+import { useThreadRename } from "./inline-rename";
+import { LIST_HOVER_TRANSITION } from "./row-motion";
+import { CompactThreadActionMenu } from "./thread-action-menu";
 import {
   buildThreadActionPlan,
   findThreadAction,
   type DispatchRowCommand,
   type ThreadAction,
-} from "@/components/inbox/thread-actions";
-import { STATUS_SLOT_CLASS, StatusOrTime } from "@/components/inbox/status-slot";
-import { FadingText, HostLead, ThreadDetails } from "@/components/inbox/thread-details";
-import type { ProviderGlyphInfo } from "@/components/inbox/provider-glyph";
-import { threadDisplayTitle } from "@/lib/inbox";
-import { snoozeWakeLabel } from "@/lib/lifecycle";
-import { useIosLongPress } from "@/hooks/use-ios-long-press";
-import { useCommittedEvent } from "@/hooks/use-committed-event";
+} from "./thread-actions";
+import { STATUS_SLOT_CLASS, ShortcutPill, StatusOrTime } from "./status-slot";
+import { FadingText, HostLead, ThreadDetails } from "./thread-details";
+import type { ProviderGlyphInfo } from "./provider-glyph";
+import { snoozeWakeLabel } from "../../lib/lifecycle";
+import { useIosLongPress } from "../../hooks/use-ios-long-press";
+import { useCommittedEvent } from "../../hooks/use-committed-event";
+import { ThreadHierarchy } from "./thread-card";
 
 interface SlimRowProps {
   thread: PluginSidebarThread;
@@ -42,6 +44,12 @@ interface SlimRowProps {
   now: number;
   isCompactViewport: boolean;
   command: DispatchRowCommand;
+  depth: number;
+  childCount: number;
+  expanded: boolean;
+  guides: string;
+  lastChild: boolean;
+  toggleThread: (threadId: string) => void;
 }
 
 export const SlimRow = memo(function SlimRow(props: SlimRowProps) {
@@ -77,11 +85,18 @@ const SlimRowBody = memo(function SlimRowBody({
   now,
   isCompactViewport,
   command,
+  depth,
+  childCount,
+  expanded,
+  guides,
+  lastChild,
+  toggleThread,
   onSplitPointerDown,
 }: SlimRowProps & {
   onSplitPointerDown?: (event: PointerEvent<HTMLElement>) => void;
 }) {
-  const title = threadDisplayTitle(thread);
+  const title = thread.displayTitle;
+  const rename = useThreadRename(thread.id, title);
   const onRestore = () => command({ kind: "restore", threadId: thread.id, shelf });
   const plan = buildThreadActionPlan({
     lifecycle:
@@ -100,14 +115,21 @@ const SlimRowBody = memo(function SlimRowBody({
   });
 
   const compact = compactThreads && !isCompactViewport;
+  const shortcut = useSidebarThreadShortcut(thread.id);
   const { rowClassName, rowStyle, titleClassName } = slimRowPresentation({
     isCompactViewport,
     isActive,
     compact,
     isPressing,
     isMenuOpen,
+    depth,
+    childCount,
   });
-  const status = <SlimRowStatusLabel thread={thread} shelf={shelf} wakeAt={wakeAt} now={now} />;
+  const status = shortcut ? (
+    <ShortcutPill shortcut={shortcut} />
+  ) : (
+    <SlimRowStatusLabel thread={thread} shelf={shelf} wakeAt={wakeAt} now={now} />
+  );
   const highlightContent = (
     <div className="flex h-full items-center gap-2 px-2.5 text-xs">
       <span
@@ -123,15 +145,33 @@ const SlimRowBody = memo(function SlimRowBody({
   );
 
   return (
-    <RowContextMenu thread={thread} command={command} plan={plan} disabled={isCompactViewport}>
+    <RowContextMenu
+      thread={thread}
+      command={command}
+      plan={plan}
+      rename={rename}
+      disabled={isCompactViewport}
+    >
       <li className="list-none">
         <div
           ref={rowRef}
+          data-sidebar-rename-row=""
           {...handlers}
           data-action-count={isCompactViewport ? 0 : 1}
           className={rowClassName}
           style={rowStyle}
         >
+          <ThreadHierarchy
+            threadId={thread.id}
+            title={title}
+            depth={depth}
+            childCount={childCount}
+            expanded={expanded}
+            guides={guides}
+            lastChild={lastChild}
+            mobile={isCompactViewport}
+            toggleThread={toggleThread}
+          />
           <ThreadDetails
             thread={thread}
             projectName={projectName}
@@ -146,11 +186,15 @@ const SlimRowBody = memo(function SlimRowBody({
               onPointerDown={onSplitPointerDown}
               data-sidebar-thread-shortcut-target=""
               data-sidebar-thread-id={thread.id}
+              data-sidebar-rename-anchor=""
               href="#"
               aria-label={title}
+              aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
+              onDoubleClick={rename.onDoubleClick}
               onClick={(event) => {
                 if (event.button !== 0) return;
                 event.preventDefault();
+                if (rename.isEditing) return;
                 command({
                   kind: "open",
                   threadId: thread.id,
@@ -162,17 +206,31 @@ const SlimRowBody = memo(function SlimRowBody({
             />
           </ThreadDetails>
           <HostLead host={thread.host} />
-          <span
-            data-gtd-naming={isNaming || undefined}
-            aria-busy={isNaming || undefined}
-            className={cn(
-              "pointer-events-none relative min-w-0 flex-1 truncate",
-              titleClassName,
-              "group-hover/slim:text-foreground",
-            )}
-          >
-            {isCompactViewport ? title : <FadingText text={title} />}
-          </span>
+          {rename.isEditing ? (
+            // The title's classes minus the click-through and the clip, which
+            // would hide the editor's error below the row.
+            <span
+              className={cn(
+                "relative z-10 min-w-0 flex-1",
+                titleClassName,
+                "group-hover/slim:text-foreground",
+              )}
+            >
+              {rename.editor}
+            </span>
+          ) : (
+            <span
+              data-gtd-naming={isNaming || undefined}
+              aria-busy={isNaming || undefined}
+              className={cn(
+                "pointer-events-none relative min-w-0 flex-1 truncate",
+                titleClassName,
+                "group-hover/slim:text-foreground",
+              )}
+            >
+              {isCompactViewport ? title : <FadingText text={title} />}
+            </span>
+          )}
           <SlimRowStatus
             status={status}
             shelf={shelf}
@@ -200,15 +258,25 @@ function slimRowPresentation({
   compact,
   isPressing,
   isMenuOpen,
-}: Pick<SlimRowProps, "isCompactViewport" | "isActive"> & {
+  depth,
+  childCount,
+}: Pick<SlimRowProps, "isCompactViewport" | "isActive" | "depth" | "childCount"> & {
   compact: boolean;
   isPressing: boolean;
   isMenuOpen: boolean;
 }) {
   return {
-    rowStyle: (isCompactViewport
-      ? { paddingLeft: "calc(22px + var(--gtd-leaf-group-indent, 0px))" }
-      : undefined) as CSSProperties | undefined,
+    rowStyle: {
+      "--gtd-depth": depth,
+      ...(isCompactViewport
+        ? {
+            paddingLeft:
+              depth > 0 || childCount > 0
+                ? `calc(40px + var(--gtd-group-indent, 0px) + ${depth} * var(--gtd-depth-step, 8px))`
+                : "calc(22px + var(--gtd-leaf-group-indent, 0px))",
+          }
+        : {}),
+    } as CSSProperties,
     rowClassName: cn(
       "group/slim relative flex items-center gap-1.5 rounded-xl px-2.5 text-xs",
       !isCompactViewport && "gtd-thread-row gtd-parked-row",

@@ -40,6 +40,9 @@
  *      sets on the tree host. Those already point at our tokens, so tree
  *      background, foreground, border, hover, selection and focus ring track
  *      this palette automatically.
+ *   7. The desktop Cmd+F find bar (bb 0.44). Electron draws it in its own
+ *      WebContentsView from a data: URL with inline system colours, outside
+ *      this document.
  */
 
 /* BB keeps the right-panel diff disclosure outside Pierre's shadow tree.
@@ -48,7 +51,8 @@
  * Color stays on this theme's surface, ink, state, and feedback roles. */
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .overflow-clip.rounded-lg.border.border-border.bg-background:has(
     > .h-0 + .rounded-lg.bg-background button[aria-expanded]
@@ -61,7 +65,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
   min-height: 44px;
@@ -78,7 +83,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   > .flex {
@@ -88,7 +94,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   > .flex
@@ -98,7 +105,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   button[aria-expanded] {
@@ -116,7 +124,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   button[aria-expanded]
@@ -128,7 +137,8 @@
 @media (hover: hover) {
   .dark
     :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-      [data-testid="git-diff-toolbar-layout"]
+      [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
     )
     .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
     button[aria-expanded]:hover {
@@ -139,7 +149,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   button[aria-expanded]
@@ -150,7 +161,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   .font-mono {
@@ -162,7 +174,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   button[aria-expanded]
@@ -181,7 +194,8 @@
 @media (hover: hover) {
   .dark
     :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-      [data-testid="git-diff-toolbar-layout"]
+      [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
     )
     .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
     button[aria-expanded]
@@ -194,7 +208,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   > .flex
@@ -206,7 +221,8 @@
 
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
   > .flex
@@ -1351,7 +1367,8 @@ diffs-container {
 .dark .smart-embed-path,
 .dark
   :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"]
+    [data-testid="git-diff-toolbar-layout"],
+    [data-monokai-diff-surface]
   )
   .bg-background:has(> .flex > span > button[aria-expanded])
   .font-mono {
@@ -1370,6 +1387,26 @@ diffs-container {
   --canvas-prose-quote-rule: {{code.keyword}};
   --canvas-prose-rule: var(--border-hairline);
   --canvas-prose-code-well: var(--accent);
+}
+
+/* Plugin marketplace category icons are decoration, not feedback. bb tints
+ * each category with a feedback or accent token (Security amber, Agents green,
+ * Code & Reviews purple), which gives those hues a second meaning. Paint them
+ * on the ladder like the neighbouring BB Official and New & notable shelf
+ * icons. bb sets the colour inline as `color-mix(in oklab, var(<token>) 75%,
+ * var(--ink))`, so only `!important` outranks it. That mix is unique to
+ * `PluginCategoryIcon` (bb 0.44 plugin-ui.tsx), which keeps the hook scoped.
+ * Every `Icon` render path (built-in svg, custom component span, asset span)
+ * carries `data-icon-root`, so match on that rather than the tag. The shelf
+ * row and title are muted text with foreground sibling icons, so the icon
+ * cannot simply inherit there. On the plugin detail page the icon sits inside
+ * the subtle byline (detail-sections.tsx), where it follows the text beside it. */
+.dark [data-icon-root][style*="75%, var(--ink))"] {
+  color: var(--foreground) !important;
+}
+
+.dark .text-subtle-foreground [data-icon-root][style*="75%, var(--ink))"] {
+  color: inherit !important;
 }
 
 /* bb's notification history is a first-class themed surface, separate from

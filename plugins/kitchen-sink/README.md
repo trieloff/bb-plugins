@@ -19,36 +19,19 @@ bb's `/` menu lists skills, so each composer command ships as a skill under `ski
 
 Kitchen Sink also supplies the official Devin icon for the `acp-devin` agent provider.
 
-| Command    | What the agent does                                                                                                  |
-| ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| `/ship-it` | Sends “Ship it”.                                                                                                     |
-| `/sync`    | Rebases the workspace onto the latest target branch and resolves every conflict by reading the intent of both sides. |
+| Command       | What the agent does                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/ship-it`    | Sends “Ship it”.                                                                                                     |
+| `/sync`       | Rebases the workspace onto the latest target branch and resolves every conflict by reading the intent of both sides. |
+| `/whiteboard` | Creates a Whiteboard for the request, then opens it in Whiteboard.                                                   |
 
 `/sync` detects GitButler with `but status` and routes every write through the `gitbutler` skill when it succeeds. Plain Git repositories use `git` and `gh`.
 
-## Autorouter
-
-Enable Autorouter in Kitchen Sink settings, then use the branching-arrow button
-beside voice input to pause it for one composer. Blue means active, muted means
-paused. The control is hidden when disabled globally or ineligible, including
-Anthropic follow-ups. The model/reasoning selector shimmers yellow while routing.
-
-Project and model routing have separate switches. Each model and reasoning level
-has an enable switch and editable guidance, alongside a general rule and fallback.
-Defaults enable Astra low/medium/high/xhigh/ultra, Luna Max, Fable high/xhigh/ultra,
-and Opus high/xhigh. Opus is eligible only while BB reports Fable usage exhausted.
-Follow-ups can change Astra reasoning or escalate Luna Max to Astra. They cannot
-route to Luna or switch providers.
-
-One Luna Medium inference runs before native Send or Enter. Agent guidance uses
-BB subthreads for command execution, specialized UI work, and independent review.
-Run `/index-projects` to build the editable repository index from `~/git`.
-See the [autorouter integration contract](src/server/lib/autorouter/README.md)
-for fallback behavior, session timing, and the approved native-picker integration.
-
 ## Thread motion
 
-Kitchen Sink fades thread switches and smooths automatic timeline scrolling. See
+Kitchen Sink fades thread switches and smooths automatic timeline scrolling. A
+"Jump to latest event" palette command (Mod+Shift+J) scrolls the current thread
+to its live tail. See
 [thread switching and scrolling](src/app/timeline-motion/README.md) for behavior and limitations.
 
 ## Smart Embeds
@@ -78,29 +61,33 @@ Missing recorded turn patches, missing commits, truncated input, ambiguous repea
 
 Recorded changes still appear automatically in Last Turn, including the Unity before/after inspector. Smart Code continues to show current Unity values. Clicking a citation filename opens the workspace file.
 
+### Before/after images
+
+`::smart-image-compare{before=".scratch/before.png" after=".scratch/after.png" beforeLabel="Original" afterLabel="Updated"}` renders an image comparison using [React Compare Slider](https://react-compare-slider.js.org/?path=/story/demos--images). Drag the divider, or focus it and use arrow keys. Labels overlay the image corners and default to Before and After.
+
+Images accept workspace-relative paths or HTTP(S) URLs. Add `source="thread-storage"` for paths relative to the owning thread's storage. Match both images' pixel dimensions, crop, scale, and subject alignment before embedding. UI captures should use the same viewport, device pixel ratio, zoom, and scroll position. The viewer preserves whole images and warns about unequal dimensions, but cannot align subjects automatically. Keep labels in the directive, not baked into the images.
+
+Add `annotations='[{"x":72,"y":38,"label":"Background removed","side":"after"}]'` for numbered callout pins. Coordinates are percentages from the image's top-left, and `side` is `before`, `after`, or `both` (default). Click or keyboard-activate a pin to read its text. Pins move with their image and are clipped by the divider. Opened callout text remains readable in a bottom overlay. Up to 50 unique callouts are supported.
+
 ## Inline visualizations
 
-`::inline-vis{file="demo.html"}` renders a workspace-relative HTML file directly in an assistant message, and `::inline-vis{file="notes.md"}` renders a Markdown document with bb's own Markdown renderer (raw HTML disabled). An optional `height="480"` sets a 120–1200 pixel viewport. The default is 224 pixels.
+`::inline-vis{file="/absolute/path/demo.html"}` renders HTML directly in an assistant message. `.md` and `.markdown` files use bb's Markdown renderer with sanitized HTML. An optional `height="480"` sets a 120–1200 pixel viewport. The default is 224 pixels.
 
-The optional `source` attribute selects where `file` lives. Omitting it or passing `source="workspace"` reads the thread workspace. `::inline-vis{source="thread-storage" file="reports/result.html"}` reads a read-only artifact from the thread's storage directory (`$BB_THREAD_STORAGE`) without resolving the workspace. Thread-storage previews omit the "open in workspace" header action because bb's workspace viewer cannot open them.
+`file` is an absolute path on the thread's host. There is no `source` attribute or relative-path fallback. Files can live in the workspace, thread storage, or any other readable directory. Expand `$BB_THREAD_STORAGE` before emitting a directive. Existing relative directives must be updated.
 
-Markdown links and images resolve relative to the document's directory in its source. For `reports/report.md`, `[Notes](notes.md)` and `![Chart](chart.svg)` refer to files under `reports/` in the same source.
+The plugin reads through the SDK and leases the document's directory for asset access. Static sibling `img[src]`, `video[src]`, and video `source[src]` files are fetched by the authenticated app and transferred as Blobs into the opaque iframe. Nested directories work. Parent-directory escapes and symlinks outside the document's directory fail. Markdown destinations resolve from the same directory. Links outside it remain as written and do not prevent the report from rendering. Keep HTML styles and scripts self-contained or use remote URLs.
 
-Only the last two inline visualizations in a thread's rendered conversation open automatically. Older previews stay collapsed without preparing or loading their HTML. Expand or collapse any preview from its header. Manual choices last while that directive is mounted and override the automatic default, including when a new preview arrives. Collapsing unloads the iframe, so reopening resets its interactive state.
+HTML runs with `sandbox="allow-scripts"`, without app cookies or storage access. The document limit is 5 MiB. Separate media use the host file API's limits (25 MiB for video and 10 MiB for raster images on BB 0.43.3). Remote URLs retain normal browser policies. Dynamically assigned local assets are not rewritten.
 
-Ordering uses the plugin's own card elements in document order, not registration timing or filenames. This keeps prepended history and repeated directives ordered correctly without depending on private bb DOM selectors. The SDK does not expose an ordinal for each directive, so the default applies to currently rendered directives, not unloaded timeline pages.
+For example, `/tmp/demo/player.html` can contain `<video controls src="./clip.mp4"></video>` beside `/tmp/demo/clip.mp4`. Emit `::inline-vis{file="/tmp/demo/player.html" height="400"}`. Keep both files in place.
 
-Disable the standalone `inline-vis` plugin before enabling this renderer. bb leaves a directive literal when two plugins claim the same `inline-vis` message directive.
+Only the last two previews per thread open automatically. The last collapse or expand choice is remembered on the client: after collapsing a preview, new previews stay collapsed until one is expanded. Collapsing unloads the preview. Reopening rereads the file. Open previews keep their state when the one-hour lease expires. Collapse and reopen to obtain a fresh lease for local links. The header opens the absolute file through the SDK host viewer.
 
-The server accepts `.html`, `.htm`, `.md`, and `.markdown` documents up to 5 MiB and verifies the file through bb's root-confined file API against the selected source root (workspace path or `threads.storageLocation`). Static relative `video[src]` and `video source[src]` references resolve against the HTML directory. The app fetches those videos from the existing authenticated thread worktree or thread-storage route, which selects the owning host and enforces symlink containment. It sends the resulting Blobs to the opaque iframe through a one-time, document-specific handshake. The iframe creates and releases its own Blob URLs. This supports remote clients without exposing app credentials or placing video bytes inside the HTML.
+Keep preview files in a dedicated directory such as `.scratch/demo/`; the SDK lease covers that directory and its children. Markdown previews sanitize raw HTML, and local paths inside raw HTML do not resolve from the preview directory. Use `![Label](image.png)` for local images, or an HTML preview for explicit sizing or local video.
 
-For example, `.scratch/demo/player.html` can contain `<video controls src="./clip.mp4"></video>` beside `.scratch/demo/clip.mp4`. Emit `::inline-vis{file=".scratch/demo/player.html" height="400"}`. No base64 conversion is needed.
+bb leaves a directive literal when two plugins claim the same directive, so a fresh Kitchen Sink install disables bb's built-in `inline-vis` plugin once. Updates and reloads leave that choice alone. Re-enabling the built-in makes `::inline-vis` render as plain text. Removing Kitchen Sink does not re-enable it; run `bb plugin enable inline-vis` to get bb's renderer back.
 
-**Current limits (BB 0.42.1):** HTML remains capped at 5 MiB. Each separate video can be at most 25 MiB, the host file API's non-image limit. The route buffers the complete file and returns HTTP 200 even for Range requests. Playback starts after download and seeking uses the buffered Blob. This plugin does not add HTTP range streaming or remove the host limit. Existing data URI embeds still work. Dynamically assigned sources and other authenticated relative assets are outside this video loader's scope.
-
-Documents without relative videos keep using the original worktree or thread-storage URL. Scripts run in a sandboxed opaque-origin iframe with `allow-scripts`, without `allow-same-origin`. For workspace files, the header action opens the original file in bb's workspace viewer.
-
-This capability is forked from [`get-bb/bb/plugins/inline-vis`](https://github.com/get-bb/bb/tree/b5dc3b8a96390a44045a72602bd164e06ab07686/plugins/inline-vis), last synced with upstream commit `b5dc3b8a96390a44045a72602bd164e06ab07686` on 2026-09-12. Kitchen Sink replaces the upstream plugin's private `@bb/shared-ui` imports with package-owned markup and CSS so the external plugin remains SDK-only, and adds the collapsible card, auto-open limit, and relative video loader described above.
+This capability is forked from bb's forkable built-in [`get-bb/bb/plugins/inline-vis`](https://github.com/get-bb/bb/tree/desktop-v0.44.0/plugins/inline-vis), last synced with `desktop-v0.44.0` (commit `0baa605b32a00619c1d7e3f32be6553ebcf8244a`) on 2026-09-26. UI that upstream imports through `@/components/ui/*` and `@/lib/*` is vendored from bb's component registry at that tag (`components.json`; update with `npx shadcn add @bb/<item>`). Kitchen Sink adds the Smart Embed card, the auto-open limit, and the absolute-path preview loader described above, which reads files through `useSdk()` instead of a plugin RPC. See `THIRD_PARTY_NOTICES.md`.
 
 ## Add a command
 

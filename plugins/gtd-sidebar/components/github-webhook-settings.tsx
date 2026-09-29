@@ -5,9 +5,9 @@ import {
   useRpc,
   useSettings,
 } from "@get-bb/plugin-sdk/app";
-import type { gtdSidebarRpcContract } from "@/server";
-import { WEBHOOK_TUNNEL_CHANNEL } from "@/lib/channels";
-import { WEBHOOK_TUNNEL_STATUS_OFF, type WebhookTunnelStatus } from "@/lib/webhook-tunnel-status";
+import type { gtdSidebarRpcContract } from "../server";
+import { WEBHOOK_TUNNEL_CHANNEL } from "../lib/channels";
+import { WEBHOOK_TUNNEL_STATUS_OFF, type WebhookTunnelStatus } from "../lib/webhook-tunnel-status";
 
 function asStatus(value: unknown): WebhookTunnelStatus | null {
   if (typeof value !== "object" || value === null) return null;

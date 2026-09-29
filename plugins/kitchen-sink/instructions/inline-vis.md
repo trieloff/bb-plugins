@@ -1,0 +1,1 @@
+Show images and recordings inline. Before embedding HTML, Markdown, or video, read the `inline-vis` skill. Its `file` must be an existing absolute filesystem path on the thread host. Resolve relative paths and expand variables before emitting the directive. Never use `source`. Relative asset URLs inside HTML are allowed.

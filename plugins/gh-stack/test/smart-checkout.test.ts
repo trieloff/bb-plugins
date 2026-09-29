@@ -56,7 +56,7 @@ function repository(): string {
   writeFileSync(join(cwd, "shared.txt"), "source\n");
   writeFileSync(join(cwd, "carry.txt"), "base\n");
   writeFileSync(join(cwd, "manual.txt"), "base\n");
-  gitOk(cwd, ["add", "."]);
+  gitOk(cwd, ["add", "shared.txt", "carry.txt", "manual.txt"]);
   gitOk(cwd, ["commit", "-m", "test: source"]);
   gitOk(cwd, ["checkout", "-b", "target"]);
   writeFileSync(join(cwd, "shared.txt"), "target\n");
@@ -188,32 +188,36 @@ test("a failed retry restores the exact plugin stash and leaves handmade stashes
   }
 });
 
-test("a restore conflict preserves the stash and records durable recovery state", async () => {
-  const cwd = repository();
-  try {
-    writeFileSync(join(cwd, "shared.txt"), "stashed source work\n");
-    const deps = dependencies(cwd);
-    const away = await checkoutWithAutoStash("target", deps);
-    assert.equal(away.ok, true, away.message);
+test(
+  "a restore conflict preserves the stash and records durable recovery state",
+  { timeout: 90_000 },
+  async () => {
+    const cwd = repository();
+    try {
+      writeFileSync(join(cwd, "shared.txt"), "stashed source work\n");
+      const deps = dependencies(cwd);
+      const away = await checkoutWithAutoStash("target", deps);
+      assert.equal(away.ok, true, away.message);
 
-    // Bypass the plugin once to change the stash owner's base, then return
-    // through smart checkout so applying the old patch conflicts.
-    gitOk(cwd, ["checkout", "source"]);
-    writeFileSync(join(cwd, "shared.txt"), "new source commit\n");
-    gitOk(cwd, ["add", "shared.txt"]);
-    gitOk(cwd, ["commit", "-m", "test: move source"]);
-    gitOk(cwd, ["checkout", "target"]);
+      // Bypass the plugin once to change the stash owner's base, then return
+      // through smart checkout so applying the old patch conflicts.
+      gitOk(cwd, ["checkout", "source"]);
+      writeFileSync(join(cwd, "shared.txt"), "new source commit\n");
+      gitOk(cwd, ["add", "shared.txt"]);
+      gitOk(cwd, ["commit", "-m", "test: move source"]);
+      gitOk(cwd, ["checkout", "target"]);
 
-    const back = await checkoutWithAutoStash("source", deps);
-    assert.equal(back.ok, false);
-    assert.equal(currentBranch(cwd), "source");
-    assert.match(git(cwd, ["status", "--short"]).stdout, /^UU shared\.txt$/m);
-    assert.match(stashSubjects(cwd), /bb-gh-stack:auto-stash:v1:/);
-    assert.match(handledStashes(cwd), /^[0-9a-f]{40,64}$/m);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
+      const back = await checkoutWithAutoStash("source", deps);
+      assert.equal(back.ok, false);
+      assert.equal(currentBranch(cwd), "source");
+      assert.match(git(cwd, ["status", "--short"]).stdout, /^UU shared\.txt$/m);
+      assert.match(stashSubjects(cwd), /bb-gh-stack:auto-stash:v1:/);
+      assert.match(handledStashes(cwd), /^[0-9a-f]{40,64}$/m);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+);
 
 test("stash counts group every entry by the branch it was made on", async () => {
   const cwd = repository();

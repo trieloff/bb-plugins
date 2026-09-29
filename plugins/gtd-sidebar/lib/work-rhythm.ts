@@ -58,6 +58,38 @@ const MIN_CAPPED_TURNS = 8;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** BB 0.44 caps an event-list request at 100 rows. Keep the earlier 500-turn
+ * sampling bound while paging newest first, and stop once history leaves the
+ * six-week window. */
+export const TURN_EVENT_PAGE_SIZE = 100;
+const TURN_EVENT_PAGE_LIMIT = 5;
+
+export async function recentThreadTurnStamps(
+  listPage: (
+    beforeSeq: string | undefined,
+  ) => Promise<readonly { seq: number; createdAt: number }[]>,
+  windowStart: number,
+): Promise<number[]> {
+  const stamps: number[] = [];
+  let beforeSeq: string | undefined;
+  for (let page = 0; page < TURN_EVENT_PAGE_LIMIT; page++) {
+    const events = await listPage(beforeSeq);
+    for (const event of events) {
+      if (event.createdAt > windowStart) stamps.push(event.createdAt);
+    }
+    if (
+      events.length < TURN_EVENT_PAGE_SIZE ||
+      events.some((event) => event.createdAt <= windowStart)
+    ) {
+      break;
+    }
+    const oldestSeq = events.at(-1)?.seq;
+    if (oldestSeq === undefined || oldestSeq <= 0) break;
+    beforeSeq = String(oldestSeq);
+  }
+  return stamps;
+}
+
 export interface ProjectRhythm {
   /** True when a weekend snooze on this project should move to Monday. */
   weekdayOnly: boolean;

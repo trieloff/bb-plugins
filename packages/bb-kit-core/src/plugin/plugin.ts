@@ -120,6 +120,11 @@ export function definePlugin<
     errorReporter?: PluginErrorReporterFactory;
     performanceReporter?: PluginPerformanceReporterFactory;
     rpc: R;
+    /**
+     * Opt into publishing the RPC contract (method list plus JSON
+     * schemas) to agents through the host. Off by default.
+     */
+    rpcPublication?: { discoverable?: boolean; description?: string };
     command?: C;
     agents?: {
       tools: T;
@@ -181,7 +186,10 @@ export function definePlugin<
       // validates the name, the client the in-process path — no call is
       // validated twice).
       const procedures = runtimeProcedures(rpc);
-      const contract: Record<string, { input: StandardSchemaV1; output: StandardSchemaV1 }> = {};
+      const contract: Record<
+        string,
+        { input: StandardSchemaV1; output: StandardSchemaV1; experimental_description?: string }
+      > = {};
       const handlers: Record<string, (input: unknown) => Promise<unknown>> = {};
       for (const key of Object.keys(procedures)) {
         const procedure = procedures[key];
@@ -191,6 +199,9 @@ export function definePlugin<
         contract[key] = {
           input: procedure.input ?? noInputSchema,
           output: procedure.output,
+          ...(procedure.description === undefined
+            ? {}
+            : { experimental_description: procedure.description }),
         };
         const traceOperation = rpcTraceOperation(key);
         handlers[key] = procedure.input
@@ -219,7 +230,13 @@ export function definePlugin<
               }
             };
       }
-      bb.rpc.register(contract, handlers);
+      const publication = definition.rpcPublication;
+      bb.rpc.register(contract, handlers, {
+        experimental_discoverable: publication?.discoverable ?? false,
+        ...(publication?.description === undefined
+          ? {}
+          : { experimental_description: publication.description }),
+      });
 
       // cli.register — always (§2): curated commands plus the always-on
       // rpc subtree behind ONE program, so root help lists everything.
@@ -243,6 +260,7 @@ export function definePlugin<
         name: pluginId,
         summary,
         commands,
+        rendersHelp: true,
         run: (argv, overlay) =>
           runProgram(() => makeDefinitions(overlay), argv, {
             name: pluginId,

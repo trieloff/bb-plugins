@@ -14,8 +14,6 @@ import type {
 import type { RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PointerEvent } from "react";
 import type { LifecycleApi } from "../hooks/use-lifecycle.ts";
-import type { PinnedOrderApi } from "../hooks/use-pinned-order.ts";
-import type { SettledThreadsApi } from "../hooks/use-settled-threads.ts";
 
 if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
   it("thread row navigation passes the isolated React suite", () => {
@@ -51,12 +49,17 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
     });
   }
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  // jsdom only paints frames when it pretends to be visual; the rename
+  // editor focuses on the next one.
+  globalThis.requestAnimationFrame = (callback) =>
+    setTimeout(() => callback(performance.now()), 0) as unknown as number;
+  globalThis.cancelAnimationFrame = (handle) => clearTimeout(handle);
   globalThis.ResizeObserver = class {
     observe() {}
     unobserve() {}
     disconnect() {}
   };
-  const { act, cleanup, configure, fireEvent, screen, within } =
+  const { act, cleanup, configure, fireEvent, screen, waitFor, within } =
     await import("@testing-library/react");
   const { installTestPluginRuntime, renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
   installTestPluginRuntime();
@@ -70,8 +73,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
     actions: Partial<PluginSidebarThreadActions>;
     navigate: Partial<BbNavigate>;
     lifecycle: LifecycleApi;
-    settled: SettledThreadsApi;
-    pinned: PinnedOrderApi;
+    unarchive: (args: { threadId: string }) => Promise<{ ok: true }>;
     pullRequests: Readonly<Record<string, PluginSidebarPullRequest>>;
     splitThreads: readonly string[];
     focusedSplitThread?: string;
@@ -92,6 +94,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
   mock.module("@get-bb/plugin-sdk/app", () => ({
     ...sdk,
     experimental_useSidebarThreads: () => useHost().sidebar,
+    useSdk: () => ({ threads: { unarchive: useHost().unarchive } }),
     experimental_useSidebarThreadActions: useActions,
     useBbNavigate: () => ({ ...sdk.useBbNavigate(), ...useHost().navigate }),
     experimental_useSidebarThreadSplit: (threadId: string) => {
@@ -122,12 +125,6 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
     }),
   }));
   mock.module("../hooks/use-lifecycle.ts", () => ({ useLifecycle: () => useHost().lifecycle }));
-  mock.module("../hooks/use-settled-threads.ts", () => ({
-    useSettledThreads: () => useHost().settled,
-  }));
-  mock.module("../hooks/use-pinned-order.ts", () => ({
-    usePinnedOrder: () => useHost().pinned,
-  }));
   mock.module("../hooks/use-naming-threads.ts", () => ({
     useNamingThreads: () => useHost().naming ?? new Set(),
   }));
@@ -175,12 +172,28 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       isArchived: false,
       environment: null,
       host: null,
+      displayTitle: overrides.title ?? id,
+      lifecycleOwnerThreadId: null,
+      sourceThreadId: null,
+      status: "idle",
+      runtimeStatus: "idle",
+      queuedWork: "none",
+      pinnedAt: null,
+      pinSortKey: null,
+      archivedAt: null,
+      href: "",
+      isHidden: false,
       createdAt: 100,
       updatedAt: 100,
       lastReadAt: 100,
       latestAttentionAt: 100,
       ...overrides,
     };
+  }
+
+  // Settled a minute ago: inside the shelf's window on the inbox's own clock.
+  function settledThread(id: string) {
+    return thread(id, { isArchived: true, archivedAt: Date.now() - 60_000 });
   }
 
   const wakeAt = Date.now() + 3_600_000;
@@ -202,6 +215,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
   function actions() {
     return {
       open: mock<PluginSidebarThreadActions["open"]>(() => {}),
+      openNewThread: mock<PluginSidebarThreadActions["openNewThread"]>(() => {}),
       archive: mock<PluginSidebarThreadActions["archive"]>(() => {}),
       setPinned: mock<PluginSidebarThreadActions["setPinned"]>(async () => {}),
       setRead: mock<PluginSidebarThreadActions["setRead"]>(async () => {}),
@@ -215,16 +229,17 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       sidebar: {
         status: "ready",
         threads,
+        experimental_archived: null,
+        sections: [],
         projects: [
-          { id: "one", name: "One", isPersonal: false },
-          { id: "two", name: "Two", isPersonal: false },
+          { id: "one", name: "One", isPersonal: false, href: "", settingsHref: "" },
+          { id: "two", name: "Two", isPersonal: false, href: "", settingsHref: "" },
         ],
       },
       actions: actions(),
       navigate: {},
       lifecycle: lifecycle(),
-      settled: { threads: [], ready: true, unsettle: () => {}, settledAtFor: () => null },
-      pinned: { pinOrderKeyFor: () => null },
+      unarchive: async () => ({ ok: true }),
       pullRequests: {},
       splitThreads: [],
       splitEnabled: true,
@@ -246,12 +261,12 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
     inbox: Partial<PluginThreadListProps> = {},
     compactThreads = false,
     localMachineId = "",
+    options: NonNullable<Parameters<typeof renderSlot>[2]> = {},
   ) {
     let current: InboxProps = {
       host,
       inbox: {
         activeProjectId: null,
-        Original: () => null,
         activeThreadId: null,
         isCompactViewport: false,
         onNavigate: () => {},
@@ -259,8 +274,13 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
         ...inbox,
       },
     };
-    const settings = { compactThreads, localMachineId, groupThreadsByProject: true };
-    const slot = renderSlot({ component: Inbox }, current, { settings });
+    const settings = {
+      compactThreads,
+      localMachineId,
+      groupThreadsByProject: true,
+      ...options.settings,
+    };
+    const slot = renderSlot({ component: Inbox }, current, { ...options, settings });
     return {
       slot,
       setGrouping(enabled: boolean) {
@@ -400,14 +420,9 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
           thread("c"),
           thread("waiting", { indicator: "runtime" }),
           thread("snoozed"),
+          settledThread("settled"),
         ]);
         host.lifecycle = lifecycle(["snoozed"]);
-        host.settled = {
-          ready: true,
-          threads: [thread("settled", { isArchived: true })],
-          unsettle: () => {},
-          settledAtFor: () => 50,
-        };
         const view = mount(host, { activeThreadId: "a", isCompactViewport });
         assert.ok(view.slot.container.querySelector("[data-gtd-sidebar-thread-list]"));
         assert.equal(row(view.slot, "a").parentElement!.dataset.sidebarThreadActive, "true");
@@ -444,7 +459,10 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       rowBodyRender.mockClear();
       host = {
         ...host,
-        sidebar: { ...host.sidebar, threads: [a, { ...b, title: "Renamed", isUnread: true }] },
+        sidebar: {
+          ...host.sidebar,
+          threads: [a, { ...b, title: "Renamed", displayTitle: "Renamed", isUnread: true }],
+        },
       };
       view.update({ host });
       assert.equal(rowBodyRender.mock.calls.length, 1);
@@ -505,6 +523,35 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
   });
 
   describe("thread hierarchy", () => {
+    it("shows snoozed descendants beneath their parent", () => {
+      const host = hostState([
+        thread("root"),
+        thread("child", { parentThreadId: "root" }),
+        thread("grandchild", { parentThreadId: "child" }),
+      ]);
+      host.lifecycle = lifecycle(["root", "child", "grandchild"]);
+      const view = mount(host);
+      fireEvent.click(view.slot.getByRole("button", { name: "Snoozed (3)" }));
+      assert.deepEqual(rowIds(view.slot), ["root", "child", "grandchild"]);
+      assert.ok(rowButton(view.slot, "root", "Collapse children of root"));
+      assert.ok(rowButton(view.slot, "child", "Collapse children of child"));
+    });
+
+    it("does not offer Snooze on a parent while a descendant is working", async () => {
+      const host = hostState([
+        thread("root"),
+        thread("child", { parentThreadId: "root", indicator: "runtime" }),
+      ]);
+      host.lifecycle = {
+        ...lifecycle(),
+        canPark: (item: PluginSidebarThread) => item.indicator !== "runtime",
+      };
+      const view = mount(host);
+      fireEvent.contextMenu(row(view.slot, "root"));
+      await act(async () => {});
+      assert.equal(screen.queryByRole("menuitem", { name: "Snooze" }), null);
+    });
+
     it("publishes focused split state independently of the parent route", () => {
       const host = {
         ...hostState([thread("root"), thread("child", { parentThreadId: "root" })]),
@@ -657,16 +704,41 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.deepEqual(rowIds(view.slot), ["a", "b"]);
     });
 
-    it("opens a project's compose screen from its group header", () => {
-      const toProject = mock<BbNavigate["toProject"]>(() => {});
+    it("opens a project's composer from its group header", () => {
+      const currentActions = actions();
       const onNavigate = mock(() => {});
       const view = mount(
-        { ...hostState([thread("a"), thread("b", { projectId: "two" })]), navigate: { toProject } },
+        {
+          ...hostState([thread("a"), thread("b", { projectId: "two" })]),
+          actions: currentActions,
+        },
         { onNavigate },
       );
       fireEvent.click(view.slot.getByRole("button", { name: "New thread in Two" }));
-      assert.deepEqual(toProject.mock.calls, [["two"]]);
+      assert.deepEqual(currentActions.openNewThread.mock.calls, [
+        [{ projectId: "two", hostId: undefined, focusPrompt: true }],
+      ]);
       assert.equal(onNavigate.mock.calls.length, 1);
+    });
+
+    it("preselects the scoped machine, including one with no threads yet", () => {
+      const currentActions = actions();
+      const host = hostState([thread("a", { host: { id: "host-a", name: "Studio" } })]);
+      host.sidebar = { ...host.sidebar, experimental_hosts: [{ id: "host-b", name: "Empty" }] };
+      host.actions = currentActions;
+      const view = mount(host);
+      fireEvent.keyDown(view.slot.getByRole("combobox", { name: "Machine scope: All machines" }), {
+        key: "ArrowDown",
+      });
+      assert.deepEqual(
+        screen.getAllByRole("option").map((option) => option.textContent),
+        ["All machines", "Empty", "Studio"],
+      );
+      fireEvent.click(screen.getByRole("option", { name: "Studio" }));
+      fireEvent.click(view.slot.getByRole("button", { name: "New thread in One" }));
+      assert.deepEqual(currentActions.openNewThread.mock.calls, [
+        [{ projectId: "one", hostId: "host-a", focusPrompt: true }],
+      ]);
     });
 
     it.each([false, true])(
@@ -762,6 +834,20 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       );
       fireEvent.pointerDown(rowButton(view.slot, "child", "Settle"));
       assert.deepEqual(currentActions.archive.mock.calls, [["child"]]);
+      // The grandchild makes bb confirm first; the advance follows the archive.
+      assert.equal(currentActions.open.mock.calls.length, 0);
+      view.update({
+        host: {
+          ...host,
+          sidebar: {
+            ...host.sidebar,
+            threads: host.sidebar.threads.map((entry) =>
+              entry.id === "child" || entry.id === "grandchild" ? settledThread(entry.id) : entry,
+            ),
+          },
+        },
+      });
+      view.updateInbox({ activeThreadId: null });
       assert.deepEqual(currentActions.open.mock.calls, [["root"]]);
     });
   });
@@ -957,7 +1043,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.deepEqual(currentActions.archive.mock.calls, [["last"]]);
     });
 
-    it("never advances onto a child the archive cascades away", () => {
+    it("waits for bb's confirmation on a parent, then skips the children it archives", () => {
       const currentActions = actions();
       const host = {
         ...hostState([
@@ -968,11 +1054,95 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
         actions: currentActions,
       };
       const view = mount(host, { activeThreadId: "root" });
-      // bb's archive takes the children with the parent, so the row after the
-      // family is the next root, not the first child.
+      // bb asks before archiving a parent, so nothing moves until it answers.
       fireEvent.pointerDown(rowButton(view.slot, "root", "Settle"));
-      assert.deepEqual(currentActions.open.mock.calls, [["sibling"]]);
       assert.deepEqual(currentActions.archive.mock.calls, [["root"]]);
+      assert.equal(currentActions.open.mock.calls.length, 0);
+      // Confirmed: bb leaves the archived thread, and the advance lands on the
+      // next root, not on the child the archive took along.
+      view.update({
+        host: {
+          ...host,
+          sidebar: {
+            ...host.sidebar,
+            threads: host.sidebar.threads.map((entry) =>
+              entry.id === "root" || entry.id === "child" ? settledThread(entry.id) : entry,
+            ),
+          },
+        },
+      });
+      view.updateInbox({ activeThreadId: null });
+      assert.deepEqual(currentActions.open.mock.calls, [["sibling"]]);
+    });
+
+    it("stays on a parent when bb's archive confirmation is cancelled", () => {
+      const currentActions = actions();
+      const host = {
+        ...hostState([
+          thread("root", { latestAttentionAt: 200 }),
+          thread("child", { parentThreadId: "root" }),
+          thread("sibling", { latestAttentionAt: 50 }),
+        ]),
+        actions: currentActions,
+      };
+      const view = mount(host, { activeThreadId: "root" });
+      fireEvent.pointerDown(rowButton(view.slot, "root", "Settle"));
+      // Cancelled: the route never leaves root. Moving on by hand drops the advance.
+      view.updateInbox({ activeThreadId: "sibling" });
+      view.updateInbox({ activeThreadId: null });
+      assert.equal(currentActions.open.mock.calls.length, 0);
+    });
+
+    it("does not advance on a cancelled settle when the composer opens next", () => {
+      const currentActions = actions();
+      const host = {
+        ...hostState([
+          thread("root", { latestAttentionAt: 200 }),
+          thread("child", { parentThreadId: "root" }),
+          thread("sibling", { latestAttentionAt: 50 }),
+        ]),
+        actions: currentActions,
+      };
+      const view = mount(host, { activeThreadId: "root" });
+      fireEvent.pointerDown(rowButton(view.slot, "root", "Settle"));
+      // Cancelled: root stays live. Opening the composer by hand is not the
+      // archive landing, so the neighbour must not open over it.
+      view.updateInbox({ activeThreadId: null });
+      assert.equal(currentActions.open.mock.calls.length, 0);
+    });
+
+    it("advances once the confirmed archive lands, whichever update arrives first", () => {
+      for (const listFirst of [true, false]) {
+        const currentActions = actions();
+        const threads = [
+          thread("root", { latestAttentionAt: 200 }),
+          thread("child", { parentThreadId: "root" }),
+          thread("sibling", { latestAttentionAt: 50 }),
+        ];
+        const host = { ...hostState(threads), actions: currentActions };
+        const view = mount(host, { activeThreadId: "root" });
+        fireEvent.pointerDown(rowButton(view.slot, "root", "Settle"));
+        const archived = {
+          ...host,
+          sidebar: {
+            ...host.sidebar,
+            threads: threads.map((entry) =>
+              entry.id === "root" || entry.id === "child" ? settledThread(entry.id) : entry,
+            ),
+          },
+        };
+        if (listFirst) {
+          view.update({ host: archived });
+          assert.equal(currentActions.open.mock.calls.length, 0, "list first: waits for route");
+          view.updateInbox({ activeThreadId: null });
+        } else {
+          view.updateInbox({ activeThreadId: null });
+          assert.equal(currentActions.open.mock.calls.length, 0, "route first: waits for list");
+          view.update({ host: archived });
+        }
+        assert.deepEqual(currentActions.open.mock.calls, [["sibling"]], `listFirst=${listFirst}`);
+        cleanup();
+      }
     });
 
     it("settles through the palette the way a row's own Settle button does", () => {
@@ -1012,24 +1182,81 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.deepEqual(currentActions.open.mock.calls, [["c"]]);
     });
 
+    it("carries bb's jump key on the row and swaps its status slot for the pill", () => {
+      const host = hostState([
+        thread("a"),
+        thread("b"),
+        thread("snoozed"),
+        settledThread("settled"),
+      ]);
+      host.lifecycle = lifecycle(["snoozed"]);
+      const view = mount(host, {}, false, "", {
+        sidebarShortcuts: {
+          a: { label: "⌃1", ariaKeyshortcuts: "Control+1" },
+          snoozed: { label: "⌃3", ariaKeyshortcuts: "Control+3" },
+          settled: { label: "⌃4", ariaKeyshortcuts: "Control+4" },
+        },
+      });
+      expandParked(view.slot);
+      assert.equal(row(view.slot, "a").getAttribute("aria-keyshortcuts"), "Control+1");
+      assert.equal(row(view.slot, "b").getAttribute("aria-keyshortcuts"), null);
+      assert.equal(row(view.slot, "snoozed").getAttribute("aria-keyshortcuts"), "Control+3");
+      assert.equal(row(view.slot, "settled").getAttribute("aria-keyshortcuts"), "Control+4");
+      assert.deepEqual(
+        Array.from(view.slot.container.querySelectorAll("kbd"), (pill) => pill.textContent),
+        ["⌃1", "⌃3", "⌃4"],
+      );
+    });
+
+    it("asks GitButler about plain checkouts only and prefers its label on the card", async () => {
+      const environment = (id: string, isWorktree: boolean | null) => ({
+        id,
+        name: id,
+        branchName: `${id}-branch`,
+        path: `/repos/${id}`,
+        isWorktree,
+        providerId: null,
+        workspaceDisplayKind: null,
+      });
+      const host = hostState([
+        thread("plain", { environment: environment("env-plain", false) }),
+        thread("worktree", { environment: environment("env-worktree", true) }),
+        thread("unknown", { environment: environment("env-unknown", null) }),
+      ]);
+      const view = mount(host, {}, false, "", {
+        settings: { gitButlerBranches: true },
+        rpc: {
+          listEnvironmentBranches: async () => ({
+            environments: [{ environmentId: "env-plain", label: "scott/feature" }],
+          }),
+        },
+      });
+      await waitFor(() => assert.ok(view.slot.container.textContent!.includes("scott/feature")));
+      assert.deepEqual(
+        view.slot.rpcCalls
+          .filter((call) => call.method === "listEnvironmentBranches")
+          .map((call) => call.input),
+        [{ environmentIds: ["env-plain"] }],
+      );
+      const text = view.slot.container.textContent!;
+      assert.ok(!text.includes("env-plain-branch"));
+      assert.ok(text.includes("env-worktree-branch"));
+      assert.ok(text.includes("env-unknown-branch"));
+    });
+
     it("uses current lifecycle actions and general navigation for settled mobile rows", () => {
       const oldLifecycle = lifecycle(["snoozed"]);
-      const oldRestore = mock<SettledThreadsApi["unsettle"]>(() => {});
+      const oldRestore = mock<HostState["unarchive"]>(async () => ({ ok: true }));
       const host = {
-        ...hostState([thread("active"), thread("snoozed")]),
+        ...hostState([thread("active"), thread("snoozed"), settledThread("settled")]),
         lifecycle: oldLifecycle,
-        settled: {
-          ready: true,
-          threads: [thread("settled", { isArchived: true })],
-          unsettle: oldRestore,
-          settledAtFor: () => 50,
-        },
+        unarchive: oldRestore,
       };
       const oldNavigate = mock(() => {});
       const view = mount(host, { isCompactViewport: true, onNavigate: oldNavigate });
       expandParked(view.slot);
       const currentLifecycle = lifecycle(["snoozed"]);
-      const currentRestore = mock<SettledThreadsApi["unsettle"]>(() => {});
+      const currentRestore = mock<HostState["unarchive"]>(async () => ({ ok: true }));
       const currentActions = actions();
       const toThread = mock<BbNavigate["toThread"]>(() => {});
       const onNavigate = mock(() => {});
@@ -1040,7 +1267,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
           lifecycle: currentLifecycle,
           actions: currentActions,
           navigate: { toThread },
-          settled: { ...host.settled, unsettle: currentRestore },
+          unarchive: currentRestore,
         },
       });
       view.updateInbox({ onNavigate });
@@ -1055,7 +1282,7 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       fireEvent.click(rowButton(view.slot, "snoozed", "Wake now"));
       fireEvent.click(rowButton(view.slot, "settled", "Un-settle"));
       assert.deepEqual(currentLifecycle.unsnooze.mock.calls, [["snoozed"]]);
-      assert.deepEqual(currentRestore.mock.calls, [["settled"]]);
+      assert.deepEqual(currentRestore.mock.calls, [[{ threadId: "settled" }]]);
       assert.equal(oldLifecycle.unsnooze.mock.calls.length, 0);
       assert.equal(oldRestore.mock.calls.length, 0);
       assert.equal(oldNavigate.mock.calls.length, 0);
@@ -1096,12 +1323,12 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
 
       fireEvent.contextMenu(row(view.slot, "a"));
       fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
-      const title = await screen.findByRole("textbox", { name: "Thread title" });
+      const title = await screen.findByRole("textbox", { name: "Thread name" });
       fireEvent.change(title, { target: { value: "  New title  " } });
       await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        fireEvent.keyDown(title, { key: "Enter" });
       });
-      assert.equal(screen.queryByRole("dialog"), null);
+      assert.equal(screen.queryByRole("textbox", { name: "Thread name" }), null);
       assert.deepEqual(currentActions.rename.mock.calls, [["a", "New title"]]);
     });
 
@@ -1119,14 +1346,8 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
 
     it("opens settled threads in a split from the menu and cancels rename without saving", async () => {
       const currentActions = actions();
-      const host = hostState([thread("selected")]);
+      const host = hostState([thread("selected"), settledThread("settled")]);
       host.actions = currentActions;
-      host.settled = {
-        threads: [thread("settled", { isArchived: true })],
-        ready: true,
-        unsettle: () => {},
-        settledAtFor: () => 1,
-      };
       const view = mount(host, { activeThreadId: "selected" });
       fireEvent.click(view.slot.getByRole("button", { name: "Settled (1)" }));
       fireEvent.contextMenu(row(view.slot, "settled"));
@@ -1136,12 +1357,141 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.deepEqual(currentActions.open.mock.calls, [["settled", { split: true }]]);
       fireEvent.contextMenu(row(view.slot, "settled"));
       fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
-      fireEvent.change(await screen.findByRole("textbox", { name: "Thread title" }), {
-        target: { value: "Unsaved title" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      assert.equal(screen.queryByRole("dialog"), null);
+      const title = await screen.findByRole("textbox", { name: "Thread name" });
+      fireEvent.change(title, { target: { value: "Unsaved title" } });
+      fireEvent.keyDown(title, { key: "Escape" });
+      assert.equal(screen.queryByRole("textbox", { name: "Thread name" }), null);
       assert.equal(currentActions.rename.mock.calls.length, 0);
+    });
+
+    it("draws the rename editor in its title's typography on cards and slim rows", async () => {
+      // Layout-only classes differ on purpose: the editor takes clicks and
+      // must not clip its error. Everything else must match the title.
+      const layout = new Set([
+        "pointer-events-none",
+        "pointer-events-auto",
+        "relative",
+        "z-10",
+        "truncate",
+      ]);
+      const typography = (element: Element | null | undefined) => {
+        assert.ok(element);
+        return [...element.classList].filter((name) => !layout.has(name)).sort();
+      };
+      // Cards draw `.gtd-thread-title`; a slim row's title is its one truncating span.
+      const titleOf = (id: string) => {
+        const container = row(view.slot, id).closest("[data-sidebar-rename-row]")!;
+        return (
+          container.querySelector(".gtd-thread-title") ?? container.querySelector("span.truncate")
+        );
+      };
+      const editorFor = async (id: string) => {
+        fireEvent.doubleClick(row(view.slot, id));
+        const input = await screen.findByRole("textbox", { name: "Thread name" });
+        const wrapper = input.closest("[data-sidebar-rename-editor]")!.parentElement;
+        fireEvent.keyDown(input, { key: "Escape" });
+        await waitFor(() =>
+          assert.equal(screen.queryByRole("textbox", { name: "Thread name" }), null),
+        );
+        return wrapper;
+      };
+      const view = mount(
+        {
+          ...hostState([
+            thread("active", { isUnread: true, latestAttentionAt: 300 }),
+            thread("child", { parentThreadId: "active" }),
+            settledThread("parked"),
+          ]),
+        },
+        { activeThreadId: "active" },
+      );
+      fireEvent.click(view.slot.getByRole("button", { name: "Settled (1)" }));
+
+      for (const [id, expected] of [
+        [
+          "active",
+          [
+            "flex-1",
+            "font-medium",
+            "gtd-thread-title",
+            "min-w-0",
+            "text-sidebar-accent-foreground",
+          ],
+        ],
+        ["child", ["flex-1", "gtd-thread-title", "min-w-0", "text-muted-foreground/70"]],
+      ] as const) {
+        const title = typography(titleOf(id));
+        assert.deepEqual(title, [...expected].sort());
+        assert.deepEqual(typography(await editorFor(id)), title);
+      }
+      const slimTitle = typography(titleOf("parked"));
+      assert.ok(slimTitle.includes("group-hover/slim:text-foreground"));
+      assert.deepEqual(typography(await editorFor("parked")), slimTitle);
+    });
+
+    it("renames in place on a double-click, keeping a failed draft for the retry", async () => {
+      const currentActions = actions();
+      currentActions.rename.mockImplementationOnce(async () => {
+        throw new Error("offline");
+      });
+      const view = mount({ ...hostState([thread("a")]), actions: currentActions });
+      fireEvent.doubleClick(view.slot.getByRole("link", { name: "a" }));
+      const title = await screen.findByRole("textbox", { name: "Thread name" });
+      assert.equal((title as HTMLInputElement).value, "a");
+
+      fireEvent.change(title, { target: { value: "   " } });
+      fireEvent.keyDown(title, { key: "Enter" });
+      assert.equal(screen.getByRole("alert").textContent, "Name cannot be empty.");
+      assert.equal(currentActions.rename.mock.calls.length, 0);
+
+      fireEvent.change(title, { target: { value: "Renamed" } });
+      await act(async () => {
+        fireEvent.keyDown(title, { key: "Enter" });
+      });
+      assert.equal(screen.getByRole("alert").textContent, "Could not save the name. Try again.");
+      assert.equal(
+        (screen.getByRole("textbox", { name: "Thread name" }) as HTMLInputElement).value,
+        "Renamed",
+      );
+
+      await act(async () => {
+        fireEvent.keyDown(screen.getByRole("textbox", { name: "Thread name" }), { key: "Enter" });
+      });
+      assert.equal(screen.queryByRole("textbox", { name: "Thread name" }), null);
+      assert.deepEqual(currentActions.rename.mock.calls, [
+        ["a", "Renamed"],
+        ["a", "Renamed"],
+      ]);
+    });
+
+    it("keeps the editor and its draft when the thread moves to another shelf", async () => {
+      const currentActions = actions();
+      const host = {
+        ...hostState([thread("a", { indicator: "runtime" }), thread("b")]),
+        actions: currentActions,
+      };
+      const view = mount(host);
+      assert.equal(row(view.slot, "a").closest("section")?.getAttribute("aria-label"), "Waiting");
+      fireEvent.doubleClick(view.slot.getByRole("link", { name: "a" }));
+      const title = await screen.findByRole("textbox", { name: "Thread name" });
+      fireEvent.change(title, { target: { value: "Half typed" } });
+
+      // The agent finishes mid-edit: the row leaves Waiting for Next Action.
+      view.update({
+        host: { ...host, sidebar: { ...host.sidebar, threads: [thread("a"), thread("b")] } },
+      });
+      assert.equal(
+        row(view.slot, "a").closest("section")?.getAttribute("aria-label"),
+        "Next Action",
+      );
+      const moved = screen.getByRole("textbox", { name: "Thread name" }) as HTMLInputElement;
+      assert.equal(moved.value, "Half typed");
+      fireEvent.change(moved, { target: { value: "Half typed, then done" } });
+      await act(async () => {
+        fireEvent.keyDown(moved, { key: "Enter" });
+      });
+      assert.equal(screen.queryByRole("textbox", { name: "Thread name" }), null);
+      assert.deepEqual(currentActions.rename.mock.calls, [["a", "Half typed, then done"]]);
     });
 
     it("routes snooze, pin and delete through the current dispatcher", async () => {

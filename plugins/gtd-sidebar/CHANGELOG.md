@@ -36,8 +36,7 @@
   bb's Undo toast brings it back. The Settled shelf is now a view of bb's archive:
   it lists every thread archived in the last 24 hours, however it was archived, and
   un-settle unarchives it in bb. The automatic un-settle on new activity is gone;
-  the plugin's database keeps only snoozes, and rows without a snooze are removed on
-  the next start. Snooze is unchanged.
+  lifecycle rows without a snooze are removed on the next start.
 
 - Folding a family now writes bb's own `sidebar.collapsedThreads` preference
   instead of session state, so a fold made here shows in bb's built-in sidebar,
@@ -63,6 +62,10 @@
 
 ### Patch Changes
 
+- Snoozing a parent now parks its non-fork descendants together. Quick snooze
+  applies the same adaptive backoff step and wake time to the family; waking it
+  clears their snoozes together.
+
 - Match the touch project header's corner radius to the 12px thread rows.
 
 - Machine-scoped inboxes now keep repository group headers visible even when
@@ -79,6 +82,12 @@
   versions left under `gtd-sidebar:v1:*` in `localStorage` are removed the first
   time this version loads. Provider names and marks now come from bb's own cached
   roster instead of a plugin round trip.
+
+## [0.5.1](https://github.com/smsunarto/bb-plugins/compare/gtd-sidebar/v0.5.0...gtd-sidebar/v0.5.1) (2026-09-22)
+
+### Bug Fixes
+
+- **gtd-sidebar:** prevent clean-install frontend build failures ([f387dee](https://github.com/smsunarto/bb-plugins/commit/f387dee883cdcec50506ffbc953bfaca59589e76))
 
 ## [0.5.0](https://github.com/smsunarto/bb-plugins/compare/gtd-sidebar/v0.4.2...gtd-sidebar/v0.5.0) (2026-09-15)
 

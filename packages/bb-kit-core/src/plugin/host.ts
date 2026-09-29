@@ -13,9 +13,17 @@ export type HostRPCSeam = {
   rpc: {
     register(
       contract: Readonly<
-        Record<string, { readonly input: StandardSchemaV1; readonly output: StandardSchemaV1 }>
+        Record<
+          string,
+          {
+            readonly input: StandardSchemaV1;
+            readonly output: StandardSchemaV1;
+            readonly experimental_description?: string;
+          }
+        >
       >,
       handlers: Readonly<Record<string, (input: unknown) => MaybePromise<unknown>>>,
+      options?: { experimental_discoverable?: boolean; experimental_description?: string },
     ): void;
   };
 };
@@ -26,6 +34,7 @@ export type HostCLISeam = {
       name: string;
       summary: string;
       commands?: { name: string; summary: string; usage: string }[];
+      rendersHelp?: boolean;
       run(
         argv: string[],
         ctx: { cwd?: string; threadId?: string; projectId?: string; signal?: AbortSignal },

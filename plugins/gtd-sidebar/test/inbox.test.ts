@@ -4,11 +4,11 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
 import { buildInboxTree, createShelfArrivals, visibleInboxRows } from "../lib/inbox-tree.ts";
 import {
   activeSectionFor,
+  archiveAsksFirst,
   childrenOf,
   filterByProject,
   nextThreadIdAfterSettle,
   parentOf,
-  threadDisplayTitle,
 } from "../lib/inbox.ts";
 
 function thread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
@@ -37,6 +37,19 @@ function thread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThre
     isArchived: false,
     environment: null,
     host: null,
+    // bb resolves this from the title the way its own row does; the fixture
+    // mirrors the common case so tree labels read the way the sidebar shows them.
+    displayTitle: overrides.title ?? overrides.titleFallback ?? "A thread",
+    lifecycleOwnerThreadId: null,
+    sourceThreadId: null,
+    status: "idle",
+    runtimeStatus: "idle",
+    queuedWork: "none",
+    pinnedAt: null,
+    pinSortKey: null,
+    archivedAt: null,
+    href: "",
+    isHidden: false,
     createdAt: 100,
     updatedAt: 100,
     lastReadAt: 100,
@@ -84,27 +97,6 @@ describe("active sections", () => {
   });
 });
 
-describe("threadDisplayTitle", () => {
-  it("prefers the title, then the fallback, then a placeholder", () => {
-    assert.equal(threadDisplayTitle(thread({ title: "Real" })), "Real");
-    assert.equal(
-      threadDisplayTitle(thread({ title: null, titleFallback: "Fallback" })),
-      "Fallback",
-    );
-    assert.equal(
-      threadDisplayTitle(thread({ title: null, titleFallback: null })),
-      "Untitled thread",
-    );
-  });
-
-  it("treats a whitespace-only title as absent", () => {
-    assert.equal(
-      threadDisplayTitle(thread({ title: "   ", titleFallback: "Fallback" })),
-      "Fallback",
-    );
-  });
-});
-
 describe("filtering", () => {
   it("scopes to one project, or to all", () => {
     const threads = [thread({ id: "a", projectId: "p1" }), thread({ id: "b", projectId: "p2" })];
@@ -133,6 +125,26 @@ describe("nextThreadIdAfterSettle", () => {
 
   it("returns no target when the section has no adjacent row", () => {
     assert.equal(nextThreadIdAfterSettle([thread({ id: "only" })], "only", "only"), null);
+  });
+});
+
+describe("archiveAsksFirst", () => {
+  const threads = [
+    thread({ id: "parent" }),
+    thread({ id: "child", parentThreadId: "parent" }),
+    thread({ id: "fork", parentThreadId: "forked", originKind: "fork" }),
+    thread({ id: "forked" }),
+    thread({ id: "alone" }),
+  ];
+
+  it("expects bb's confirmation for a thread with children, forks included", () => {
+    assert.equal(archiveAsksFirst(threads, "parent"), true);
+    assert.equal(archiveAsksFirst(threads, "forked"), true);
+  });
+
+  it("archives a childless thread straight away", () => {
+    assert.equal(archiveAsksFirst(threads, "alone"), false);
+    assert.equal(archiveAsksFirst(threads, "child"), false);
   });
 });
 
@@ -239,6 +251,25 @@ describe("inbox families", () => {
         ["settled", "settled"],
       ],
     );
+  });
+
+  it("keeps snoozed descendants nested on the Snoozed shelf", () => {
+    const tree = buildInboxTree(
+      [
+        thread({ id: "root" }),
+        thread({ id: "child", parentThreadId: "root" }),
+        thread({ id: "grandchild", parentThreadId: "child" }),
+        thread({ id: "active", parentThreadId: "root" }),
+      ],
+      (item) => (item.id === "active" ? "active" : "snoozed"),
+    );
+    const snoozed = tree.filter((node) => node.shelf === "snoozed");
+    assert.deepEqual(ids(visibleInboxRows(snoozed, new Set())), ["root", "child", "grandchild"]);
+    assert.deepEqual(
+      visibleInboxRows(snoozed, new Set()).map((row) => row.parentId),
+      [null, "root", "child"],
+    );
+    assert.equal(tree.find((node) => node.thread.id === "active")?.lifecycle, "active");
   });
 
   it("keeps forks and orphans reachable and breaks cycles", () => {
@@ -360,12 +391,10 @@ describe("inbox families", () => {
         thread({ id: "renamed", latestAttentionAt: 10, updatedAt: 900 }),
         thread({ id: "active", latestAttentionAt: 50, updatedAt: 10 }),
         thread({ id: "waiting-new", indicator: "runtime", updatedAt: 20, latestAttentionAt: 1 }),
-        thread({ id: "settled-first", isArchived: true }),
-        thread({ id: "settled-second", isArchived: true }),
+        thread({ id: "settled-first", isArchived: true, archivedAt: 1 }),
+        thread({ id: "settled-second", isArchived: true, archivedAt: 500 }),
       ],
       active,
-      "",
-      { settledAtFor: (item) => ({ "settled-first": 1, "settled-second": 500 })[item.id] ?? null },
     );
     assert.deepEqual(
       tree.map((node) => node.thread.id),
@@ -468,13 +497,11 @@ describe("shelf arrival order", () => {
   it("sorts settled by when it settled, not by input order", () => {
     const tree = buildInboxTree(
       [
-        thread({ id: "old", isArchived: true }),
-        thread({ id: "new", isArchived: true }),
-        thread({ id: "mid", isArchived: true }),
+        thread({ id: "old", isArchived: true, archivedAt: 10 }),
+        thread({ id: "new", isArchived: true, archivedAt: 30 }),
+        thread({ id: "mid", isArchived: true, archivedAt: 20 }),
       ],
       active,
-      "",
-      { settledAtFor: (item) => ({ old: 10, mid: 20, new: 30 })[item.id] ?? null },
     );
     assert.deepEqual(ids(tree), ["new", "mid", "old"]);
   });
@@ -505,15 +532,12 @@ describe("pinned order", () => {
   const ids = (tree: ReturnType<typeof buildInboxTree>) => tree.map((node) => node.thread.id);
 
   it("orders pinned rows by bb's pin sort key, not their arrival", () => {
-    const keys: Record<string, string> = { a: "key-b", b: "key-a" };
     const tree = buildInboxTree(
       [
-        thread({ id: "a", isPinned: true, latestAttentionAt: 9_999 }),
-        thread({ id: "b", isPinned: true, latestAttentionAt: 1 }),
+        thread({ id: "a", isPinned: true, pinSortKey: "key-b", latestAttentionAt: 9_999 }),
+        thread({ id: "b", isPinned: true, pinSortKey: "key-a", latestAttentionAt: 1 }),
       ],
       active,
-      "",
-      { pinOrderKeyFor: (item) => keys[item.id] ?? null },
     );
     assert.deepEqual(ids(tree), ["b", "a"]);
   });
@@ -521,16 +545,13 @@ describe("pinned order", () => {
   it("positions a family at its most prominent pinned member", () => {
     // The child's key ranks first in bb's order, so the family leads the
     // pinned shelf even though its root is unpinned.
-    const keys: Record<string, string> = { other: "b", child: "a" };
     const tree = buildInboxTree(
       [
-        thread({ id: "other", isPinned: true }),
+        thread({ id: "other", isPinned: true, pinSortKey: "b" }),
         thread({ id: "root" }),
-        thread({ id: "child", parentThreadId: "root", isPinned: true }),
+        thread({ id: "child", parentThreadId: "root", isPinned: true, pinSortKey: "a" }),
       ],
       active,
-      "",
-      { pinOrderKeyFor: (item) => keys[item.id] ?? null },
     );
     assert.deepEqual(ids(tree), ["root", "other"]);
   });
@@ -538,30 +559,25 @@ describe("pinned order", () => {
   it("lets a pinned root's own key shadow its pinned descendants", () => {
     // bb's pinned sidebar never lists a thread under a pinned ancestor, so
     // the child's better key cannot pull the family above "other".
-    const keys: Record<string, string> = { other: "b", root: "c", child: "a" };
     const tree = buildInboxTree(
       [
-        thread({ id: "other", isPinned: true }),
-        thread({ id: "root", isPinned: true }),
-        thread({ id: "child", parentThreadId: "root", isPinned: true }),
+        thread({ id: "other", isPinned: true, pinSortKey: "b" }),
+        thread({ id: "root", isPinned: true, pinSortKey: "c" }),
+        thread({ id: "child", parentThreadId: "root", isPinned: true, pinSortKey: "a" }),
       ],
       active,
-      "",
-      { pinOrderKeyFor: (item) => keys[item.id] ?? null },
     );
     assert.deepEqual(ids(tree), ["other", "root"]);
   });
 
-  it("keeps arrival order for pinned rows whose keys have not loaded", () => {
+  it("keeps arrival order for pinned rows bb reports without a key", () => {
     const tree = buildInboxTree(
       [
         thread({ id: "new", isPinned: true, latestAttentionAt: 200 }),
         thread({ id: "old", isPinned: true, latestAttentionAt: 100 }),
-        thread({ id: "keyed", isPinned: true, latestAttentionAt: 50 }),
+        thread({ id: "keyed", isPinned: true, pinSortKey: "key-a", latestAttentionAt: 50 }),
       ],
       active,
-      "",
-      { pinOrderKeyFor: (item) => (item.id === "keyed" ? "key-a" : null) },
     );
     assert.deepEqual(ids(tree), ["keyed", "new", "old"]);
   });

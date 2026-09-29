@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
-import type { gtdSidebarRpcContract } from "@/server";
-import { PR_INDEX_CHANNEL } from "@/lib/channels";
-import { threadDisplayTitle } from "@/lib/inbox";
-import { gitButlerBranchNamesFor } from "@/lib/gitbutler";
-import type { SidebarPullRequest } from "@/lib/pr-index";
+import type { gtdSidebarRpcContract } from "../server";
+import { PR_INDEX_CHANNEL } from "../lib/channels";
+import { gitButlerBranchNamesFor } from "../lib/gitbutler";
+import type { SidebarPullRequest } from "../lib/pr-index";
 
 /** The unconditional backfill, for when webhook delivery is not set up. */
 const RECONCILE_INTERVAL_MS = 10 * 60_000;
@@ -58,7 +57,7 @@ export function useThreadPullRequests(
           thread.environment?.id ?? null,
           gitButlerBranchNames,
         ),
-        title: threadDisplayTitle(thread),
+        title: thread.displayTitle,
       })),
     [gitButlerBranchNames, threads],
   );

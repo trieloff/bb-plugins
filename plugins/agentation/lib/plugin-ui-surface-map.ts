@@ -3,11 +3,17 @@
 
 /** Translate bb's internal component-boundary names to the public SDK API. */
 export const PUBLIC_SURFACE_BY_SLOT_KIND = {
+  appOverlay: "experimental_appOverlay",
+  browserToolbarAction: "experimental_browserToolbarAction",
   composerAction: "composer.actions",
   composerBanner: "composer.banners",
   composerPlusMenuItem: "composer.plusMenu",
+  diffRenderer: "experimental_diffRenderer",
+  environmentProviderInputs: "experimental_environmentProviderInputs",
+  experimental_sidebarFooter: "experimental_sidebarFooter",
   fileOpener: "fileOpener",
   homepageSection: "homepageSection",
+  machineProviderInputs: "experimental_machineProviderInputs",
   messageDirective: "messageDirective",
   navPanel: "navPanel",
   navPanelFixedTab: "navPanel.experimental_fixedTabs",
@@ -17,9 +23,13 @@ export const PUBLIC_SURFACE_BY_SLOT_KIND = {
   pendingInteraction: "pendingInteraction",
   providerIcon: "experimental_providerIcon",
   settingsSection: "settingsSection",
+  sidebarHeader: "experimental_sidebarHeader",
+  sidebarNavigation: "experimental_sidebarNavigation",
+  sourceCodeRenderer: "experimental_sourceCodeRenderer",
   threadHeaderAction: "experimental_threadHeaderAction",
   threadList: "experimental_threadList",
   threadPanelAction: "threadPanelAction.component",
+  timelineRenderer: "experimental_timelineRenderer",
 } as const satisfies Readonly<Record<string, string>>;
 
 export interface PluginUiSurfacePromptContext {
@@ -28,6 +38,14 @@ export interface PluginUiSurfacePromptContext {
 }
 
 const PROMPT_CONTEXT_BY_SURFACE = {
+  experimental_appOverlay: {
+    registration: "app.slots.experimental_appOverlay",
+    role: "a plugin component rendered over the whole bb window",
+  },
+  experimental_browserToolbarAction: {
+    registration: "app.slots.experimental_browserToolbarAction",
+    role: "a plugin component rendered beside a Browser tab's address bar",
+  },
   "composer.actions": {
     registration: "app.composer.customize({ actions })",
     role: "a plugin component rendered in the composer action row",
@@ -38,11 +56,27 @@ const PROMPT_CONTEXT_BY_SURFACE = {
   },
   "composer.plusMenu": {
     registration: "app.composer.customize({ plusMenu })",
-    role: "a host-rendered plugin item in the composer's plus menu",
+    role: "a host-rendered plugin item in the composer's plus menu or send menu",
   },
   "composer.richText": {
     registration: "app.composer.customize({ richText })",
     role: "plugin-owned paint or behavior applied to composer text",
+  },
+  experimental_diffRenderer: {
+    registration: "app.slots.experimental_diffRenderer",
+    role: "the plugin component replacing bb's diff renderer",
+  },
+  experimental_environmentProviderInputs: {
+    registration: "app.slots.experimental_environmentProviderInputs",
+    role: "a plugin component collecting environment provider inputs for a new thread",
+  },
+  experimental_machineProviderInputs: {
+    registration: "app.slots.experimental_machineProviderInputs",
+    role: "a plugin component collecting machine provider inputs",
+  },
+  experimental_sidebarFooter: {
+    registration: 'app.experimental_sidebarFooter.register({ kind: "disclosure" })',
+    role: "a plugin disclosure opened from the sidebar footer",
   },
   fileOpener: {
     registration: "app.slots.fileOpener",
@@ -96,6 +130,18 @@ const PROMPT_CONTEXT_BY_SURFACE = {
     registration: "app.slots.settingsSection",
     role: "a plugin component rendered in its settings page",
   },
+  experimental_sidebarHeader: {
+    registration: "app.slots.experimental_sidebarHeader",
+    role: "the plugin component filling the sidebar header beside the sidebar toggle",
+  },
+  experimental_sidebarNavigation: {
+    registration: "app.slots.experimental_sidebarNavigation",
+    role: "the plugin component drawing bb's sidebar navigation rows (New thread, Search, plugin panels)",
+  },
+  experimental_sourceCodeRenderer: {
+    registration: "app.slots.experimental_sourceCodeRenderer",
+    role: "the plugin component replacing bb's source code renderer",
+  },
   sidebarFooterAction: {
     registration: "app.slots.sidebarFooterAction",
     role: "a host-rendered plugin action in the sidebar footer",
@@ -115,6 +161,10 @@ const PROMPT_CONTEXT_BY_SURFACE = {
   "threadPanelAction.run": {
     registration: "app.slots.threadPanelAction({ run })",
     role: "the host-rendered thread action and its run handler",
+  },
+  experimental_timelineRenderer: {
+    registration: "app.slots.experimental_timelineRenderer",
+    role: "a plugin component rendering a thread timeline row",
   },
   inline: {
     registration: "app.contentScripts.register or custom plugin DOM",
