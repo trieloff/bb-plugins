@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { test } from "bun:test";
 import {
   cleanupLegacyAmpEntry,
+  cleanupLegacyAmpSetting,
   inspectLegacyAmpEntry,
   legacyEntryDeviations,
   resolveAmpCliLaunch,
@@ -198,4 +199,38 @@ test("cleanup with no config file reports clean", () => {
   const f = fixture();
   assert.deepEqual(cleanupLegacyAmpEntry(f.paths), { kind: "clean" });
   assert.equal(existsSync(f.paths.configPath), false);
+});
+
+test("the provider-acp setting: no agents, or no amp agent, is clean", () => {
+  assert.deepEqual(cleanupLegacyAmpSetting(undefined), { kind: "clean" });
+  assert.deepEqual(cleanupLegacyAmpSetting(""), { kind: "clean" });
+  assert.deepEqual(cleanupLegacyAmpSetting(JSON.stringify([{ id: "other" }])), { kind: "clean" });
+});
+
+test("the provider-acp setting drops a plugin-managed amp agent and keeps the rest", () => {
+  // bb 0.46 migrated the entry without its logo, and with bb's Electron node.
+  const migrated = managedEntry({
+    command: "/Applications/bb.app/Contents/MacOS/bb",
+    env: { AMP_CLI_PATH: "/usr/local/bin/amp", ELECTRON_RUN_AS_NODE: "1" },
+  });
+  delete migrated.logo;
+  const other = { id: "auggie", displayName: "Auggie", command: "/bin/auggie" };
+  const result = cleanupLegacyAmpSetting(JSON.stringify([migrated, other], null, 2));
+  assert.equal(result.kind, "removed");
+  assert.deepEqual(JSON.parse(result.kind === "removed" ? result.customAgents : ""), [other]);
+  assert.deepEqual(cleanupLegacyAmpSetting(JSON.stringify([migrated])), {
+    kind: "removed",
+    customAgents: "",
+  });
+});
+
+test("the provider-acp setting keeps a customized amp agent", () => {
+  assert.deepEqual(cleanupLegacyAmpSetting(JSON.stringify([managedEntry({ cwd: "/work" })])), {
+    kind: "kept",
+    deviations: ["cwd"],
+  });
+});
+
+test("the provider-acp setting is never rewritten from a value that is not JSON", () => {
+  assert.throws(() => cleanupLegacyAmpSetting("[{"));
 });

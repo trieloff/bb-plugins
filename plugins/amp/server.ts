@@ -13,11 +13,14 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { buildAmpProviderDeclaration, threadLinkStateSchema } from "./lib/declaration.js";
 import {
+  ACP_PLUGIN_ID,
   cleanupLegacyAmpEntry,
+  cleanupLegacyAmpSetting,
   inspectLegacyAmpEntry,
   BRIDGE_BUILD_HINT,
   type LegacyCleanupResult,
   type LegacyConfigPaths,
+  type LegacySettingCleanup,
 } from "./lib/provision.js";
 import { AMP_THREAD_LINK_KIND } from "./src/bridge/kinds.js";
 import { AMP_AGENT } from "./src/execution-target.js";
@@ -95,6 +98,9 @@ const HOST_BUNDLE = existsSync(join(MODULE_DIR, "host.js"))
 /** How many extension-state rows to scan for the latest `amp/thread-link`.
  *  Other kinds may interleave; the thread-link row is normally first. */
 const THREAD_LINK_SCAN_LIMIT = 50;
+/** How long registration waits for bb to drop a removed legacy provider. */
+const LEGACY_PROVIDER_POLLS = 20;
+const LEGACY_PROVIDER_POLL_MS = 250;
 
 /** One call to a host entry. An Oracle card polls every 750 ms while its
  *  report runs, so a host that does not answer fails the poll fast. */
@@ -262,9 +268,15 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
 
   // A leftover customAcpAgents "amp" entry from the provisioning era shadows
   // this registration, so a purely plugin-managed one is removed here; a
-  // customized one is the user's and only reported. Resolves true when the
-  // entry was removed.
+  // customized one is the user's and only reported. Resolves true when an
+  // entry was removed from either home it can have.
   async function removeLegacyEntry(): Promise<boolean> {
+    const fromConfig = await removeLegacyConfigEntry();
+    const fromSetting = await removeLegacySettingEntry();
+    return fromConfig || fromSetting;
+  }
+
+  async function removeLegacyConfigEntry(): Promise<boolean> {
     const resolvedPaths = await legacyPaths();
     let result: LegacyCleanupResult;
     try {
@@ -289,6 +301,49 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
       );
     }
     return result.kind === "removed";
+  }
+
+  // bb 0.46 moved customAcpAgents into the provider-acp plugin's
+  // `customAgents` setting, so the entry the provisioning era wrote is there.
+  async function removeLegacySettingEntry(): Promise<boolean> {
+    let result: LegacySettingCleanup;
+    try {
+      const settings = await bb.sdk.plugins.getSettings({ pluginId: ACP_PLUGIN_ID });
+      result = cleanupLegacyAmpSetting(settings.values.customAgents);
+    } catch (error) {
+      bb.log.warn(`Could not inspect ${ACP_PLUGIN_ID} customAgents: ${String(error)}`);
+      return false;
+    }
+    if (result.kind === "kept") {
+      bb.log.warn(
+        `left the customized ${ACP_PLUGIN_ID} custom agent ${AMP_AGENT.agentId} (${result.deviations.join(", ")}); ` +
+          "it overrides the plugin registration; see `bb amp status`",
+      );
+      return false;
+    }
+    if (result.kind === "clean") return false;
+    try {
+      await bb.sdk.plugins.updateSettings({
+        pluginId: ACP_PLUGIN_ID,
+        values: { customAgents: result.customAgents },
+      });
+    } catch (error) {
+      bb.log.error(`Could not remove the legacy ${ACP_PLUGIN_ID} custom agent: ${String(error)}`);
+      return false;
+    }
+    bb.log.info(`removed the legacy ${ACP_PLUGIN_ID} custom agent ${AMP_AGENT.agentId}`);
+    return true;
+  }
+
+  /** Whether bb has dropped the legacy provider, polled for a few seconds:
+   *  the ACP plugin re-registers its agents after the write, not during it. */
+  async function legacyProviderGone(): Promise<boolean> {
+    for (let attempt = 0; attempt < LEGACY_PROVIDER_POLLS; attempt += 1) {
+      const providers = await bb.sdk.providers.list();
+      if (!providers.some((provider) => provider.id === AMP_AGENT.providerId)) return true;
+      await new Promise((resolve) => setTimeout(resolve, LEGACY_PROVIDER_POLL_MS));
+    }
+    return false;
   }
 
   /** Registers the provider; resolves to bb's refusal, or undefined. */
@@ -318,7 +373,9 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
         // bb 0.46 refuses to let a plugin shadow an existing provider, and the
         // legacy entry is one, so it has to go before the registration can
         // land rather than after.
-        if (await removeLegacyEntry()) error = registrationError();
+        if ((await removeLegacyEntry()) && (await legacyProviderGone())) {
+          error = registrationError();
+        }
         if (error === undefined) return;
         bb.log.error(`Could not register the Amp provider: ${String(error)}`);
         bb.status.needsConfiguration(
@@ -386,6 +443,25 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
       }
     } catch (error) {
       lines.push(`legacy config entry ${AMP_AGENT.agentId}: unknown (${String(error)})`);
+    }
+    const settingLabel = `legacy ${ACP_PLUGIN_ID} custom agent ${AMP_AGENT.agentId}`;
+    try {
+      const settings = await bb.sdk.plugins.getSettings({ pluginId: ACP_PLUGIN_ID });
+      const legacy = cleanupLegacyAmpSetting(settings.values.customAgents);
+      if (legacy.kind === "removed") {
+        lines.push(
+          `${settingLabel}: present (plugin-managed); run \`bb plugin reload amp\` to remove it`,
+        );
+      } else if (legacy.kind === "kept") {
+        lines.push(
+          `${settingLabel}: present with customized ${legacy.deviations.join(", ")} — ` +
+            "it overrides the plugin registration; remove it from that plugin's settings",
+        );
+      } else {
+        lines.push(`${settingLabel}: absent`);
+      }
+    } catch (error) {
+      lines.push(`${settingLabel}: unknown (${String(error)})`);
     }
     lines.push(
       "auth: handled by the Amp CLI — run `amp login` once, or export AMP_API_KEY in your environment",

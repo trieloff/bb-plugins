@@ -264,3 +264,32 @@ export function cleanupLegacyAmpEntry(paths: LegacyConfigPaths): LegacyCleanupRe
   }
   return { kind: "removed" };
 }
+
+/** The bb plugin that owns custom ACP agents since bb 0.46. */
+export const ACP_PLUGIN_ID = "provider-acp";
+
+export type LegacySettingCleanup =
+  | { kind: "clean" }
+  | { kind: "removed"; customAgents: string }
+  | { kind: "kept"; deviations: string[] };
+
+/**
+ * The same cleanup for bb 0.46 and later, which moved customAcpAgents into
+ * the provider-acp plugin's `customAgents` setting, a JSON array held as a
+ * string. A plugin-managed "amp" entry comes back as the value to write; a
+ * customized one is reported and left for the user. Throws on a value that
+ * is not JSON, so nothing is written over a setting this cannot read.
+ */
+export function cleanupLegacyAmpSetting(customAgents: unknown): LegacySettingCleanup {
+  if (typeof customAgents !== "string" || customAgents.trim() === "") return { kind: "clean" };
+  const agents: unknown = JSON.parse(customAgents);
+  if (!Array.isArray(agents)) return { kind: "clean" };
+  const entry = (agents as Record<string, unknown>[]).find(
+    (agent) => agent?.id === AMP_AGENT.agentId,
+  );
+  if (entry === undefined) return { kind: "clean" };
+  const deviations = legacyEntryDeviations(entry);
+  if (deviations.length > 0) return { kind: "kept", deviations };
+  const rest = agents.filter((agent) => agent !== entry);
+  return { kind: "removed", customAgents: rest.length === 0 ? "" : JSON.stringify(rest, null, 2) };
+}
