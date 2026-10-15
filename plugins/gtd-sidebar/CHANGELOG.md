@@ -62,6 +62,11 @@
 
 ### Patch Changes
 
+- Folding a family works again on bb 0.46, which retired the
+  `sidebar.collapsedThreads` preference: every fold and unfold failed. Folds
+  now live in the plugin's own storage, still survive a reload, and reach
+  every window, but no longer show in bb's built-in sidebar. Folds made before
+  0.46 start open once. A deleted thread's fold is dropped.
 - The one-click snooze shows the same "Snoozed until …" toast with **Undo** as
   a preset snooze, with the wake time the backoff ladder picked.
 - Snoozing a parent now parks its non-fork descendants together. Quick snooze

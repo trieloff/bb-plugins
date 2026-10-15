@@ -626,7 +626,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const db = bb.storage.database();
   bb.storage.migrate(db, migrationsForDatabase(db));
-  const collapsedThreads = createCollapsedThreadsStore(bb.sdk.system.uiPreferences);
+  const collapsedThreads = createCollapsedThreadsStore(bb.storage.kv);
 
   const shutdown = new AbortController();
   bb.onDispose(() => shutdown.abort());
@@ -1531,7 +1531,11 @@ export default async function plugin(bb: BbPluginApi) {
       return { threadIds: await collapsedThreads.list() };
     },
     async toggleCollapsedThread({ threadId }) {
-      return { threadIds: await collapsedThreads.toggle(threadId) };
+      const threadIds = await collapsedThreads.toggle(threadId);
+      // Every other window re-reads the list; the one that toggled already
+      // folded the row and applies this answer.
+      bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "collapsed" });
+      return { threadIds };
     },
     async listEnvironmentBranches({ environmentIds }) {
       if (!(await pluginSettings.get()).gitButlerBranches) return { environments: [] };
@@ -2048,6 +2052,9 @@ export default async function plugin(bb: BbPluginApi) {
   // thread reusing the id, and stale rows accumulate otherwise.
   bb.events.on("thread.deleted", ({ thread }) => {
     clear(thread.id);
+    void collapsedThreads
+      .forget(thread.id)
+      .catch((error: unknown) => bb.log.warn(`forget fold ${thread.id} failed: ${String(error)}`));
   });
 
   // One native feed routes pin and archive changes to only the client list
@@ -2063,22 +2070,6 @@ export default async function plugin(bb: BbPluginApi) {
         }
         if (event.changes.includes("archived-changed")) {
           bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "archive", threadId: event.id });
-        }
-      },
-    }),
-  );
-
-  // A fold made in bb's own sidebar lands here through the same preference;
-  // the publish is so every window re-reads it.
-  bb.onDispose(
-    bb.sdk.subscribe({
-      event: "system:changed",
-      callback: (event) => {
-        if (event.changes.includes("ui-preferences-changed")) {
-          bb.realtime.publish(LIFECYCLE_CHANNEL, {
-            kind: "collapsed",
-            preference: "sidebar.collapsedThreads",
-          });
         }
       },
     }),

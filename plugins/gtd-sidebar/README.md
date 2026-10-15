@@ -157,10 +157,10 @@ stays in bb's archive.
 
 ### Child threads
 
-A child sits under its parent with a disclosure chevron. Folding a family uses bb's
-own `sidebar.collapsedThreads` preference, so a family folded here is folded in bb's
-built-in sidebar too, and the fold survives a reload. Folded project groups stay
-session state.
+A child sits under its parent with a disclosure chevron. A folded family stays
+folded across reloads and in every window. bb 0.46 retired the shared
+`sidebar.collapsedThreads` preference, so a fold made here no longer shows in bb's
+built-in sidebar. Folded project groups stay session state.
 
 Drag a row onto another row to nest it there, or onto a project group header
 to lift it back to the top level. The move is bb's own parent change, so bb's

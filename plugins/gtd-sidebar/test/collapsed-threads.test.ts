@@ -7,44 +7,29 @@ import {
 } from "../lib/collapsed-threads.ts";
 import { collapsedThreadsMatch } from "../hooks/use-collapsed-threads.ts";
 
-/** bb's uiPreferences area, reduced to the one key and its revision check. */
-function fakeUiPreferences(initial: readonly string[]) {
-  const state = { revision: 1, value: [...initial] };
-  const writes: { key: string; expectedRevision: number; value: readonly string[] }[] = [];
-  const preferences = {
-    /** Bumps the revision as if bb's own sidebar had written in between. */
-    bump(value: readonly string[]) {
-      state.revision += 1;
-      state.value = [...value];
-    },
+/** The plugin's kv area, reduced to one map, with every write recorded. */
+function fakeKv(initial?: unknown) {
+  const values = new Map<string, unknown>();
+  if (initial !== undefined) values.set(COLLAPSED_THREADS_KEY, initial);
+  const writes: { key: string; value: unknown }[] = [];
+  return {
+    values,
     writes,
-    async list() {
-      return {
-        preferences: {
-          [COLLAPSED_THREADS_KEY]: { revision: state.revision, value: [...state.value] },
-        },
-      };
+    async get<T>(key: string) {
+      return values.get(key) as T | undefined;
     },
-    async set(args: { key: string; expectedRevision: number; value: string[] }) {
-      writes.push(args);
-      if (args.expectedRevision !== state.revision) {
-        throw new Error(`revision ${args.expectedRevision} is stale`);
-      }
-      state.revision += 1;
-      state.value = [...args.value];
-      return { key: args.key, revision: state.revision, value: [...state.value] };
+    async set(key: string, value: unknown) {
+      // Yield first, as bb's storage does, so overlapping writes interleave.
+      await Promise.resolve();
+      writes.push({ key, value });
+      values.set(key, value);
     },
   };
-  return preferences;
 }
 
-function storeOver(initial: readonly string[]) {
-  const preferences = fakeUiPreferences(initial);
-  // The fake carries `bump` and `writes`; the store only sees list and set.
-  const store = createCollapsedThreadsStore(
-    preferences as unknown as Parameters<typeof createCollapsedThreadsStore>[0],
-  );
-  return { preferences, store };
+function storeOver(initial?: unknown) {
+  const kv = fakeKv(initial);
+  return { kv, store: createCollapsedThreadsStore(kv) };
 }
 
 describe("toggleThreadId", () => {
@@ -64,45 +49,52 @@ describe("collapsedThreadsMatch", () => {
 });
 
 describe("createCollapsedThreadsStore", () => {
-  it("lists bb's sidebar.collapsedThreads value", async () => {
-    const { store } = storeOver(["root"]);
-    assert.deepEqual(await store.list(), ["root"]);
+  it("lists nothing before the first fold", async () => {
+    const { store } = storeOver();
+    assert.deepEqual(await store.list(), []);
   });
 
-  it("writes a toggle against the revision it read", async () => {
-    const { preferences, store } = storeOver(["root"]);
+  it("ignores a stored value that is not a list of ids", async () => {
+    assert.deepEqual(await storeOver({ root: true }).store.list(), []);
+    assert.deepEqual(await storeOver(["root", 7]).store.list(), ["root"]);
+  });
+
+  it("writes each toggle and lists what it wrote", async () => {
+    const { kv, store } = storeOver(["root"]);
     assert.deepEqual(await store.toggle("other"), ["root", "other"]);
     assert.deepEqual(await store.toggle("root"), ["other"]);
+    assert.deepEqual(await store.list(), ["other"]);
     assert.deepEqual(
-      preferences.writes.map((write) => [write.key, write.expectedRevision, write.value]),
+      kv.writes.map((write) => [write.key, write.value]),
       [
-        [COLLAPSED_THREADS_KEY, 1, ["root", "other"]],
-        [COLLAPSED_THREADS_KEY, 2, ["other"]],
+        [COLLAPSED_THREADS_KEY, ["root", "other"]],
+        [COLLAPSED_THREADS_KEY, ["other"]],
       ],
     );
   });
 
-  it("re-reads and retries when bb's own sidebar wrote first", async () => {
-    const { preferences, store } = storeOver(["root"]);
-    const original = preferences.set.bind(preferences);
-    let intercepted = false;
-    preferences.set = async (args) => {
-      if (!intercepted) {
-        // Another writer lands between this store's read and its write.
-        intercepted = true;
-        preferences.bump(["theirs"]);
-      }
-      return original(args);
-    };
-    assert.deepEqual(await store.toggle("mine"), ["theirs", "mine"]);
-    assert.deepEqual(await store.list(), ["theirs", "mine"]);
+  it("keeps both of two toggles that overlap", async () => {
+    const { store } = storeOver([]);
+    await Promise.all([store.toggle("a"), store.toggle("b")]);
+    assert.deepEqual(await store.list(), ["a", "b"]);
   });
 
-  it("gives up after repeated stale revisions", async () => {
-    const { preferences, store } = storeOver([]);
-    preferences.set = async () => {
-      throw new Error("stale");
+  it("keeps toggling after a write fails", async () => {
+    const { kv, store } = storeOver([]);
+    const original = kv.set;
+    kv.set = async () => {
+      throw new Error("storage offline");
     };
-    await assert.rejects(store.toggle("a"), /stale/);
+    await assert.rejects(store.toggle("a"), /storage offline/);
+    kv.set = original;
+    assert.deepEqual(await store.toggle("b"), ["b"]);
+  });
+
+  it("forgets a deleted thread's fold and writes nothing for an open one", async () => {
+    const { kv, store } = storeOver(["gone", "kept"]);
+    await store.forget("never-folded");
+    assert.equal(kv.writes.length, 0);
+    await store.forget("gone");
+    assert.deepEqual(await store.list(), ["kept"]);
   });
 });

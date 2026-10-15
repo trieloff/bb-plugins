@@ -22,13 +22,12 @@ export function collapsedThreadsMatch(
 }
 
 /**
- * bb's `sidebar.collapsedThreads` preference as the inbox's fold state — the
- * same list the built-in sidebar folds by, so a family folded there is folded
- * here, and the fold survives a reload.
+ * The inbox's fold state, kept by the backend so a fold survives a reload and
+ * reaches every window.
  *
  * A toggle applies locally first so the row folds on the click, then writes
- * through the backend. The backend relays bb's `ui-preferences-changed` on the
- * `lifecycle` channel, which re-reads the list for every window.
+ * through the backend. The backend publishes each write on the `lifecycle`
+ * channel, which re-reads the list for every window.
  */
 export function useCollapsedThreads(): CollapsedThreadsApi {
   const rpc = useRpc<typeof gtdSidebarRpcContract>();
