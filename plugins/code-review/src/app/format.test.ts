@@ -21,7 +21,10 @@ test("relativeTime says nothing for a value it cannot read", () => {
 });
 
 test("absoluteTime spells the moment out in the given locale and zone", () => {
-  expect(absoluteTime("2026-10-09T12:00:00Z", "en-US", "UTC")).toBe("Oct 9, 2026, 12:00 PM");
+  // ICU versions differ in the space before "PM", and macOS's ICU (which Bun
+  // uses there) joins the date and time with " at ".
+  const text = absoluteTime("2026-10-09T12:00:00Z", "en-US", "UTC").replace(/\s/gu, " ");
+  expect(text).toMatch(/^Oct 9, 2026(,| at) 12:00 PM$/u);
   expect(absoluteTime("nope")).toBe("");
 });
 

@@ -40,9 +40,10 @@ test("relativeTime is blank for a date the CLI did not supply", () => {
 });
 
 test("absoluteTime spells out the date and time", () => {
-  // Newer ICU puts a narrow no-break space before "PM".
+  // Newer ICU puts a narrow no-break space before "PM", and macOS's ICU
+  // (which Bun uses there) joins the date and time with " at ".
   const text = absoluteTime("2026-01-02T15:04:00Z", "en-US", "UTC").replace(/\s/gu, " ");
-  expect(text).toBe("Jan 2, 2026, 3:04 PM");
+  expect(text).toMatch(/^Jan 2, 2026(,| at) 3:04 PM$/u);
 });
 
 test("absoluteTime is blank for a date the CLI did not supply", () => {

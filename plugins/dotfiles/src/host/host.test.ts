@@ -155,9 +155,10 @@ test("a missing checkout reads as missing, with ~ expanded on this machine", asy
 });
 
 test("tasks run in the checkout through the login shell, output merged for display", async () => {
+  // The shell's `pwd` resolves symlinks, and macOS keeps tmpdir behind one.
   expect(await host.experimental_call("run", { repoPath: repo, command: "pwd" })).toEqual({
     exitCode: 0,
-    output: `${noise}${repo}\n`,
+    output: `${noise}${await realpath(repo)}\n`,
   });
   expect(await host.experimental_call("run", { repoPath: repo, command: "exit 3" })).toEqual({
     exitCode: 3,
