@@ -262,15 +262,16 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
 
   // A leftover customAcpAgents "amp" entry from the provisioning era shadows
   // this registration, so a purely plugin-managed one is removed here; a
-  // customized one is the user's and only reported.
-  async function removeLegacyEntry(): Promise<void> {
+  // customized one is the user's and only reported. Resolves true when the
+  // entry was removed.
+  async function removeLegacyEntry(): Promise<boolean> {
     const resolvedPaths = await legacyPaths();
     let result: LegacyCleanupResult;
     try {
       result = cleanupLegacyAmpEntry(resolvedPaths);
     } catch (error) {
       bb.log.warn(`Could not inspect ${resolvedPaths.configPath}: ${String(error)}`);
-      return;
+      return false;
     }
     if (result.kind === "removed") {
       bb.log.info(`removed the legacy customAcpAgents entry ${AMP_AGENT.agentId}`);
@@ -287,6 +288,17 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
           "it overrides the plugin registration, and bb is retiring customAcpAgents; see `bb amp status`",
       );
     }
+    return result.kind === "removed";
+  }
+
+  /** Registers the provider; resolves to bb's refusal, or undefined. */
+  function registrationError(): unknown {
+    try {
+      bb.providers.register(buildAmpProviderDeclaration(orb));
+      return undefined;
+    } catch (error) {
+      return error ?? new Error("bb refused the provider registration");
+    }
   }
 
   // Register the provider on first load, so installing the plugin is the whole
@@ -298,16 +310,20 @@ async function registerPlugin(bb: BbPluginApi, reporter: SentryPluginReporter | 
   bb.background.service("register", {
     async start() {
       return observeFailure(reporter, "background.service", "register", async () => {
-        try {
-          bb.providers.register(buildAmpProviderDeclaration(orb));
-        } catch (error) {
-          bb.log.error(`Could not register the Amp provider: ${String(error)}`);
-          bb.status.needsConfiguration(
-            `Could not register the Amp provider: ${String(error)}. Fix the problem, then run \`bb plugin reload amp\`.`,
-          );
+        let error = registrationError();
+        if (error === undefined) {
+          await removeLegacyEntry();
           return;
         }
-        await removeLegacyEntry();
+        // bb 0.46 refuses to let a plugin shadow an existing provider, and the
+        // legacy entry is one, so it has to go before the registration can
+        // land rather than after.
+        if (await removeLegacyEntry()) error = registrationError();
+        if (error === undefined) return;
+        bb.log.error(`Could not register the Amp provider: ${String(error)}`);
+        bb.status.needsConfiguration(
+          `Could not register the Amp provider: ${String(error)}. Fix the problem, then run \`bb plugin reload amp\`.`,
+        );
       });
     },
   });
