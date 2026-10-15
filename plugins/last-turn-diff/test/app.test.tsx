@@ -22,6 +22,50 @@ const first: LatestTurn = {
   ],
 };
 
+test("temporary files are absent from the card and its totals", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Original answer.</p></div>';
+  document.body.append(host);
+  let turn: LatestTurn = {
+    ...first,
+    changes: [
+      { ...first.changes[0]!, patch: null },
+      {
+        id: "tmp",
+        path: "/tmp/review.txt",
+        workspace: "tmp",
+        patch: null,
+        added: 40,
+        removed: 20,
+      },
+      { id: "private-tmp", path: "/private/tmp/check.txt", patch: null, added: 10, removed: 5 },
+    ],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-1", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const ui = within(host);
+    await ui.findByText("1 file changed");
+    const heading = within(host.querySelector<HTMLElement>(".last-turn-diff-heading")!);
+    expect(heading.getByText("+1")).toBeTruthy();
+    expect(heading.getByText("-1")).toBeTruthy();
+    expect(ui.queryByText("review.txt")).toBeNull();
+    expect(ui.queryByText("/private/tmp/check.txt")).toBeNull();
+    fireEvent.click(ui.getByRole("button", { name: "Expand all" }));
+    expect(ui.getAllByText("No text diff recorded for this change.")).toHaveLength(1);
+    turn = { ...turn, changes: turn.changes.slice(1) };
+    await slot.behavior.emitRealtime(CHANGED_CHANNEL, { threadId: "thread-1" });
+    await waitFor(() => expect(host.querySelector("[data-last-turn-id]")).toBeNull());
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
 test("retains the preview on refresh, replaces newer changes, clears absent data, and cleans up", async () => {
   const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
   expect(captured.messageDirectives).toEqual([]);
@@ -154,13 +198,17 @@ test("Pierre owns the file header while expanded patches use the host Diff compo
   try {
     const toggle = await ui.findByRole("button", { name: "Expand after.ts" });
     expect(ui.queryByTestId("bb-diff")).toBeNull();
+    expect(ui.queryByText(/Edit \d+ of/)).toBeNull();
     const header = host.querySelector(".last-turn-diff-file-header")!;
     await waitFor(() =>
       expect(header.shadowRoot?.querySelector("[data-title]")?.textContent).toBe("after.ts"),
     );
     expect(header.shadowRoot?.querySelector("[data-prev-name]")?.textContent).toBe("before.ts");
-    expect(header.shadowRoot?.querySelector("[data-additions-count]")?.textContent).toBe("+1");
-    expect(header.shadowRoot?.querySelector("[data-deletions-count]")?.textContent).toBe("-1");
+    // The row shows the card's own "+added -removed" counts, not Pierre's.
+    expect(header.querySelector(".last-turn-diff-row-meta")?.textContent).toBe("+1 -1");
+    expect(
+      ui.getByRole("button", { name: "Expand after.ts", description: "Renamed from before.ts" }),
+    ).toBeTruthy();
 
     fireEvent.click(toggle);
     expect(ui.getByTestId("bb-diff").textContent).toBe(patch);
@@ -194,4 +242,441 @@ test("a missing or virtualized target does not attach a diff to another message"
   row.remove();
   dispose();
   host.remove();
+});
+
+test("other agents' changes are labeled and left out of the totals", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML =
+    '<div data-timeline-row-id="message-1"><div data-message-column><p>Answer.</p></div></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    changes: [],
+    otherPatch:
+      "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1,2 @@\n b\n+from agent B\n",
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-1", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    await waitFor(() => expect(host.querySelector("[data-last-turn-id]")).not.toBeNull());
+    const card = within(host.querySelector<HTMLElement>("[data-last-turn-id]")!);
+    expect(card.getByRole("heading", { name: /^Changed while other agents ran/ })).toBeTruthy();
+    // The turn claims no files or counts of its own.
+    expect(card.getByRole("heading", { level: 3 }).textContent).toBe("Last turn");
+    // Collapsed by default: the files stay hidden and Expand all has nothing to open.
+    const group = card.getByRole("button", { name: "Changed while other agents ran 1 file" });
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    expect(card.queryByRole("button", { name: "Expand b.ts" })).toBeNull();
+    expect(card.queryByRole("button", { name: "Expand all" })).toBeNull();
+    fireEvent.click(group);
+    expect(group.getAttribute("aria-expanded")).toBe("true");
+    await waitFor(() => expect(card.getByRole("button", { name: "Expand b.ts" })).toBeTruthy());
+    expect(card.getByRole("button", { name: "Expand all" })).toBeTruthy();
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("bulk toggles leave the collapsed others group's files alone", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML =
+    '<div data-timeline-row-id="message-1"><div data-message-column><p>Answer.</p></div></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    otherPatch:
+      "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1,2 @@\n b\n+from agent B\n",
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-bulk", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    await waitFor(() => expect(host.querySelector("[data-last-turn-id]")).not.toBeNull());
+    const card = within(host.querySelector<HTMLElement>("[data-last-turn-id]")!);
+    const group = card.getByRole("button", { name: "Changed while other agents ran 1 file" });
+    // The others group labels itself, so the turn's own files need no label.
+    expect(
+      card.getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent),
+    ).toEqual(["Changed while other agents ran1 file"]);
+    fireEvent.click(group);
+    fireEvent.click(await card.findByRole("button", { name: "Expand b.ts" }));
+    fireEvent.click(group);
+    fireEvent.click(card.getByRole("button", { name: "Expand all" }));
+    expect(card.getByRole("button", { name: "Collapse first.ts" })).toBeTruthy();
+    fireEvent.click(group);
+    expect(await card.findByRole("button", { name: "Collapse b.ts" })).toBeTruthy();
+    fireEvent.click(group);
+    fireEvent.click(card.getByRole("button", { name: "Collapse all" }));
+    fireEvent.click(group);
+    expect(await card.findByRole("button", { name: "Collapse b.ts" })).toBeTruthy();
+    expect(card.getByRole("button", { name: "Expand first.ts" })).toBeTruthy();
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("a workspace labeled 'other' is not mistaken for other agents' changes", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML =
+    '<div data-timeline-row-id="message-1"><div data-message-column><p>Answer.</p></div></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    changes: [{ ...first.changes[0]!, id: "edit-2", path: "elsewhere.ts", workspace: "other" }],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-other-label", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    await waitFor(() => expect(host.querySelector("[data-last-turn-id]")).not.toBeNull());
+    const card = within(host.querySelector<HTMLElement>("[data-last-turn-id]")!);
+    expect(card.getByRole("button", { name: "Expand elsewhere.ts" })).toBeTruthy();
+    expect(card.queryByRole("button", { name: /^Changed while other agents/ })).toBeNull();
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("successive edits share one file entry and retain every recorded patch", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    changes: [
+      {
+        id: "a",
+        path: "/ws/project/skill.md",
+        relPath: "skill.md",
+        workspace: "project",
+        patch: "@@ -1 +1 @@\n-old\n+middle\n",
+        added: 1,
+        removed: 1,
+      },
+      {
+        id: "b",
+        path: "/ws/project/skill.md",
+        relPath: "skill.md",
+        workspace: "project",
+        patch: "@@ -1 +1,2 @@\n-middle\n+final\n+extra\n",
+        added: 2,
+        removed: 1,
+      },
+    ],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-repeated", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const ui = within(host);
+    const toggle = await ui.findByRole("button", { name: "Expand skill.md" });
+    expect(ui.getAllByRole("button", { name: "Expand skill.md" })).toHaveLength(1);
+    expect(ui.getByText("1 file changed").textContent).toBe("1 file changed");
+    expect(
+      within(host.querySelector<HTMLElement>(".last-turn-diff-heading")!).getByText("+3")
+        .textContent,
+    ).toBe("+3");
+    const header = host.querySelector(".last-turn-diff-file-header")!;
+    await waitFor(() => expect(header.textContent).toContain("+3"));
+    expect(header.textContent).toContain("-2");
+    expect(header.textContent).toContain("2 edits");
+    fireEvent.click(toggle);
+    expect(ui.getByText("Edit 1 of 2").textContent).toBe("Edit 1 of 2");
+    expect(ui.getByText("Edit 2 of 2").textContent).toBe("Edit 2 of 2");
+    expect(ui.getAllByTestId("bb-diff").map((diff) => diff.textContent)).toEqual([
+      "@@ -1 +1 @@\n-old\n+middle\n",
+      "@@ -1 +1,2 @@\n-middle\n+final\n+extra\n",
+    ]);
+    fireEvent.click(ui.getByRole("button", { name: "Collapse all" }));
+    expect(ui.queryAllByTestId("bb-diff")).toHaveLength(0);
+    fireEvent.click(ui.getByRole("button", { name: "Expand all" }));
+    expect(ui.getAllByTestId("bb-diff")).toHaveLength(2);
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("matching paths in different workspace and attribution groups stay separate", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    changes: [
+      { id: "own", path: "same.ts", patch: null, added: 1, removed: 0 },
+      { id: "foreign", path: "same.ts", workspace: "elsewhere", patch: null, added: 2, removed: 0 },
+      { id: "other", path: "same.ts", other: true, patch: null, added: 10, removed: 0 },
+      { id: "other-again", path: "same.ts", other: true, patch: null, added: 20, removed: 0 },
+    ],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-distinct-groups", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const ui = within(host);
+    await ui.findByText("2 files changed");
+    expect(ui.getAllByRole("button", { name: "Expand same.ts" })).toHaveLength(2);
+    // Rows hide a zero side; the heading keeps both.
+    expect(
+      [...host.querySelectorAll(".last-turn-diff-row-meta")].map((meta) => meta.textContent),
+    ).toEqual(["+1", "+2"]);
+    expect(host.querySelector(".last-turn-diff-heading .last-turn-diff-counts")?.textContent).toBe(
+      "+3 -0",
+    );
+    expect(
+      within(host.querySelector<HTMLElement>(".last-turn-diff-heading")!).getByText("+3")
+        .textContent,
+    ).toBe("+3");
+    fireEvent.click(ui.getByRole("button", { name: "Changed while other agents ran 1 file" }));
+    expect(ui.getAllByRole("button", { name: "Expand same.ts" })).toHaveLength(3);
+    fireEvent.click(ui.getByRole("button", { name: "Expand all" }));
+    expect(ui.getAllByText("No text diff recorded for this change.")).toHaveLength(4);
+    expect(ui.getByText("Edit 2 of 2").textContent).toBe("Edit 2 of 2");
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("a grouped Unity file keeps context and raw YAML on the matching edit", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    changes: [
+      {
+        id: "first",
+        path: "Hero.prefab",
+        patch: "@@ -1 +1 @@\n-old\n+middle\n",
+        added: 1,
+        removed: 1,
+      },
+      {
+        id: "second",
+        path: "Hero.prefab",
+        patch: "@@ -1 +1 @@\n-middle\n+final\n",
+        added: 1,
+        removed: 1,
+      },
+    ],
+    unity: {
+      second: {
+        groups: [
+          {
+            id: "hero",
+            name: "Hero",
+            hierarchy: "",
+            status: "modified",
+            components: [
+              {
+                id: "object",
+                type: "GameObject",
+                status: "modified",
+                properties: [{ path: "m_IsActive", before: "1", after: "0" }],
+              },
+            ],
+          },
+        ],
+        propertyCount: 1,
+      },
+    },
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-unity-edits", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const ui = within(host);
+    fireEvent.click(await ui.findByRole("button", { name: "Expand Hero.prefab" }));
+    expect(ui.getAllByTestId("bb-diff").map((diff) => diff.textContent)).toEqual([
+      "@@ -1 +1 @@\n-old\n+middle\n",
+    ]);
+    const unity = within(ui.getByRole("region", { name: "Unity changes in Hero.prefab" }));
+    expect(unity.getByText("Hero").textContent).toBe("Hero");
+    expect(unity.getByText("1").textContent).toBe("1");
+    expect(unity.getByText("0").textContent).toBe("0");
+    fireEvent.click(unity.getByRole("button", { name: "Raw YAML" }));
+    expect(ui.getAllByTestId("bb-diff").map((diff) => diff.textContent)).toEqual([
+      "@@ -1 +1 @@\n-old\n+middle\n",
+      "@@ -1 +1 @@\n-middle\n+final\n",
+    ]);
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("the limit notice says the file list and totals may be incomplete", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const turn: LatestTurn = { ...first, limited: true };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-limited", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const notice = await within(host).findByText(/too large to preview/);
+    expect(notice.textContent).toBe(
+      "Some changes are too large to preview, so the file list and totals may be incomplete.",
+    );
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("a grouped entry takes its change type from its first and last edits", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const git = (path: string) => `diff --git a/${path} b/${path}\n`;
+  const create = (id: string, path: string) => ({
+    id,
+    path,
+    patch: `${git(path)}new file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+a\n`,
+    added: 1,
+    removed: 0,
+  });
+  const remove = (id: string, path: string) => ({
+    id,
+    path,
+    patch: `${git(path)}deleted file mode 100644\n--- a/${path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n`,
+    added: 0,
+    removed: 1,
+  });
+  const modify = (id: string, path: string) => ({
+    id,
+    path,
+    patch: `${git(path)}--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-a\n+b\n`,
+    added: 1,
+    removed: 1,
+  });
+  const turn: LatestTurn = {
+    ...first,
+    changes: [
+      create("a", "new.ts"),
+      modify("b", "new.ts"),
+      modify("c", "gone.ts"),
+      remove("d", "gone.ts"),
+      // Existed on both sides, or on neither: modified either way.
+      remove("e", "back.ts"),
+      create("f", "back.ts"),
+      create("g", "brief.ts"),
+      remove("h", "brief.ts"),
+    ],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-grouped-types", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const ui = within(host);
+    await ui.findByRole("button", { name: "Expand new.ts" });
+    const status = (path: string) =>
+      document.getElementById(
+        ui.getByRole("button", { name: `Expand ${path}` }).getAttribute("aria-describedby")!,
+      )?.textContent;
+    expect(["new.ts", "gone.ts", "back.ts", "brief.ts"].map(status)).toEqual([
+      "Added",
+      "Deleted",
+      "Modified",
+      "Modified",
+    ]);
+    expect(
+      [...host.querySelectorAll(".last-turn-diff-row-meta")].map((meta) => meta.textContent),
+    ).toEqual(["2 edits+2 -1", "2 edits+1 -2", "2 edits+1 -1", "2 edits+1 -1"]);
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("a foreign workspace keeps its label beside the others group", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const turn: LatestTurn = {
+    ...first,
+    changes: [
+      { id: "foreign", path: "same.ts", workspace: "elsewhere", patch: null, added: 1, removed: 0 },
+      { id: "other", path: "b.ts", other: true, patch: null, added: 1, removed: 0 },
+    ],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-foreign-label", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const ui = within(host);
+    await ui.findByRole("button", { name: "Expand same.ts" });
+    expect(ui.getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent)).toEqual([
+      "elsewhere",
+      "Changed while other agents ran1 file",
+    ]);
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
+});
+
+test("a rename announces its source path as shown", async () => {
+  const captured = await loadPluginApp(() => import("../src/app/app.tsx"));
+  const host = document.createElement("div");
+  host.innerHTML = '<div data-timeline-row-id="message-1"><p>Answer.</p></div>';
+  document.body.append(host);
+  const patch = [
+    "diff --git a/a/source.ts b/dest.ts",
+    "similarity index 100%",
+    "rename from a/source.ts",
+    "rename to dest.ts",
+    "",
+  ].join("\n");
+  const turn: LatestTurn = {
+    ...first,
+    changes: [{ id: "rename", path: "dest.ts", patch, added: 0, removed: 0 }],
+  };
+  const slot = renderSlot(
+    captured.threadHeaderActions[0]!,
+    { threadId: "thread-rename-dir", projectId: "p", isCompactViewport: false },
+    { rpc: { latestTurn: async () => ({ turn }) } },
+  );
+  try {
+    const toggle = await within(host).findByRole("button", { name: "Expand dest.ts" });
+    expect(document.getElementById(toggle.getAttribute("aria-describedby")!)?.textContent).toBe(
+      "Renamed from a/source.ts",
+    );
+  } finally {
+    slot.unmount();
+    host.remove();
+  }
 });

@@ -1,6 +1,8 @@
 import {
   memo,
+  useEffect,
   useRef,
+  useId,
   useState,
   type CSSProperties,
   type PointerEvent,
@@ -14,6 +16,7 @@ import {
 import { Icon } from "../ui/icon";
 import { cn } from "../../lib/utils";
 import { RowContextMenu } from "./row-context-menu";
+import { openMenuFromKeyboard } from "./menu-surface";
 import { useThreadRename } from "./inline-rename";
 import { LIST_HOVER_TRANSITION } from "./row-motion";
 import { CompactThreadActionMenu } from "./thread-action-menu";
@@ -23,16 +26,18 @@ import {
   type DispatchRowCommand,
   type ThreadAction,
 } from "./thread-actions";
-import { STATUS_SLOT_CLASS, ShortcutPill, StatusOrTime } from "./status-slot";
+import { STATUS_SLOT_CLASS, ShortcutPill, StatusOrTime, rowDescribedBy } from "./status-slot";
 import { FadingText, HostLead, ThreadDetails } from "./thread-details";
 import type { ProviderGlyphInfo } from "./provider-glyph";
 import { snoozeWakeLabel } from "../../lib/lifecycle";
 import { useIosLongPress } from "../../hooks/use-ios-long-press";
 import { useCommittedEvent } from "../../hooks/use-committed-event";
-import { ThreadHierarchy } from "./thread-card";
+import { useMinuteClock } from "../../hooks/use-minute-clock";
+import { ThreadHierarchy, TouchDisclosureGlyph, compactRowPaddingLeft } from "./thread-card";
 
 interface SlimRowProps {
   thread: PluginSidebarThread;
+  isUnread: boolean;
   isActive: boolean;
   isNaming?: boolean;
   compactThreads: boolean;
@@ -41,7 +46,6 @@ interface SlimRowProps {
   provider?: ProviderGlyphInfo;
   shelf: "snoozed" | "settled";
   wakeAt: number | null;
-  now: number;
   isCompactViewport: boolean;
   command: DispatchRowCommand;
   depth: number;
@@ -74,6 +78,7 @@ export const SlimRow = memo(function SlimRow(props: SlimRowProps) {
  */
 const SlimRowBody = memo(function SlimRowBody({
   thread,
+  isUnread,
   compactThreads,
   projectName,
   branchName,
@@ -82,7 +87,6 @@ const SlimRowBody = memo(function SlimRowBody({
   isNaming = false,
   shelf,
   wakeAt,
-  now,
   isCompactViewport,
   command,
   depth,
@@ -96,6 +100,9 @@ const SlimRowBody = memo(function SlimRowBody({
   onSplitPointerDown?: (event: PointerEvent<HTMLElement>) => void;
 }) {
   const title = thread.displayTitle;
+  const unreadId = useId();
+  // A snoozed row's slot holds its wake time, so that is what it is heard with.
+  const statusId = useId();
   const rename = useThreadRename(thread.id, title);
   const onRestore = () => command({ kind: "restore", threadId: thread.id, shelf });
   const plan = buildThreadActionPlan({
@@ -111,8 +118,13 @@ const SlimRowBody = memo(function SlimRowBody({
   const [isMenuOpen, setMenuOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
   const { isPressing, handlers } = useIosLongPress(() => setMenuOpen(true), {
-    enabled: isCompactViewport,
+    enabled: isCompactViewport && !rename.isEditing,
   });
+  // The sheet only renders on a compact viewport. Leaving it with the sheet
+  // open must not strand the row hidden under a sheet that is gone.
+  useEffect(() => {
+    if (!isCompactViewport) setMenuOpen(false);
+  }, [isCompactViewport]);
 
   const compact = compactThreads && !isCompactViewport;
   const shortcut = useSidebarThreadShortcut(thread.id);
@@ -128,20 +140,33 @@ const SlimRowBody = memo(function SlimRowBody({
   const status = shortcut ? (
     <ShortcutPill shortcut={shortcut} />
   ) : (
-    <SlimRowStatusLabel thread={thread} shelf={shelf} wakeAt={wakeAt} now={now} />
+    <SlimRowStatusLabel
+      thread={thread}
+      isUnread={isUnread}
+      shelf={shelf}
+      wakeAt={wakeAt}
+      isCompactViewport={isCompactViewport}
+    />
   );
+  // The row's own line, padded by the menu the way the row is padded, so the
+  // chevron, title, status and restore glyph hold their places as it lifts.
   const highlightContent = (
-    <div className="flex h-full items-center gap-2 px-2.5 text-xs">
-      <span
-        data-gtd-naming={isNaming || undefined}
-        className={cn("min-w-0 flex-1 truncate", titleClassName)}
-      >
-        {title}
-      </span>
-      <span className={cn(STATUS_SLOT_CLASS, "tabular-nums text-2xs", "text-muted-foreground")}>
-        {status}
-      </span>
-    </div>
+    <>
+      <TouchDisclosureGlyph depth={depth} childCount={childCount} expanded={expanded} />
+      <div className="flex h-full items-center gap-1.5 text-xs">
+        <HostLead host={thread.host} />
+        <span
+          data-gtd-naming={isNaming || undefined}
+          className={cn("gtd-naming-text min-w-0 flex-1 truncate", titleClassName)}
+        >
+          {title}
+        </span>
+        <span className={cn(STATUS_SLOT_CLASS, "tabular-nums text-2xs", "text-muted-foreground")}>
+          {status}
+        </span>
+        <RestoreGlyph action={restoreAction} />
+      </div>
+    </>
   );
 
   return (
@@ -150,16 +175,18 @@ const SlimRowBody = memo(function SlimRowBody({
       command={command}
       plan={plan}
       rename={rename}
+      canSplit={onSplitPointerDown !== undefined}
       disabled={isCompactViewport}
     >
-      <li className="list-none">
+      <div>
         <div
           ref={rowRef}
           data-sidebar-rename-row=""
           {...handlers}
           data-action-count={isCompactViewport ? 0 : 1}
           className={rowClassName}
-          style={rowStyle}
+          // Merged: the hold's style mutes iOS's link callout and selection.
+          style={{ ...handlers.style, ...rowStyle }}
         >
           <ThreadHierarchy
             threadId={thread.id}
@@ -189,7 +216,17 @@ const SlimRowBody = memo(function SlimRowBody({
               data-sidebar-rename-anchor=""
               href="#"
               aria-label={title}
+              aria-describedby={rowDescribedBy(statusId, unreadId, {
+                thread,
+                isUnread,
+                shortcut,
+              })}
               aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
+              aria-current={isActive ? "page" : undefined}
+              onKeyDown={(event) => {
+                // Shift+F10 or the Menu key, as on a card.
+                if (!isCompactViewport) openMenuFromKeyboard(event);
+              }}
               onDoubleClick={rename.onDoubleClick}
               onClick={(event) => {
                 if (event.button !== 0) return;
@@ -205,6 +242,11 @@ const SlimRowBody = memo(function SlimRowBody({
               className="absolute inset-0 cursor-pointer rounded-xl"
             />
           </ThreadDetails>
+          {isUnread ? (
+            <span id={unreadId} className="sr-only">
+              {thread.isUnread ? "Unread response" : "Unread response in subthreads"}
+            </span>
+          ) : null}
           <HostLead host={thread.host} />
           {rename.isEditing ? (
             // The title's classes minus the click-through and the clip, which
@@ -224,6 +266,8 @@ const SlimRowBody = memo(function SlimRowBody({
               aria-busy={isNaming || undefined}
               className={cn(
                 "pointer-events-none relative min-w-0 flex-1 truncate",
+                // The compact viewport paints the title here, not in a FadingText.
+                isCompactViewport && "gtd-naming-text",
                 titleClassName,
                 "group-hover/slim:text-foreground",
               )}
@@ -232,22 +276,27 @@ const SlimRowBody = memo(function SlimRowBody({
             </span>
           )}
           <SlimRowStatus
+            statusId={statusId}
             status={status}
-            shelf={shelf}
             restoreAction={restoreAction}
             isCompactViewport={isCompactViewport}
           />
           {isCompactViewport ? (
             <CompactThreadActionMenu
+              thread={thread}
+              command={command}
+              rename={rename}
               plan={plan}
+              canSplit={false}
               open={isMenuOpen}
               onOpenChange={setMenuOpen}
               anchorRef={rowRef}
+              isActive={isActive}
               highlightContent={highlightContent}
             />
           ) : null}
         </div>
-      </li>
+      </div>
     </RowContextMenu>
   );
 });
@@ -268,14 +317,8 @@ function slimRowPresentation({
   return {
     rowStyle: {
       "--gtd-depth": depth,
-      ...(isCompactViewport
-        ? {
-            paddingLeft:
-              depth > 0 || childCount > 0
-                ? `calc(40px + var(--gtd-group-indent, 0px) + ${depth} * var(--gtd-depth-step, 8px))`
-                : "calc(22px + var(--gtd-leaf-group-indent, 0px))",
-          }
-        : {}),
+      // A card's columns, so a family keeps them when it moves shelves.
+      ...(isCompactViewport ? { paddingLeft: compactRowPaddingLeft(depth, childCount) } : {}),
     } as CSSProperties,
     rowClassName: cn(
       "group/slim relative flex items-center gap-1.5 rounded-xl px-2.5 text-xs",
@@ -283,8 +326,8 @@ function slimRowPresentation({
       compact && "gtd-compact-row",
       LIST_HOVER_TRANSITION,
       isCompactViewport ? "h-11" : "h-8 rounded-md",
-      isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
-      isPressing && "bg-sidebar-accent",
+      isActive ? "bg-state-active" : "hover:bg-sidebar-accent",
+      isPressing && !isActive && "bg-sidebar-accent",
       isMenuOpen && "bg-sidebar-accent opacity-0",
     ),
     titleClassName: cn(
@@ -296,30 +339,36 @@ function slimRowPresentation({
 
 function SlimRowStatusLabel({
   thread,
+  isUnread,
   shelf,
   wakeAt,
-  now,
+  isCompactViewport,
 }: {
   thread: PluginSidebarThread;
+  isUnread: boolean;
   shelf: "snoozed" | "settled";
   wakeAt: number | null;
-  now: number;
+  isCompactViewport: boolean;
 }) {
+  const now = useMinuteClock();
+  if (isUnread)
+    return <StatusOrTime thread={thread} isUnread isCompactViewport={isCompactViewport} />;
   return shelf === "snoozed" && wakeAt !== null ? (
     snoozeWakeLabel(wakeAt, now)
   ) : (
-    <StatusOrTime thread={thread} now={now} />
+    <StatusOrTime thread={thread} isCompactViewport={isCompactViewport} />
   );
 }
 
 function SlimRowStatus({
+  statusId,
   status,
-  shelf,
   restoreAction,
   isCompactViewport,
 }: {
+  /** The status's id, which the row's link names as its description. */
+  statusId: string;
   status: ReactNode;
-  shelf: "snoozed" | "settled";
   restoreAction: ThreadAction | undefined;
   isCompactViewport: boolean;
 }) {
@@ -336,34 +385,50 @@ function SlimRowStatus({
          the fixed slot exists to prevent. */}
       <span
         className={cn(
+          "gtd-slim-status-slot",
           STATUS_SLOT_CLASS,
           "pointer-events-none relative tabular-nums text-2xs",
           isCompactViewport ? "text-muted-foreground" : "text-muted-foreground/60",
         )}
       >
         <span
-          className={cn("flex items-center", !isCompactViewport && "group-hover/slim:opacity-0")}
+          id={statusId}
+          className={cn(
+            "gtd-slim-status flex items-center",
+            !isCompactViewport && "group-hover/slim:opacity-0",
+          )}
         >
           {status}
         </span>
         {!isCompactViewport && restoreAction !== undefined ? (
-          <RestoreButton action={restoreAction} shelf={shelf} isCompactViewport={false} />
+          <RestoreButton action={restoreAction} isCompactViewport={false} />
         ) : null}
       </span>
       {isCompactViewport && restoreAction !== undefined ? (
-        <RestoreButton action={restoreAction} shelf={shelf} isCompactViewport />
+        <RestoreButton action={restoreAction} isCompactViewport />
       ) : null}
     </>
   );
 }
 
+/** The touch restore button as a picture, for the lifted copy of the row. */
+function RestoreGlyph({ action }: { action: ThreadAction | undefined }) {
+  if (action === undefined) return null;
+  return (
+    <span
+      aria-hidden
+      className="flex size-10 shrink-0 items-center justify-center text-muted-foreground"
+    >
+      <Icon name={action.icon} className="size-4" />
+    </span>
+  );
+}
+
 function RestoreButton({
   action,
-  shelf,
   isCompactViewport,
 }: {
   action: ThreadAction;
-  shelf: "snoozed" | "settled";
   isCompactViewport: boolean;
 }) {
   return (
@@ -381,13 +446,10 @@ function RestoreButton({
         "pointer-events-auto rounded text-muted-foreground hover:text-foreground",
         isCompactViewport
           ? "relative z-[1] flex size-10 shrink-0 items-center justify-center hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          : "gtd-restore-button absolute -right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center opacity-0 focus-visible:opacity-100 group-hover/slim:opacity-100 group-focus-within/slim:opacity-100",
+          : "gtd-restore-button absolute -right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center opacity-0 focus-visible:opacity-100 group-hover/slim:opacity-100",
       )}
     >
-      <Icon
-        name={shelf === "snoozed" ? "Clock" : "ArrowTurnBackward"}
-        className={isCompactViewport ? "size-4" : "size-3.5"}
-      />
+      <Icon name={action.icon} className={isCompactViewport ? "size-4" : "size-3.5"} />
     </button>
   );
 }

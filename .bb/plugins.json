@@ -8,12 +8,24 @@
       "source": "./plugins/agentation"
     },
     {
+      "name": "agent-instructions",
+      "source": "./plugins/agent-instructions"
+    },
+    {
       "name": "amp",
       "source": "./plugins/amp"
     },
     {
       "name": "cloudflare",
       "source": "./plugins/cloudflare"
+    },
+    {
+      "name": "code-review",
+      "source": "./plugins/code-review"
+    },
+    {
+      "name": "devin",
+      "source": "./plugins/devin"
     },
     {
       "name": "dotfiles",
@@ -40,8 +52,20 @@
       "source": "./plugins/monokai"
     },
     {
+      "name": "prompt-editor",
+      "source": "./plugins/prompt-editor"
+    },
+    {
+      "name": "review",
+      "source": "./plugins/review"
+    },
+    {
       "name": "my-stack",
       "source": "./plugins/my-stack"
+    },
+    {
+      "name": "usage-bar",
+      "source": "./plugins/usage-bar"
     },
     {
       "name": "traces",
@@ -50,6 +74,10 @@
     {
       "name": "vimium",
       "source": "./plugins/vimium"
+    },
+    {
+      "name": "whiteboard",
+      "source": "./plugins/whiteboard"
     }
   ]
 }

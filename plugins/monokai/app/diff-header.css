@@ -1,5 +1,9 @@
+/* Each :is() panel scope in this file repeats PANEL in diff-header.ts. */
 [data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
+  :is(
+    [id^="thread-detail-secondary-panel"]:not(#thread-detail-secondary-panel-handle),
+    [data-testid="secondary-panel-shelf"]
+  )
   button:is(
     [aria-label="Open in editor"],
     [aria-label^="Open in editor ("],
@@ -25,31 +29,19 @@
   color: var(--diffs-modified-color-override);
 }
 
-.dark[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
+.dark[data-monokai-diff-headers] [data-monokai-diff-panel] [data-monokai-diff-shell] {
   min-height: 40px;
   padding-block: 0;
   padding-inline: 12px;
 }
 
-.dark[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  button[aria-expanded] {
-  margin-left: 0;
-}
-
 /* Pierre's landing-page chevron uses a 10x16 viewBox. Resizing BB's 24x24
  * stroke icon to 10x16 shrinks its artwork rather than matching that glyph. */
 .dark[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
+  :is(
+    [id^="thread-detail-secondary-panel"]:not(#thread-detail-secondary-panel-handle),
+    [data-testid="secondary-panel-shelf"]
+  )
   .bg-background
   > .flex
   > span
@@ -59,7 +51,10 @@
 }
 
 .dark[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
+  :is(
+    [id^="thread-detail-secondary-panel"]:not(#thread-detail-secondary-panel-handle),
+    [data-testid="secondary-panel-shelf"]
+  )
   .bg-background
   > .flex
   > span
@@ -75,7 +70,10 @@
 }
 
 .dark[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
+  :is(
+    [id^="thread-detail-secondary-panel"]:not(#thread-detail-secondary-panel-handle),
+    [data-testid="secondary-panel-shelf"]
+  )
   .bg-background
   > .flex
   > span
@@ -84,7 +82,10 @@
 }
 
 [data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
+  :is(
+    [id^="thread-detail-secondary-panel"]:not(#thread-detail-secondary-panel-handle),
+    [data-testid="secondary-panel-shelf"]
+  )
   .bg-background
   > .flex
   > span
@@ -92,30 +93,21 @@
   cursor: pointer;
 }
 
-[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
-  .bg-background
-  > .flex:has(> span > button[aria-expanded]) {
+/* diff-header.ts tags each header. A `.flex:has()` subject here would put
+ * every flex element in the app behind :has() invalidation. */
+[data-monokai-diff-headers] [data-monokai-diff-header] {
   position: relative;
   padding-right: 28px;
 }
 
-[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
-  .bg-background
-  > .flex:has(> span > button[aria-expanded])
-  button[aria-label^="Copy path for "] {
+[data-monokai-diff-headers] [data-monokai-diff-header] button[aria-label^="Copy path for "] {
   position: absolute;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
 }
 
-[data-monokai-diff-headers]
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf])
-  .bg-background
-  > .flex:has(> span > button[aria-expanded])
-  .truncate {
+[data-monokai-diff-headers] [data-monokai-diff-header] .truncate {
   text-overflow: clip;
 }
 

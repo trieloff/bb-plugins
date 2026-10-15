@@ -56,7 +56,7 @@ describe("buildThreadActionPlan", () => {
     });
   }
 
-  test("uses the sheet's short labels and never lists Archive", () => {
+  test("uses the sheet's labels and never lists Archive", () => {
     assert.deepEqual(
       plan(active(true)).map(({ label }) => label),
       ["Settle", "Snooze until tomorrow", "Pin", "Delete"],

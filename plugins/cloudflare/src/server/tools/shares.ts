@@ -1,16 +1,13 @@
-import type { Context } from "@bb-kit/core/plugin";
 import { defineTool } from "@bb-kit/core/tools";
 import type { ToolContext } from "@bb-kit/core/tools";
 import { z } from "zod";
 import { quickCreateSchema, quickIdSchema } from "../../shared/schema.ts";
-import { getQuickShares } from "../lib/quick-shares.ts";
+import type { CloudflareContext } from "../lib/context.ts";
 import { overview } from "../rpc/overview.ts";
 export const shares = defineTool({
   presentation: {
     label: { pending: "Managing Cloudflare shares", completed: "Managed Cloudflare shares" },
   },
-  description:
-    "Publish a local HTTP port from a BB host on a temporary public trycloudflare.com URL (a Cloudflare Quick Tunnel). create starts cloudflared on the host and returns the URL; omit hostId to use the thread's own host, or the only online host. Quick shares need no Cloudflare account, are unauthenticated (anyone with the URL reaches the port), and get a new URL on every start. list shows enrolled hosts and current shares; start, stop and remove take a share id. overview returns the connected Cloudflare account inventory (tunnels, Access, DNS). Access-protected shares on your own domain are managed in the Cloudflare panel.",
   parameters: z.discriminatedUnion("action", [
     z.object({ action: z.literal("overview") }).strict(),
     z.object({ action: z.literal("list") }).strict(),
@@ -19,9 +16,9 @@ export const shares = defineTool({
     quickIdSchema.extend({ action: z.literal("stop") }),
     quickIdSchema.extend({ action: z.literal("remove") }),
   ]),
-  async execute(ctx: ToolContext<Context>, input) {
+  async execute(ctx: ToolContext<CloudflareContext>, input) {
     const { action, ...params } = input;
-    const quick = getQuickShares(ctx.bb);
+    const quick = ctx.quickShares;
     switch (action) {
       case "overview":
         return JSON.stringify(await overview.execute(ctx));

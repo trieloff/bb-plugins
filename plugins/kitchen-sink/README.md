@@ -7,7 +7,7 @@
 
 # Kitchen Sink
 
-**Scott's kitchen sink of personal bb surfaces: composer commands, provider branding, Smart Embeds, and inline HTML visualizations.**
+**Scott's kitchen sink of personal bb surfaces: composer commands, provider branding, and Smart Embeds.**
 
 ![bb 0.41+](https://img.shields.io/badge/bb-0.41%2B-88C0D0?style=flat-square)
 
@@ -19,11 +19,10 @@ bb's `/` menu lists skills, so each composer command ships as a skill under `ski
 
 Kitchen Sink also supplies the official Devin icon for the `acp-devin` agent provider.
 
-| Command       | What the agent does                                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `/ship-it`    | Sends “Ship it”.                                                                                                     |
-| `/sync`       | Rebases the workspace onto the latest target branch and resolves every conflict by reading the intent of both sides. |
-| `/whiteboard` | Creates a Whiteboard for the request, then opens it in Whiteboard.                                                   |
+| Command    | What the agent does                                                                                                  |
+| ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/ship-it` | Sends “Ship it”.                                                                                                     |
+| `/sync`    | Rebases the workspace onto the latest target branch and resolves every conflict by reading the intent of both sides. |
 
 `/sync` detects GitButler with `but status` and routes every write through the `gitbutler` skill when it succeeds. Plain Git repositories use `git` and `gh`.
 
@@ -71,23 +70,7 @@ Add `annotations='[{"x":72,"y":38,"label":"Background removed","side":"after"}]'
 
 ## Inline visualizations
 
-`::inline-vis{file="/absolute/path/demo.html"}` renders HTML directly in an assistant message. `.md` and `.markdown` files use bb's Markdown renderer with sanitized HTML. An optional `height="480"` sets a 120–1200 pixel viewport. The default is 224 pixels.
-
-`file` is an absolute path on the thread's host. There is no `source` attribute or relative-path fallback. Files can live in the workspace, thread storage, or any other readable directory. Expand `$BB_THREAD_STORAGE` before emitting a directive. Existing relative directives must be updated.
-
-The plugin reads through the SDK and leases the document's directory for asset access. Static sibling `img[src]`, `video[src]`, and video `source[src]` files are fetched by the authenticated app and transferred as Blobs into the opaque iframe. Nested directories work. Parent-directory escapes and symlinks outside the document's directory fail. Markdown destinations resolve from the same directory. Links outside it remain as written and do not prevent the report from rendering. Keep HTML styles and scripts self-contained or use remote URLs.
-
-HTML runs with `sandbox="allow-scripts"`, without app cookies or storage access. The document limit is 5 MiB. Separate media use the host file API's limits (25 MiB for video and 10 MiB for raster images on BB 0.43.3). Remote URLs retain normal browser policies. Dynamically assigned local assets are not rewritten.
-
-For example, `/tmp/demo/player.html` can contain `<video controls src="./clip.mp4"></video>` beside `/tmp/demo/clip.mp4`. Emit `::inline-vis{file="/tmp/demo/player.html" height="400"}`. Keep both files in place.
-
-Only the last two previews per thread open automatically. The last collapse or expand choice is remembered on the client: after collapsing a preview, new previews stay collapsed until one is expanded. Collapsing unloads the preview. Reopening rereads the file. Open previews keep their state when the one-hour lease expires. Collapse and reopen to obtain a fresh lease for local links. The header opens the absolute file through the SDK host viewer.
-
-Keep preview files in a dedicated directory such as `.scratch/demo/`; the SDK lease covers that directory and its children. Markdown previews sanitize raw HTML, and local paths inside raw HTML do not resolve from the preview directory. Use `![Label](image.png)` for local images, or an HTML preview for explicit sizing or local video.
-
-bb leaves a directive literal when two plugins claim the same directive, so a fresh Kitchen Sink install disables bb's built-in `inline-vis` plugin once. Updates and reloads leave that choice alone. Re-enabling the built-in makes `::inline-vis` render as plain text. Removing Kitchen Sink does not re-enable it; run `bb plugin enable inline-vis` to get bb's renderer back.
-
-This capability is forked from bb's forkable built-in [`get-bb/bb/plugins/inline-vis`](https://github.com/get-bb/bb/tree/desktop-v0.44.0/plugins/inline-vis), last synced with `desktop-v0.44.0` (commit `0baa605b32a00619c1d7e3f32be6553ebcf8244a`) on 2026-09-26. UI that upstream imports through `@/components/ui/*` and `@/lib/*` is vendored from bb's component registry at that tag (`components.json`; update with `npx shadcn add @bb/<item>`). Kitchen Sink adds the Smart Embed card, the auto-open limit, and the absolute-path preview loader described above, which reads files through `useSdk()` instead of a plugin RPC. See `THIRD_PARTY_NOTICES.md`.
+`::inline-vis` moved to its own plugin, [`scott-inline-vis`](../scott-inline-vis/README.md), so its lineage from bb's forkable built-in stays clean.
 
 ## Add a command
 
@@ -99,9 +82,20 @@ Append a `PluginMentionProviderRegistration` to `mentionProviders` in `src/serve
 
 ## Turn completion sound
 
-Kitchen Sink plays Cursor's completion sound when a thread becomes idle, using
-macOS `afplay` on the Mac running BB. It also plays while the thread is focused.
-This uses the same sound asset as the retired Notify plugin and requires Cursor
-at `/Applications/Cursor.app`. Other operating systems skip playback. Missing
-assets or audio failures are logged without interrupting the agent. Plugin reload
-or shutdown stops any sound still playing.
+Kitchen Sink plays a sound in your browser when a thread becomes idle, so you
+hear it on the machine you are using, wherever the BB server runs. It also plays
+while the thread is focused or the tab is in the background.
+
+- **Sound:** Cursor's completion sound, the asset the retired Notify plugin used.
+  The server reads it from any connected machine with Cursor at
+  `/Applications/Cursor.app`, keeps it in memory, and serves it at
+  `/api/v1/plugins/kitchen-sink/http/completion-sound`. Kitchen Sink does not
+  ship the file. When no machine has Cursor, the browser synthesizes a short
+  chime instead.
+- **One tab plays:** with several BB tabs open, one tab per browser plays. A tab
+  takes part only after you have clicked or typed in it, because browsers block
+  sound in a tab you never touched.
+- **Blocked audio stays silent:** if the browser refuses playback, nothing is
+  shown and the agent is not interrupted. Safari allows sound only from audio
+  that a click or key press started, so the tab unlocks its audio on your first
+  click or key press, and again after any refusal.

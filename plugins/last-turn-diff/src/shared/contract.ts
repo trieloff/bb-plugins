@@ -12,6 +12,8 @@ export const changeSchema = z.object({
   workspace: z.string().optional(),
   /** Path relative to the owning workspace root, when it could be attributed. */
   relPath: z.string().optional(),
+  /** Changed while another thread in this checkout was mid-turn, and not recorded by this turn. */
+  other: z.boolean().optional(),
   /** The hunk header was synthesized client-side; line positions are unknown. */
   unpositioned: z.boolean().optional(),
 });
@@ -20,10 +22,14 @@ export const latestTurnSchema = z
     turnId: z.string(),
     anchorId: z.string().nullable(),
     patch: z.string().nullable(),
+    /** Snapshot changes attributed to other agents sharing this checkout. */
+    otherPatch: z.string().optional(),
     changes: z.array(changeSchema),
     limited: z.boolean(),
     /** Label of the thread's own workspace, used as the local section header. */
     workspace: z.string().optional(),
+    /** Known project roots, so checkouts in /tmp retain their own files. */
+    projectRoots: z.array(z.string()).optional(),
     unity: z.record(z.string(), unityDiffSchema).optional(),
   })
   .nullable();

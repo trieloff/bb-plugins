@@ -37,6 +37,7 @@
     "dist/*.css",
     "dist/*.json",
     "assets/",
+    "instructions/",
     "src/",
     "README.md",
     "LICENSE"
@@ -65,7 +66,7 @@
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "bun test --timeout=30000",
-    "check": "node --import tsx ../../packages/bb-kit-core/src/bin/bin.ts check",
+    "check": "node --import tsx ../../packages/bb-kit-dev/src/bin.ts check",
     "clean": "rm -rf dist"
   }
 }

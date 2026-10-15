@@ -1,4 +1,4 @@
-import { readInstructions } from "./instructions.ts";
+import { instructionFiles } from "@bb-kit/core/instructions";
 
 export type NamingIntent = { kind: "automatic" } | { kind: "forced" };
 
@@ -37,6 +37,7 @@ interface NamingPromptInput {
   type: string;
   text?: string;
   visibility?: "agent-only";
+  mentions?: readonly { resource: { kind: string; label: string } }[];
 }
 
 export type ThreadNamingEvent =
@@ -62,17 +63,19 @@ export interface PlanThreadNamingInput {
 
 const MAX_PROJECT_INSTRUCTIONS_LENGTH = 8_000;
 const MAX_GENERATED_TITLE_LENGTH = 96;
+const MAX_REQUEST_CONTEXT_LENGTH = 1_500;
 const titleSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-const THREAD_TITLE_FORMAT = readInstructions("thread-title-format");
-
-const GENERATE_TITLE_INSTRUCTIONS = `${readInstructions("generate-title")}\n${THREAD_TITLE_FORMAT}`;
-
-const REVIEW_TITLE_INSTRUCTIONS = `${readInstructions("review-title")}\n${THREAD_TITLE_FORMAT}`;
+// Naming prompts, editable in the Prompt Editor plugin. Read per call so an
+// edit applies to the next title without a reload.
+const files = instructionFiles(import.meta.url);
 
 export interface ThreadNamingPromptContext {
   initialUserPrompt?: string;
   recentUserPrompts?: readonly string[];
+  currentRequestContext?: string;
+  initialRequestContext?: string;
+  recentRequestContexts?: readonly string[];
   currentTitle?: string | null;
   allowKeep?: boolean;
 }
@@ -93,10 +96,19 @@ export function renderThreadNamingPrompt(
   const sections: readonly [string, string, number][] = [
     ["Current title", context.allowKeep ? (context.currentTitle ?? "") : "", 96],
     ["Current request", userPrompt, 1_000],
+    ["Current request context", context.currentRequestContext ?? "", MAX_REQUEST_CONTEXT_LENGTH],
     ["Project title rules", projectRules, 500],
     [
       "Original request",
       context.initialUserPrompt === userPrompt ? "" : (context.initialUserPrompt ?? ""),
+      300,
+    ],
+    [
+      "Original request context",
+      context.initialUserPrompt === userPrompt &&
+      context.initialRequestContext === context.currentRequestContext
+        ? ""
+        : (context.initialRequestContext ?? ""),
       300,
     ],
     [
@@ -107,8 +119,16 @@ export function renderThreadNamingPrompt(
         .join("\n"),
       500,
     ],
+    [
+      "Recent request context (oldest first)",
+      (context.recentRequestContexts ?? [])
+        .slice(-3)
+        .map((text) => text.slice(0, 160))
+        .join("\n"),
+      500,
+    ],
   ];
-  let prompt = context.allowKeep ? REVIEW_TITLE_INSTRUCTIONS : GENERATE_TITLE_INSTRUCTIONS;
+  let prompt = `${files.read(context.allowKeep ? "review-title" : "generate-title")}\n${files.read("thread-title-format")}`;
   for (const [label, value, limit] of sections) {
     const selected = value.trim().slice(0, limit);
     if (selected === "") continue;
@@ -135,6 +155,33 @@ function normalizeUserPrompt(
     .join(" ")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function normalizeRequestContext(
+  request: Extract<ThreadNamingEvent, { type: "client/turn/requested" }>,
+): string {
+  const labels = request.data.input.flatMap((input) =>
+    input.type === "text" && input.visibility !== "agent-only"
+      ? (input.mentions ?? []).map(({ resource }) => `@${resource.label} (${resource.kind})`)
+      : [],
+  );
+  const mentionLabels = [...new Set(labels)].join("\n").slice(0, 500);
+  // BB persists resolved composer chips as agent-only text on the same request.
+  const resolved = request.data.input
+    .filter((input) => input.type === "text" && input.visibility === "agent-only")
+    .map((input) => (input.text ?? "").trim())
+    .filter(Boolean);
+  // Share the available budget so one large chip cannot crowd out every other chip.
+  const blockLimit = Math.max(
+    0,
+    Math.floor(
+      (MAX_REQUEST_CONTEXT_LENGTH - mentionLabels.length - resolved.length) /
+        Math.max(1, resolved.length),
+    ),
+  );
+  return [mentionLabels, ...resolved.map((text) => text.slice(0, blockLimit))]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function turnRequests(
@@ -187,9 +234,9 @@ export function planThreadNaming({
 
   const userPrompt = normalizeUserPrompt(latestRequest);
   if (userPrompt === "") return { kind: "skip", reason: "missing-user-prompt" };
-  const userPrompts = userRequests(events)
-    .filter((event) => event.seq <= latestRequest.seq)
-    .map(normalizeUserPrompt);
+  const requests = userRequests(events).filter((event) => event.seq <= latestRequest.seq);
+  const userPrompts = requests.map(normalizeUserPrompt);
+  const requestContexts = requests.map(normalizeRequestContext);
   const allowKeep =
     intent.kind === "automatic" && userPrompts.length > 1 && Boolean(thread.title?.trim());
 
@@ -199,6 +246,9 @@ export function planThreadNaming({
     prompt: renderThreadNamingPrompt(userPrompt, projectInstructions, {
       initialUserPrompt: userPrompts[0],
       recentUserPrompts: userPrompts.slice(1, -1),
+      currentRequestContext: requestContexts.at(-1),
+      initialRequestContext: requestContexts[0],
+      recentRequestContexts: requestContexts.slice(1, -1),
       currentTitle: thread.title,
       allowKeep,
     }),
@@ -215,11 +265,29 @@ export function planThreadNaming({
   };
 }
 
-export function sanitizeGeneratedTitle(value: string): string | null {
-  const normalized = value
+function normalizeGeneratedTitle(value: string): string {
+  return value
     .replace(/^(?:\s*(?:📝|🛠️?|🐛|🧪|📦|⚙️?|♻️?|🔎|🚀|☑️?))+/u, "")
     .trim()
     .replace(/\s+/gu, " ");
+}
+
+// A separator can introduce commentary; another task word cannot.
+const KEEP_TITLE_REPLY =
+  /^keep( (?:the )?(?:(?:current|existing) )?(?:thread )?title)?(?=[.!]?$|[.!:;,]?\s+[(—–-]|[.!:;]\s)/iu;
+
+export function isKeepTitleReply(value: string, allowProse = true): boolean {
+  const normalized = normalizeGeneratedTitle(value);
+  const candidates = [normalized, normalized.replace(/^[^:]+:\s*/u, "")];
+  return candidates.some((candidate) => {
+    const match = KEEP_TITLE_REPLY.exec(candidate.replace(/^(?:\[[^\]]*\]\s*)+/u, ""));
+    // In generation mode, prose can be a literal task name. Bare KEEP is reserved.
+    return match !== null && (allowProse || match[1] === undefined);
+  });
+}
+
+export function sanitizeGeneratedTitle(value: string): string | null {
+  const normalized = normalizeGeneratedTitle(value);
   const title = Array.from(titleSegmenter.segment(normalized), ({ segment }) => segment)
     .slice(0, MAX_GENERATED_TITLE_LENGTH)
     .join("")

@@ -1,6 +1,8 @@
 import {
   memo,
   useCallback,
+  useEffect,
+  useId,
   useRef,
   useState,
   type KeyboardEvent,
@@ -19,30 +21,34 @@ import {
 import { Icon, type IconName } from "../ui/icon";
 import { cn } from "../../lib/utils";
 import { RowContextMenu } from "./row-context-menu";
+import { openMenuFromKeyboard } from "./menu-surface";
 import { useThreadRename, type ThreadRename } from "./inline-rename";
 import { LIST_HOVER_TRANSITION } from "./row-motion";
 import { CompactThreadActionMenu } from "./thread-action-menu";
 import {
   buildThreadActionPlan,
   findThreadAction,
+  SNOOZE_TOMORROW_LABEL,
   type ActiveThreadShelf,
   type DispatchRowCommand,
   type ThreadActionPlan,
 } from "./thread-actions";
 import { ProviderGlyph, type ProviderGlyphInfo } from "./provider-glyph";
-import { STATUS_SLOT_CLASS, StatusOrTime } from "./status-slot";
+import { STATUS_SLOT_CLASS, StatusOrTime, rowDescribedBy } from "./status-slot";
 import { FadingText, HostLead, ThreadDetails } from "./thread-details";
+import { useRemoteMachine } from "./machine-appearance";
 import { useIosLongPress } from "../../hooks/use-ios-long-press";
 import { useCommittedEvent } from "../../hooks/use-committed-event";
 import { useNestRow, type SidebarDragApi } from "../../hooks/use-nest-drag";
 
 /** Horizontal step per nesting level, in px. Mirrors --gtd-depth-step in app.css. */
-const DEPTH_STEP = 8;
+const DEPTH_STEP = 16;
 /** The touch disclosure column: app.css `.gtd-disclosure-touch` width. */
 const MOBILE_DISCLOSURE_WIDTH = 32;
 
 interface ThreadCardProps {
   thread: PluginSidebarThread;
+  isUnread: boolean;
   shelf: ActiveThreadShelf;
   compactThreads: boolean;
   depth: number;
@@ -68,8 +74,6 @@ interface ThreadCardProps {
   showProviderIcon: boolean;
   isCompactViewport: boolean;
   command: DispatchRowCommand;
-  /** Quantized clock, so every card in one render agrees on "now". */
-  now: number;
   /** Sidebar drag state; absent on compact viewports, where there is no drag. */
   drag?: SidebarDragApi;
   /** Whether the row being dragged may drop here, per the tree's cycle guard. */
@@ -130,6 +134,7 @@ export const ThreadCard = memo(function ThreadCard(props: ThreadCardProps) {
  */
 const ThreadCardBody = memo(function ThreadCardBody({
   thread,
+  isUnread,
   shelf,
   compactThreads,
   depth,
@@ -151,7 +156,6 @@ const ThreadCardBody = memo(function ThreadCardBody({
   showProviderIcon,
   isCompactViewport,
   command,
-  now,
   drag,
   pullRequest,
   isOpenInSplit,
@@ -191,16 +195,29 @@ const ThreadCardBody = memo(function ThreadCardBody({
     setPinned: (pinned) => command({ kind: "pin", threadId: thread.id, pinned }),
     requestDelete: () => command({ kind: "request-delete", threadId: thread.id }),
   });
+  const titleText = thread.displayTitle;
+  const rename = useThreadRename(thread.id, titleText);
   const [isMenuOpen, setMenuOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const { isPressing, handlers } = useIosLongPress(() => setMenuOpen(true), {
-    enabled: isCompactViewport,
+    enabled: isCompactViewport && !rename.isEditing,
   });
+  // The sheet only renders on a compact viewport. Leaving it with the sheet
+  // open must not strand the row hidden under a sheet that is gone.
+  useEffect(() => {
+    if (!isCompactViewport) setMenuOpen(false);
+  }, [isCompactViewport]);
 
-  const setCardRef = (node: HTMLDivElement | null) => {
-    cardRef.current = node;
-    setNestRef(node);
-  };
+  // Stable, or React detaches it on every render and the touch menu's layout
+  // effect reads a null card: the lifted copy never draws and the row, faded
+  // out for the menu, simply vanishes.
+  const setCardRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      cardRef.current = node;
+      setNestRef(node);
+    },
+    [setNestRef],
+  );
 
   const compact = !isCompactViewport && (compactThreads || depth > 0);
   const shortcut = useSidebarThreadShortcut(thread.id);
@@ -210,12 +227,29 @@ const ThreadCardBody = memo(function ThreadCardBody({
     : childCount > 0
       ? `${childCount} subthreads`
       : undefined;
-  const titleText = thread.displayTitle;
-  const rename = useThreadRename(thread.id, titleText);
+  // The metadata line starts under the title, past the globe HostLead draws.
+  const remote = useRemoteMachine(thread.host);
+  const unreadId = useId();
+  const statusId = useId();
+  const describedBy = rowDescribedBy(statusId, unreadId, {
+    thread: statusThread,
+    isUnread,
+    shortcut,
+  });
+  const presentation = threadCardPresentation({
+    depth,
+    childCount,
+    isCompactViewport,
+    compact,
+    isActive,
+    isOpenInSplit,
+    isPressing,
+    isMenuOpen,
+  });
 
-  const title = (
+  const title = (editable: boolean) => (
     <ThreadTitle
-      editor={rename.editor}
+      editor={editable ? rename.editor : null}
       title={titleText}
       isNaming={isNaming}
       isActive={isActive}
@@ -227,21 +261,22 @@ const ThreadCardBody = memo(function ThreadCardBody({
   // The project lives in the group header above the row. The row leads with
   // the machine globe only when the thread runs elsewhere; a local title
   // starts straight after the disclosure column.
-  const rowTitle = (
+  const rowTitle = (editable: boolean) => (
     <>
       <HostLead host={thread.host} />
-      {title}
+      {title(editable)}
     </>
   );
   const mobileRow = (interactive: boolean) => (
     <MobileThreadSummary
-      title={rowTitle}
+      title={rowTitle(interactive)}
       thread={statusThread}
-      now={now}
+      isUnread={isUnread}
       shortcut={shortcut}
       activity={thread.activity}
       pullRequest={pullRequest}
       interactive={interactive}
+      statusId={statusId}
     />
   );
 
@@ -251,9 +286,10 @@ const ThreadCardBody = memo(function ThreadCardBody({
       command={command}
       plan={plan}
       rename={rename}
+      canSplit={onSplitPointerDown !== undefined}
       disabled={isCompactViewport}
     >
-      <li className="list-none">
+      <div>
         <div
           ref={setCardRef}
           data-sidebar-rename-row=""
@@ -263,16 +299,10 @@ const ThreadCardBody = memo(function ThreadCardBody({
           data-action-count={!isCompactViewport && showActions ? 2 : 0}
           data-dragging={nestIsDragging ? "true" : undefined}
           data-drop-target={nestIsOver ? "true" : undefined}
-          {...threadCardPresentation({
-            depth,
-            childCount,
-            isCompactViewport,
-            compact,
-            isActive,
-            isOpenInSplit,
-            isPressing,
-            isMenuOpen,
-          })}
+          {...presentation}
+          // Merged: the hold's style mutes iOS's link callout and selection,
+          // and a second `style` prop would replace it.
+          style={{ ...handlers.style, ...presentation.style }}
         >
           <ThreadHierarchy
             threadId={thread.id}
@@ -291,10 +321,12 @@ const ThreadCardBody = memo(function ThreadCardBody({
             branchName={branchName}
             provider={provider}
             relation={relation}
-            showDetails={compact}
+            showDetails={!isCompactViewport}
+            detailsWhen={compact ? "always" : "overflow"}
             shortcut={shortcut}
             threadId={thread.id}
             title={titleText}
+            describedBy={describedBy}
             shelf={shelf}
             isActive={isActive}
             mobile={isCompactViewport}
@@ -309,16 +341,31 @@ const ThreadCardBody = memo(function ThreadCardBody({
             rename={rename}
             command={command}
           />
+          {isUnread ? (
+            <span id={unreadId} className="sr-only">
+              {thread.isUnread ? "Unread response" : "Unread response in subthreads"}
+            </span>
+          ) : null}
           {isCompactViewport ? (
             <CompactThreadActionMenu
+              thread={thread}
+              command={command}
+              rename={rename}
               plan={plan}
+              canSplit={false}
               open={isMenuOpen}
               onOpenChange={setMenuOpen}
               anchorRef={cardRef}
+              isActive={isActive}
               highlightContent={
-                <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-2.5">
-                  {mobileRow(false)}
-                </div>
+                // The menu pads this copy the way the row is padded, so the
+                // chevron and title hold their places as the row lifts.
+                <>
+                  <TouchDisclosureGlyph depth={depth} childCount={childCount} expanded={expanded} />
+                  <div className="pointer-events-none relative flex h-full items-center gap-1.5">
+                    {mobileRow(false)}
+                  </div>
+                </>
               }
             />
           ) : null}
@@ -333,9 +380,9 @@ const ThreadCardBody = memo(function ThreadCardBody({
               mobileRow(true)
             ) : (
               <DesktopThreadSummary
-                title={rowTitle}
+                title={rowTitle(true)}
                 thread={statusThread}
-                now={now}
+                isUnread={isUnread}
                 shortcut={shortcut}
                 plan={plan}
                 compact={compact}
@@ -343,12 +390,14 @@ const ThreadCardBody = memo(function ThreadCardBody({
                 canPark={canPark}
                 activity={thread.activity}
                 pullRequest={pullRequest}
+                statusId={statusId}
               />
             )}
           </div>
           {isCompactViewport || compact ? null : (
             <ThreadMetadata
               thread={thread}
+              remote={remote}
               provider={provider}
               projectName={projectName}
               branchName={branchName}
@@ -357,7 +406,7 @@ const ThreadCardBody = memo(function ThreadCardBody({
             />
           )}
         </div>
-      </li>
+      </div>
     </RowContextMenu>
   );
 });
@@ -380,18 +429,7 @@ function threadCardPresentation({
   return {
     style: {
       "--gtd-depth": depth,
-      // A group slides its rows' leading edge right by --gtd-group-indent,
-      // disclosure included; the content pays it back or the chevron lands
-      // on the title. Ungrouped rows resolve the variable to 0 and keep the
-      // same offsets as before.
-      ...(isCompactViewport
-        ? {
-            paddingLeft:
-              depth > 0 || childCount > 0
-                ? `calc(${MOBILE_DISCLOSURE_WIDTH + 8 + depth * DEPTH_STEP}px + var(--gtd-group-indent, 0px))`
-                : "calc(22px + var(--gtd-leaf-group-indent, 0px))",
-          }
-        : {}),
+      ...(isCompactViewport ? { paddingLeft: compactRowPaddingLeft(depth, childCount) } : {}),
     } as CSSProperties,
     className: cn(
       "group/card relative rounded-xl px-2.5",
@@ -399,12 +437,27 @@ function threadCardPresentation({
       compact && "gtd-compact-row",
       LIST_HOVER_TRANSITION,
       isCompactViewport ? "min-h-10 py-0" : "rounded-md",
-      isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
+      isActive ? "bg-state-active" : "hover:bg-sidebar-accent",
       !isActive && isOpenInSplit && "bg-sidebar-accent/30",
-      isPressing && "bg-sidebar-accent",
+      isPressing && !isActive && "bg-sidebar-accent",
       isMenuOpen && "bg-sidebar-accent opacity-0",
     ),
   };
+}
+
+/**
+ * A compact-viewport row's left padding, shared by cards and slim rows so a
+ * family keeps its columns when it moves between shelves.
+ *
+ * The disclosure and tree guides move by --gtd-group-indent, so the content
+ * adds it too or the chevron lands on the title. Leaf rows have no disclosure
+ * slot and take --gtd-leaf-group-indent instead, which lines their titles up
+ * with the group header's name. Ungrouped rows resolve both variables to 0.
+ */
+export function compactRowPaddingLeft(depth: number, childCount: number): string {
+  return depth > 0 || childCount > 0
+    ? `calc(${MOBILE_DISCLOSURE_WIDTH + 8 + depth * DEPTH_STEP}px + var(--gtd-group-indent, 0px))`
+    : "calc(22px + var(--gtd-leaf-group-indent, 0px))";
 }
 
 function summaryHeight(mobile: boolean, compact: boolean) {
@@ -470,19 +523,22 @@ function ThreadTitle({
 function MobileThreadSummary({
   title,
   thread,
-  now,
+  isUnread,
   shortcut,
   activity,
   pullRequest,
   interactive,
+  statusId,
 }: {
   title: ReactNode;
   thread: PluginSidebarThread;
-  now: number;
+  isUnread: boolean;
   shortcut: PluginSidebarThreadShortcut | null;
   activity: PluginSidebarThread["activity"];
   pullRequest: PluginSidebarPullRequest | null;
   interactive: boolean;
+  /** The slot's id, which the row's link names as its description. */
+  statusId: string;
 }) {
   return (
     <>
@@ -496,8 +552,10 @@ function MobileThreadSummary({
             className={cn("z-[1]", interactive && "pointer-events-auto")}
           />
         ) : null}
-        <span className={STATUS_SLOT_CLASS}>
-          <StatusOrTime thread={thread} now={now} shortcut={shortcut} />
+        {/* Only the live row names its slot: the touch menu's lifted copy
+           would otherwise duplicate the id. */}
+        <span id={interactive ? statusId : undefined} className={STATUS_SLOT_CLASS}>
+          <StatusOrTime thread={thread} isUnread={isUnread} shortcut={shortcut} isCompactViewport />
         </span>
       </span>
     </>
@@ -540,15 +598,6 @@ export function ThreadHierarchy({
             className={cn("gtd-tree-line", lastChild && "gtd-tree-line-last")}
             style={{ left: 12 + (depth - 1) * DEPTH_STEP }}
           />
-          <span
-            className="gtd-tree-elbow"
-            style={{
-              left: 12 + (depth - 1) * DEPTH_STEP,
-              // Stop short of the child's chevron glyph, or 10px short of a
-              // leaf's title, so the elbow never touches what it points at.
-              width: childCount > 0 ? DEPTH_STEP - 6 : DEPTH_STEP + 6,
-            }}
-          />
         </span>
       ) : null}
       {childCount > 0 ? (
@@ -573,13 +622,40 @@ export function ThreadHierarchy({
   );
 }
 
+/**
+ * The touch chevron as a picture, for the copy of a row the touch menu lifts.
+ * It sits where ThreadHierarchy's button does and takes no input.
+ */
+export function TouchDisclosureGlyph({
+  depth,
+  childCount,
+  expanded,
+}: {
+  depth: number;
+  childCount: number;
+  expanded: boolean;
+}) {
+  if (childCount === 0) return null;
+  return (
+    <span
+      aria-hidden
+      className="gtd-disclosure gtd-disclosure-touch"
+      style={{ "--gtd-depth": depth } as CSSProperties}
+    >
+      <Icon name="ChevronDown" className={cn("size-4", !expanded && "-rotate-90")} />
+    </span>
+  );
+}
+
 function ThreadRowLink({
   thread,
+  describedBy,
   projectName,
   branchName,
   provider,
   relation,
   showDetails,
+  detailsWhen,
   shortcut,
   threadId,
   title,
@@ -598,11 +674,15 @@ function ThreadRowLink({
   command,
 }: {
   thread: PluginSidebarThread;
+  /** The status slot's id, then the unread note's where it adds anything. */
+  describedBy: string;
   projectName: string | null;
   branchName: string | null;
   provider?: ProviderGlyphInfo;
   relation: string | undefined;
   showDetails: boolean;
+  /** Two-line cards show their details only while the title is clipped. */
+  detailsWhen: "always" | "overflow";
   shortcut: PluginSidebarThreadShortcut | null;
   threadId: string;
   title: string;
@@ -630,6 +710,7 @@ function ThreadRowLink({
       provider={provider}
       relation={relation}
       enabled={showDetails}
+      when={detailsWhen}
     >
       {/* oxlint-disable-next-line jsx-a11y/anchor-is-valid -- must stay an
              anchor: the shortcut-target contract below and modifier-click
@@ -641,9 +722,14 @@ function ThreadRowLink({
         data-sidebar-rename-anchor=""
         href="#"
         aria-label={title}
+        aria-describedby={describedBy}
         aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
         aria-current={isActive ? "page" : undefined}
         onKeyDown={(event) => {
+          // Shift+F10 or the Menu key opens the right-click menu, which macOS
+          // never does natively. Touch has no such menu, and a live drag owns
+          // the keys until it drops.
+          if (!mobile && !nestActive && openMenuFromKeyboard(event)) return;
           // Space picks the row up (see use-nest-drag); while a drag is live
           // the arrows move the pick, not the fold.
           onNestKeyDown(event);
@@ -695,7 +781,7 @@ function ThreadRowLink({
 function DesktopThreadSummary({
   title,
   thread,
-  now,
+  isUnread,
   shortcut,
   plan,
   compact,
@@ -703,10 +789,11 @@ function DesktopThreadSummary({
   canPark,
   activity,
   pullRequest,
+  statusId,
 }: {
   title: ReactNode;
   thread: PluginSidebarThread;
-  now: number;
+  isUnread: boolean;
   shortcut: PluginSidebarThreadShortcut | null;
   plan: ThreadActionPlan;
   compact: boolean;
@@ -714,6 +801,8 @@ function DesktopThreadSummary({
   canPark: boolean;
   activity: PluginSidebarThread["activity"];
   pullRequest: PluginSidebarPullRequest | null;
+  /** The slot's id, which the row's link names as its description. */
+  statusId: string;
 }) {
   const snoozeAction = findThreadAction(plan, "quick-snooze");
   const settleAction = findThreadAction(plan, "settle");
@@ -725,14 +814,14 @@ function DesktopThreadSummary({
         {compact && pullRequest ? (
           <PullRequestNumber pullRequest={pullRequest} interactive />
         ) : null}
-        <span className={STATUS_SLOT_CLASS}>
-          <StatusOrTime thread={thread} now={now} shortcut={shortcut} />
+        <span id={statusId} className={STATUS_SLOT_CLASS}>
+          <StatusOrTime thread={thread} isUnread={isUnread} shortcut={shortcut} />
         </span>
       </span>
       {showActions ? (
         <span className="gtd-trailing-actions">
           <ParkButton
-            label={snoozeAction?.label ?? "Snooze"}
+            label={snoozeAction?.label ?? SNOOZE_TOMORROW_LABEL}
             icon="Clock"
             disabled={!canPark}
             onActivate={() => snoozeAction?.execute()}
@@ -752,6 +841,7 @@ function DesktopThreadSummary({
 
 function ThreadMetadata({
   thread,
+  remote,
   provider,
   projectName,
   branchName,
@@ -759,6 +849,7 @@ function ThreadMetadata({
   showProviderIcon,
 }: {
   thread: PluginSidebarThread;
+  remote: boolean;
   provider?: ProviderGlyphInfo;
   projectName: string | null;
   branchName: string | null;
@@ -770,7 +861,12 @@ function ThreadMetadata({
        alone does not carry the hierarchy, so the line also starts at the
        tint the provider glyph already uses. Segments that rank below the
        project dim further from here. */
-    <div className="gtd-thread-metadata pointer-events-none relative mt-1 flex h-4 items-center gap-1.5 text-2xs text-muted-foreground/70">
+    <div
+      className={cn(
+        "gtd-thread-metadata pointer-events-none relative mt-1 flex h-4 items-center gap-1.5 text-2xs text-muted-foreground/70",
+        remote && "gtd-thread-metadata-remote",
+      )}
+    >
       {/* The project holds its full name and the branch yields: which
          repository a thread belongs to outranks which branch it sits
          on, and the branch is the one that grows without bound. The
@@ -778,7 +874,7 @@ function ThreadMetadata({
          both still holds the line's right side still. */}
       <span className="flex min-w-0 flex-1 items-center gap-1">
         {projectName ? <span className="min-w-0 truncate">{projectName}</span> : null}
-        {projectName && (branchName || thread.host) ? (
+        {projectName && (branchName || (remote && thread.host)) ? (
           <span aria-hidden className="shrink-0 text-muted-foreground/40">
             ·
           </span>
@@ -786,14 +882,14 @@ function ThreadMetadata({
         {/* Weighted rather than capped, so the project keeps its full
            name whenever the line has room for both and only starts
            truncating once this one has already given up everything.
-           A thread without a worktree still runs somewhere, so the
-           machine takes the branch's place rather than leaving the
-           segment blank. */}
+           A thread without a worktree on another machine names that
+           machine in the branch's place. The local machine goes
+           unnamed, the same as its missing globe. */}
         {branchName ? (
           <span className="min-w-0 shrink-[9999] truncate font-mono text-muted-foreground/50">
             {branchName}
           </span>
-        ) : thread.host ? (
+        ) : remote && thread.host ? (
           <span className="min-w-0 shrink-[9999] truncate text-muted-foreground/50">
             {thread.host.name}
           </span>

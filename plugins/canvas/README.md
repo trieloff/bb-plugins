@@ -82,7 +82,7 @@ style: github
 ---
 ```
 
-Canvas widget styles are `default` and `github`. The surrounding editable prose follows the host theme's `--canvas-prose-*` tokens. Leave frontmatter out for `default`.
+Canvas widget styles are `default` and `github`. Editable Markdown and Markdown inside widgets follow BB's agent stream, including the selected font and Monokai overrides. Leave frontmatter out for `default`.
 
 ## Templates
 
@@ -91,6 +91,8 @@ Canvas widget styles are `default` and `github`. The surrounding editable prose 
 ## How a canvas opens
 
 A canvas link opens a Canvas file tab beside the chat. Canvas registers the file opener for `.mdx`, which covers `.canvas.mdx`. Canvas does not open `.md` files.
+
+Files are read and written on the host of the thread that opened them, which is usually another machine than the bb server. An absolute link outside the thread's worktree and storage opens on the host of that thread's environment. An open canvas checks the file and its comments for outside writes every 1.5 s. The plugin's host entry (`src/host/host.ts`) answers each check with a stat, so only a changed file crosses machines again.
 
 ## MDX editing
 
@@ -101,7 +103,7 @@ A canvas link opens a Canvas file tab beside the chat. Canvas registers the file
 - **YAML frontmatter.** A leading YAML mapping stays out of the editor and is saved byte-for-byte.
 - **Canvas widgets.** Known components in `.canvas.mdx`, or in any `.mdx` that uses them, render with their persisted state. Comments and suggested edits appear in the review sidebar.
 - **Safe saves.** Saves are compare-and-swap against the version last read. A clean document refreshes after an external write. A pending draft shows **Reload** and **Overwrite** instead.
-- **Relative assets.** Images and `::html{src="./page.html"}` embeds resolve from the file's directory through a short-lived preview lease. Embedded HTML runs in an opaque-origin iframe.
+- **Relative assets.** Images and `::html{src="./page.html"}` embeds resolve from the file's directory through an hour-long preview lease, renewed when an external write reloads the editor. Embedded HTML runs in an opaque-origin iframe. The iframe loads the plugin's `/frame` page, which writes the prepared document into itself. Do not switch back to `srcdoc`: bb mobile's WebView cancels `about:srcdoc` frames. The app fetches the page and inlines its local stylesheets, scripts, and media files of up to 8 MiB, so the embed also works through bb Connect, where the sandboxed frame cannot send the session cookie. Anything else the page loads, such as `fetch()` calls, module imports, and CSS `url()` or `@import` targets, still loads from the frame and fails through Connect.
 
 Other plugins can reuse the editor: `import { MarkdownEditor } from "@smsunarto/bb-plugin-canvas/editor"`.
 
@@ -131,6 +133,8 @@ bb canvas comments /abs/path/report.canvas.mdx --json     # {path, sidecarPath, 
 bb canvas comment  /abs/path/report.canvas.mdx cmt_7f3k2a9x1p --reply "Verified 4m02s, table fixed." --resolve
 bb canvas comment  /abs/path/report.canvas.mdx cmt_7f3k2a9x1p --reopen
 ```
+
+Paths are on the invoking agent's host, which is usually not the bb server's machine. Inside a thread, `bb canvas check`, `comments`, `comment`, and `generate` use the thread's host. Outside a thread, pass `--host <host-id>`.
 
 `bb canvas comments` exits 0 whether or not comments exist. A thread line names the block (`block 4 Table "Top offenders"`), adds `edited since` when the block changed under the comment, and shows the exact `quote` or, for a detached thread, what the block `was`. For thread-storage canvases, the agent's thread instructions also gain an "Open canvas comments" line after the first comment write since the server started.
 

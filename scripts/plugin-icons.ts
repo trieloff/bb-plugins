@@ -5,18 +5,27 @@ import { fileURLToPath } from "node:url";
 import {
   Activity01Icon,
   ArtboardIcon,
+  BrowserIcon,
   ChatFeedbackIcon,
+  CheckListIcon,
+  CheckmarkCircle02Icon,
   CloudServerIcon,
+  DashboardSpeed02Icon,
   Doc01Icon,
+  FileEditIcon,
   KeyboardIcon,
   GitBranchIcon,
+  GitPullRequestIcon,
   KitchenUtensilsIcon,
   Layers01Icon,
+  ListSettingIcon,
   PanelLeftIcon,
   Settings01Icon,
+  WhiteboardIcon,
 } from "@hugeicons/core-free-icons";
 import { workspacePlugins } from "./plugin-package";
 import { AMP_LOGO_PATHS, AMP_LOGO_VIEW_BOX } from "../plugins/amp/src/amp-brand";
+import { DEVIN_LOGO_PATHS, DEVIN_LOGO_VIEW_BOX } from "../plugins/devin/src/shared/devin-brand";
 
 // Keyed by DIRECTORY under plugins/, which scripts/plugin-package.test.ts pins
 // to the plugin id bb derives from the package name. Anchored to the repo root
@@ -127,6 +136,10 @@ const paletteIcon: readonly IconNode[] = [
 ];
 
 const customIcons = {
+  "agent-instructions": {
+    name: "ListSetting",
+    nodes: ListSettingIcon,
+  },
   agentation: {
     name: "ChatFeedback",
     nodes: ChatFeedbackIcon,
@@ -142,17 +155,31 @@ const customIcons = {
     name: "Amp (brand mark)",
     brand: { paths: AMP_LOGO_PATHS, viewBox: AMP_LOGO_VIEW_BOX },
   },
+  // Devin's four-panel mark from Devin Desktop; `src/shared/devin-brand.ts`
+  // is the single source, shared with the plugin's composer surfaces.
+  devin: {
+    name: "Devin (brand mark)",
+    brand: { paths: DEVIN_LOGO_PATHS, viewBox: DEVIN_LOGO_VIEW_BOX },
+  },
   cloudflare: {
     name: "CloudServer",
     nodes: CloudServerIcon,
   },
-  docs: {
+  "prompt-editor": {
+    name: "EditFile",
+    nodes: FileEditIcon,
+  },
+  "scott-docs": {
     name: "Doc",
     nodes: Doc01Icon,
   },
   dotfiles: {
     name: "Settings",
     nodes: Settings01Icon,
+  },
+  "code-review": {
+    name: "GitPullRequest",
+    nodes: GitPullRequestIcon,
   },
   "gh-stack": {
     name: "Layers",
@@ -162,6 +189,10 @@ const customIcons = {
     name: "GitBranch",
     nodes: GitBranchIcon,
   },
+  "usage-bar": {
+    name: "DashboardSpeed",
+    nodes: DashboardSpeed02Icon,
+  },
   traces: {
     name: "Activity",
     nodes: Activity01Icon,
@@ -169,6 +200,10 @@ const customIcons = {
   vimium: {
     name: "Keyboard",
     nodes: KeyboardIcon,
+  },
+  whiteboard: {
+    name: "Whiteboard",
+    nodes: WhiteboardIcon,
   },
   "kitchen-sink": {
     name: "KitchenUtensils",
@@ -210,6 +245,22 @@ const customIcons = {
         },
       ],
     ],
+  },
+  // Upstream bb Tasks, which this plugin was forked from, declares BB's named
+  // "ListTodo" icon, which bb maps to Hugeicons' CheckList glyph.
+  "scott-tasks": {
+    name: "CheckList",
+    nodes: CheckListIcon,
+  },
+  review: {
+    name: "CheckmarkCircle",
+    nodes: CheckmarkCircle02Icon,
+  },
+  // Upstream bb inline-vis, which this plugin was forked from, declares BB's
+  // named "AppWindow" icon, which bb maps to Hugeicons' Browser glyph.
+  "scott-inline-vis": {
+    name: "Browser",
+    nodes: BrowserIcon,
   },
   monokai: {
     name: "Palette",

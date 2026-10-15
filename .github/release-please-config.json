@@ -13,6 +13,11 @@
       "component": "bb-kit-core",
       "package-name": "@bb-kit/core"
     },
+    "packages/bb-kit-dev": {
+      "release-type": "node",
+      "component": "bb-kit-dev",
+      "package-name": "@bb-kit/dev"
+    },
     "packages/bb-kit-sentry": {
       "release-type": "node",
       "component": "bb-kit-sentry",
@@ -27,6 +32,11 @@
       "release-type": "node",
       "component": "amp",
       "package-name": "@smsunarto/bb-plugin-amp"
+    },
+    "plugins/devin": {
+      "release-type": "node",
+      "component": "devin",
+      "package-name": "@smsunarto/bb-plugin-devin"
     },
     "plugins/gh-stack": {
       "release-type": "node",
@@ -47,6 +57,11 @@
       "release-type": "node",
       "component": "monokai",
       "package-name": "@smsunarto/bb-plugin-monokai"
+    },
+    "plugins/review": {
+      "release-type": "node",
+      "component": "review",
+      "package-name": "@smsunarto/bb-plugin-review"
     }
   }
 }

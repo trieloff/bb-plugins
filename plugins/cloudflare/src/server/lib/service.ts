@@ -656,8 +656,16 @@ export class CloudflareService {
     return result;
   }
   private async observeShares(result: Overview) {
+    // Unknown when bb could not list its machines: then each host is asked.
+    const online = result.hosts.error
+      ? null
+      : new Set(result.hosts.items.filter((host) => host.online).map((host) => host.id));
     for (const share of result.shares) {
       if (share.desiredState === "running" && share.state !== "partial") {
+        if (online && !online.has(share.hostId)) {
+          share.state = "offline";
+          continue;
+        }
         const tunnel = result.tunnels.items.find((item) => item.id === share.resources.tunnelId);
         try {
           const host = await this.deps.status(share.hostId, share.id);
@@ -1280,9 +1288,7 @@ export class CloudflareService {
   }
 }
 
-const services = new WeakMap<BbPluginApi, CloudflareService>();
-const oauthServices = new WeakMap<BbPluginApi, CloudflareOAuth>();
-export function setupService(bb: BbPluginApi) {
+export function createService(bb: BbPluginApi) {
   const settings = bb.settings.define({
     oauthClientId: { type: "string", label: "Cloudflare OAuth client ID" },
     oauthRedirectUri: {
@@ -1320,7 +1326,6 @@ export function setupService(bb: BbPluginApi) {
       });
     },
   });
-  oauthServices.set(bb, oauth);
   bb.http.route(
     "GET",
     "/oauth/callback",
@@ -1348,20 +1353,8 @@ export function setupService(bb: BbPluginApi) {
       host.call("start", { id, token, executable }, { hostId }),
     stop: (hostId, id) => host.call("stop", { id }, { hostId }),
   });
-  services.set(bb, service);
   bb.onDispose(async () => {
     await Promise.all([service.dispose(), oauth.dispose()]);
   });
-  return service;
-}
-export function getService(bb: BbPluginApi) {
-  const service = services.get(bb);
-  if (!service) throw new Error("Cloudflare service is not initialized.");
-  return service;
-}
-
-export function getOAuth(bb: BbPluginApi) {
-  const oauth = oauthServices.get(bb);
-  if (!oauth) throw new Error("Cloudflare OAuth is not initialized.");
-  return oauth;
+  return { cloudflare: service, oauth };
 }

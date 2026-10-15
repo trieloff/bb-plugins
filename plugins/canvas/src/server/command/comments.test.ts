@@ -1,13 +1,11 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { CommandError } from "@bb-kit/core/command";
 import { anchorAt, flattenBlocks } from "../../shared/anchor.ts";
 import type { CommentThread } from "../../shared/comments.ts";
 import { parseCanvas } from "../../shared/parse.ts";
-import { fakeBb, fileKeyOf } from "../fake-bb.ts";
+import { fakeBb, fileKeyOf, runCanvasCli } from "../fake-bb.ts";
 import { formatWhen } from "../format.ts";
-import { comments } from "./comments.ts";
 
 const sample = readFileSync(
   new URL("../../../examples/flaky-test-triage.canvas.mdx", import.meta.url),
@@ -18,6 +16,9 @@ if (!parsed.ok) throw new Error("sample does not parse");
 const document = parsed.document;
 const tableOffset = flattenBlocks(document).find((b) => b.label.startsWith("Table"))?.offset ?? -1;
 const today = Date.now();
+// The agent runs on a Mac thread; the server's own host is a different machine.
+const macThread = { thr: { hostId: "host_mac", storageRootPath: "/storage/thr" } };
+const inThread = { cwd: "/w", threadId: "thr" };
 
 const onTable: CommentThread = {
   id: "cmt_7f3k2a9x1p",
@@ -57,9 +58,10 @@ const resolved: CommentThread = {
 
 function bbWith(threads: readonly CommentThread[]) {
   return fakeBb({
+    threads: macThread,
     files: {
-      [fileKeyOf(undefined, undefined, "/w/report.canvas.mdx")]: { content: sample },
-      [fileKeyOf(undefined, undefined, "/w/report.canvas.mdx.comments.json")]: {
+      [fileKeyOf("host_mac", undefined, "/w/report.canvas.mdx")]: { content: sample },
+      [fileKeyOf("host_mac", undefined, "/w/report.canvas.mdx.comments.json")]: {
         content: JSON.stringify({ version: 1, threads }),
       },
     },
@@ -68,7 +70,7 @@ function bbWith(threads: readonly CommentThread[]) {
 
 test("comments prints open threads in block order with the resolved count hidden", async () => {
   const bb = bbWith([detached, resolved, onTable]);
-  const result = await comments.execute({ bb, cwd: "/w" }, { path: "report.canvas.mdx" });
+  const result = await runCanvasCli(bb, ["comments", "report.canvas.mdx"], inThread);
   const hhmm = formatWhen(today, today);
   assert.deepEqual(result, {
     exitCode: 0,
@@ -83,14 +85,15 @@ test("comments prints open threads in block order with the resolved count hidden
       `  user   ${hhmm}  Cite the source for this number.`,
       "",
     ].join("\n"),
+    stderr: "",
   });
 });
 
 test("comments --all shows resolved threads, edited flags, dates, and multi-line bodies", async () => {
   const edited = { ...onTable, anchor: { ...onTable.anchor, quote: "dev-instance | 99% | 4m12s" } };
   const bb = bbWith([resolved, edited]);
-  const result = await comments.execute({ bb }, { path: "/w/report.canvas.mdx", all: true });
-  const lines = (result.stdout ?? "").split("\n");
+  const result = await runCanvasCli(bb, ["comments", "/w/report.canvas.mdx", "--all"], inThread);
+  const lines = result.stdout.split("\n");
   assert.equal(lines[0], "2 comments in report.canvas.mdx (1 open)");
   assert.equal(
     lines[2],
@@ -107,8 +110,8 @@ test("comments --all shows resolved threads, edited flags, dates, and multi-line
 
 test("comments --json prints the placed threads", async () => {
   const bb = bbWith([onTable, resolved]);
-  const result = await comments.execute({ bb }, { path: "/w/report.canvas.mdx", json: true });
-  const report = JSON.parse(result.stdout ?? "");
+  const result = await runCanvasCli(bb, ["comments", "/w/report.canvas.mdx", "--json"], inThread);
+  const report = JSON.parse(result.stdout);
   assert.equal(report.path, "/w/report.canvas.mdx");
   assert.equal(report.sidecarPath, "/w/report.canvas.mdx.comments.json");
   assert.equal(report.parses, true);
@@ -126,28 +129,41 @@ test("comments --json prints the placed threads", async () => {
 
 test("comments exits 0 with a plain line when nothing is commented", async () => {
   const bb = fakeBb({
-    files: { [fileKeyOf(undefined, undefined, "/w/report.canvas.mdx")]: { content: sample } },
+    threads: macThread,
+    files: { [fileKeyOf("host_mac", undefined, "/w/report.canvas.mdx")]: { content: sample } },
   });
-  const result = await comments.execute({ bb }, { path: "/w/report.canvas.mdx" });
-  assert.deepEqual(result, { exitCode: 0, stdout: "No comments in report.canvas.mdx.\n" });
+  const result = await runCanvasCli(bb, ["comments", "/w/report.canvas.mdx"], inThread);
+  assert.deepEqual(result, {
+    exitCode: 0,
+    stdout: "No comments in report.canvas.mdx.\n",
+    stderr: "",
+  });
 });
 
 test("comments exits 2 when the canvas is unreadable or the sidecar is malformed", async () => {
-  await assert.rejects(
-    () => Promise.resolve(comments.execute({ bb: fakeBb({}) }, { path: "/w/missing.canvas.mdx" })),
-    (error: unknown) => error instanceof CommandError && error.exitCode === 2,
+  assert.deepEqual(
+    await runCanvasCli(
+      fakeBb({ threads: macThread }),
+      ["comments", "/w/missing.canvas.mdx"],
+      inThread,
+    ),
+    {
+      exitCode: 2,
+      stdout: "",
+      stderr:
+        "/w/missing.canvas.mdx: missing: ENOENT: no such file or directory, open '/w/missing.canvas.mdx'\n",
+    },
   );
   const bb = fakeBb({
+    threads: macThread,
     files: {
-      [fileKeyOf(undefined, undefined, "/w/report.canvas.mdx")]: { content: sample },
-      [fileKeyOf(undefined, undefined, "/w/report.canvas.mdx.comments.json")]: { content: "[]" },
+      [fileKeyOf("host_mac", undefined, "/w/report.canvas.mdx")]: { content: sample },
+      [fileKeyOf("host_mac", undefined, "/w/report.canvas.mdx.comments.json")]: { content: "[]" },
     },
   });
-  await assert.rejects(
-    () => Promise.resolve(comments.execute({ bb }, { path: "/w/report.canvas.mdx" })),
-    (error: unknown) =>
-      error instanceof CommandError &&
-      error.exitCode === 2 &&
-      /not a valid comments file/.test(error.message),
-  );
+  assert.deepEqual(await runCanvasCli(bb, ["comments", "/w/report.canvas.mdx"], inThread), {
+    exitCode: 2,
+    stdout: "",
+    stderr: "/w/report.canvas.mdx.comments.json is not a valid comments file; fix or delete it\n",
+  });
 });

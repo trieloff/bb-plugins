@@ -2,6 +2,9 @@ import type { IconName } from "../ui/icon";
 
 export type ActiveThreadShelf = "pinned" | "nextAction" | "waiting";
 
+/** The snooze's name in menus and on the row's button. The toast states the time. */
+export const SNOOZE_TOMORROW_LABEL = "Snooze until tomorrow";
+
 export type RowCommand =
   | {
       kind: "open";
@@ -53,8 +56,8 @@ export interface ThreadAction {
 }
 
 /**
- * GTD lifecycle actions, then pin and delete. The phone sheet shows this plan;
- * the desktop context menu inserts BB's navigation and organization actions.
+ * GTD lifecycle actions, then pin and delete. Both menus insert BB's
+ * navigation and organization actions through ThreadMenuActions.
  * The card's hover buttons pick single entries out of it.
  */
 export type ThreadActionPlan = readonly ThreadAction[];

@@ -2,14 +2,26 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   baseHistorySchema,
-  commitDetailsSchema,
+  branchNameSchema,
+  butActionResultSchema,
+  butActionSchema,
   commitIdSchema,
   environmentPathSchema,
+  hostCheckoutSchema,
+  hostUnpublishedBranchesSchema,
+  hostWorkspaceSchema,
+  oplogSchema,
+  originSchema,
+  parkedBranchesSchema,
   patchesSchema,
   patchSourceSchema,
+  rangeSourceSchema,
   repositoriesSchema,
   repositoryKeySchema,
-  workspaceSchema,
+  repositoryOriginSchema,
+  resolvedRepositorySchema,
+  reviewsSchema,
+  reviewUrlSchema,
 } from "./schema.ts";
 
 const target = z.object({
@@ -22,7 +34,8 @@ export const gitbutlerHostContract = defineRpcContract({
     input: z.object({ environmentPath: environmentPathSchema }).strict(),
     output: repositoriesSchema,
   },
-  workspace: { input: target.strict(), output: workspaceSchema },
+  repository: { input: target.strict(), output: resolvedRepositorySchema },
+  workspace: { input: target.strict(), output: hostWorkspaceSchema },
   baseHistory: {
     input: target
       .extend({
@@ -33,12 +46,36 @@ export const gitbutlerHostContract = defineRpcContract({
       .strict(),
     output: baseHistorySchema,
   },
-  commit: {
-    input: target.extend({ commitId: commitIdSchema }).strict(),
-    output: commitDetailsSchema,
-  },
   patches: {
-    input: target.extend({ source: patchSourceSchema }).strict(),
+    input: target.extend({ source: z.union([patchSourceSchema, rangeSourceSchema]) }).strict(),
     output: patchesSchema,
+  },
+  butAction: {
+    input: target.extend({ action: butActionSchema }).strict(),
+    output: butActionResultSchema,
+  },
+  reviewUrl: {
+    input: target.extend({ branch: branchNameSchema }).strict(),
+    output: reviewUrlSchema,
+  },
+  reviews: { input: target.strict(), output: reviewsSchema },
+  oplog: { input: target.strict(), output: oplogSchema },
+  parkedBranches: { input: target.strict(), output: parkedBranchesSchema },
+  origin: { input: target.strict(), output: repositoryOriginSchema },
+  /**
+   * The GitButler workspaces among `paths` whose origin is `origin`. The
+   * paths are every checkout bb knows on this machine, so most are other
+   * repositories and drop out.
+   */
+  checkouts: {
+    input: z
+      .object({ paths: z.array(environmentPathSchema).max(100_000), origin: originSchema })
+      .strict(),
+    output: z.object({ checkouts: z.array(hostCheckoutSchema) }).strict(),
+  },
+  /** The unpublished branches of every GitButler workspace among `paths`, whatever its origin. */
+  unpublishedBranches: {
+    input: z.object({ paths: z.array(environmentPathSchema).max(100_000) }).strict(),
+    output: hostUnpublishedBranchesSchema,
   },
 });

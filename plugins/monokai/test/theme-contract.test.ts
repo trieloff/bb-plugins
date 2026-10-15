@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { readCodeThemeRules } from "../scripts/code-theme-rules";
-import { auditTheme, renderCodeTheme, renderTheme } from "../scripts/generate-theme";
+import { auditTheme, renderCodeTheme, renderTheme, roleValues } from "../scripts/generate-theme";
+import { convertRules } from "../scripts/sync-code-theme";
 
 const templatePath = fileURLToPath(new URL("../scripts/bb-monokai.template.css", import.meta.url));
 const themePath = fileURLToPath(new URL("../themes/bb-monokai.css", import.meta.url));
@@ -11,6 +12,25 @@ const template = await readFile(templatePath, "utf8");
 const theme = await readFile(themePath, "utf8");
 const codeTheme = await readFile(codeThemePath, "utf8");
 const codeThemeRules = readCodeThemeRules().rules;
+const diffHeaderCss = await readFile(new URL("../app/diff-header.css", import.meta.url), "utf8");
+
+// Each style rule with the at-rule preludes around it, outermost first. The
+// theme has no braces inside strings, so brace depth is the nesting.
+function styleRules(css: string): Array<{ selector: string; atRules: string[] }> {
+  const rules: Array<{ selector: string; atRules: string[] }> = [];
+  const open: string[] = [];
+  for (const [, text = "", brace] of css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .matchAll(/([^{}]*)([{}])/g)) {
+    if (brace === "{") {
+      open.push(text.trim().replace(/\s+/g, " "));
+      continue;
+    }
+    const selector = open.pop() ?? "";
+    if (!selector.startsWith("@")) rules.push({ selector, atRules: [...open] });
+  }
+  return rules;
+}
 
 describe("bb Monokai surface palette", () => {
   test("assigns conversation, sidebar, user, and chrome grounds", () => {
@@ -21,9 +41,19 @@ describe("bb Monokai surface palette", () => {
     expect(theme).toContain(
       ".dark [data-promptbox] {\n  background-color: var(--agent-surface-background)",
     );
-    expect(theme).toContain(".dark code.bg-muted\\/70 {\n  background-color: var(--accent)");
+    expect(theme).toContain(
+      ".dark code.bg-muted\\/70,\n.dark .bb-markdown-prose :not(pre) > code {\n  background-color: var(--accent);\n  color: #eed996;",
+    );
+    expect(theme).toContain(
+      ".dark [data-message-column].group\\/message [data-markdown-preview],\n.dark .bb-markdown-prose,\n.dark .canvas-prose [data-markdown-preview] {\n  font-size: max(14px, var(--text-sm))",
+    );
     expect(theme).toContain("--terminal-background: #181818");
-    expect(theme.toLowerCase()).not.toContain("#141414");
+  });
+
+  test("names remote machines with hues outside the feedback families", () => {
+    expect(theme).toContain(
+      "--machine-1: #3093f4; /* 5.59:1 */\n  --machine-2: #75f0ff; /* 13.24:1 */\n  --machine-3: #ee8fc8; /* 7.95:1 */\n  --machine-4: #7cacfe; /* 7.77:1 */",
+    );
   });
 
   test("pins annotated bb surfaces to their intended grounds", () => {
@@ -42,24 +72,14 @@ describe("bb Monokai surface palette", () => {
     expect(theme).toContain(
       ".dark [data-agentation-staging-banner] {\n  background-color: var(--agent-surface-background);\n  background-clip: padding-box;\n  border-color: var(--agent-surface-border)",
     );
-    expect(theme).toContain(
-      "div.rounded-lg.border.border-border:not(.bg-transparent) {\n  background-color: var(--card);\n  border-width: 0",
-    );
-    expect(theme).toContain(
-      ".bg-card:not(button):not(input):not(textarea):not(select):not(.bg-transparent),",
-    );
-    expect(theme).toContain("div.rounded-md.border.border-border:not(.bg-transparent),");
-    expect(theme).toContain("li.rounded-md.border.border-border:not(.bg-transparent),");
-    expect(theme).toContain('body:has(a[aria-current="page"][href^="/settings"])');
-    expect(theme).not.toContain('href="/settings/usage"');
   });
 
   test("styles conversation links with an alpha-derived accent hover surface", () => {
     expect(theme).toContain(
-      ".dark [data-message-column] [data-markdown-preview] a.underline {\n  color: var(--primary);\n  text-decoration-line: none;",
+      ".dark [data-message-column] [data-markdown-preview] a.underline,\n.dark .bb-markdown-prose a {\n  color: var(--primary);\n  text-decoration-line: none;",
     );
     expect(theme).toContain(
-      "@media (hover: hover) {\n  .dark [data-message-column] [data-markdown-preview] a.underline:hover {\n    background-color: #88c0d026;",
+      "@media (hover: hover) {\n  .dark [data-message-column] [data-markdown-preview] a.underline:hover,\n  .dark .bb-markdown-prose a:hover {\n    background-color: #88c0d026;",
     );
   });
 });
@@ -71,14 +91,12 @@ describe("bb Monokai contract audit", () => {
     expect(theme).toContain(
       ".dark .bb-code-highlight.bb-code-highlight {\n  background-color: #181818;",
     );
-    expect(theme).not.toContain("--diffs-dark-bg: #1e1e1e");
-    expect(theme).not.toContain("--diffs-bg-context-override: #1e1e1e");
     for (const role of ["context-gutter", "buffer", "addition-number", "deletion-number"]) {
       expect(theme).toContain(`--diffs-bg-${role}-override: #181818`);
     }
     expect(theme).toContain("--diffs-bg-separator-override: #e3e3dd0f");
     expect(theme).toContain(
-      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {\n  background-color: var(--agent-surface-background);",
+      ".dark [data-monokai-diff-shell] {\n  background-color: var(--agent-surface-background);",
     );
     expect(theme).toContain(
       ".dark .smart-embed-header,\n.dark .last-turn-diff-heading {\n  background-color: var(--agent-surface-background);",
@@ -98,98 +116,19 @@ describe("bb Monokai contract audit", () => {
     expect(theme).toContain('--font-mono: "Berkeley Mono", ui-monospace, Menlo, monospace');
   });
 
+  test("antialiases dark text and keeps italic synthesis for Inter emphasis", () => {
+    expect(theme).toContain(
+      ".dark body {\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale;\n}",
+    );
+    expect(theme).not.toContain("font-synthesis:");
+    expect(theme).toContain(
+      ".dark [data-markdown-preview] :is(p, li),\n.dark .bb-markdown-prose :is(p, li) {\n  text-wrap: pretty;",
+    );
+  });
+
   test("keeps mobile composer placeholders at a readable regular weight", () => {
-    expect(theme).toContain("@media (max-width: 767px)");
-    expect(theme).toContain("p.is-editor-empty:first-child::before");
-    expect(theme).toContain("font-weight: 400");
-  });
-
-  test("keeps compact composer selectors on bb's native layout", () => {
-    const desktopBoundary = theme.indexOf(
-      "/* Compact composers keep bb's native Project, Machine, and Permission mode",
-    );
-    const compactBehavior = theme.indexOf(
-      "/* Narrow-pane rules otherwise hide the metadata row even while expanded. */",
-    );
-    const selector =
-      '.dark [data-promptbox-shell] :is([data-promptbox-project-control], [aria-label="Environment"], [aria-label="Machine"], [aria-label="Branch"], [aria-label="Permission mode"]) {';
-
-    expect(theme.slice(desktopBoundary, theme.indexOf(selector))).toContain(
-      "@media (min-width: 768px)",
-    );
-    expect(theme.indexOf(selector)).toBeGreaterThan(desktopBoundary);
-    expect(theme.indexOf(selector)).toBeLessThan(compactBehavior);
-    expect(theme.split(selector)).toHaveLength(2);
-  });
-
-  test("lets a lone non-project machine summary fill the footer", () => {
     expect(theme).toContain(
-      "> div:not(:has(> [data-option-display], > [data-promptbox-hide-branch-compact]))\n    > div:has(> [data-option-display]) {\n    grid-column: 1 / -1;\n    width: 100%;\n    max-width: none;",
-    );
-    expect(theme).toContain(
-      "> div:not(:has(> [data-option-display], > [data-promptbox-hide-branch-compact]))\n    > div\n    > [data-option-display] {\n    flex: 1 1 auto;\n    max-width: none;",
-    );
-  });
-
-  test("applies composer environment-control treatments to every surface", () => {
-    // The same controls render as read-only chips in the follow-up composer
-    // footer and as pickers in the new-thread composer. Each shared treatment
-    // keeps both surfaces in one selector list so an adjustment cannot land
-    // on one and miss the other.
-    const centering = theme.match(
-      /\.dark\s+:is\(\[data-follow-up-composer-footer\], \[data-promptbox-shell\]\)[\s\S]*?\{\s*margin-inline: auto;/,
-    );
-    expect(centering).not.toBeNull();
-    for (const control of [
-      "[data-option-display]",
-      "[data-promptbox-project-control]",
-      '[aria-label="Environment"]',
-      '[aria-label="Machine"]',
-      '[aria-label="Branch"]',
-      "[data-promptbox-hide-branch-compact]",
-    ]) {
-      expect(centering?.[0]).toContain(control);
-    }
-    // The fade mask belongs on the label element only: masking the chip or
-    // picker container would dissolve the icon, chevron, and background with
-    // the text. Split rules on their closing brace and assert every
-    // mask-bearing selector ends at a label element on both surfaces.
-    const fadeSelectors = theme
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .split("}")
-      .filter((block) => block.includes("mask-image"))
-      .flatMap((block) => block.slice(0, block.indexOf("{")).split(","))
-      .map((selector) => selector.trim());
-    expect(fadeSelectors.length).toBeGreaterThan(0);
-    expect(
-      fadeSelectors.some((s) =>
-        s.includes("[data-promptbox-hide-branch-compact] > span:last-of-type"),
-      ),
-    ).toBe(true);
-    expect(
-      fadeSelectors.some(
-        (s) => s.includes('[aria-label="Branch"]') && s.includes("> span.truncate"),
-      ),
-    ).toBe(true);
-    for (const selector of fadeSelectors) {
-      expect(selector).toMatch(/span(?::last-of-type|\.truncate)$/);
-    }
-    // The picker's parenthetical label nests a second .truncate for the
-    // branch name (BranchPicker's `Current (<name>)` shape) and that inner
-    // span is what ellipsizes. `text-overflow: clip` must reach it via a
-    // descendant combinator — a `> span.truncate` arm alone only covers the
-    // outer label and the name keeps its ellipsis.
-    const clipSelectors = theme
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .split("}")
-      .filter((block) => /text-overflow:\s*clip/.test(block))
-      .flatMap((block) => block.slice(0, block.indexOf("{")).split(","))
-      .map((selector) => selector.trim());
-    expect(clipSelectors).toContain(
-      '.dark [data-promptbox-shell] [aria-label="Branch"] span.truncate',
-    );
-    expect(clipSelectors).toContain(
-      ".dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] span.truncate",
+      "@media (max-width: 767px) {\n  .dark\n    [data-promptbox]\n    [data-promptbox-editor-content]\n    .ProseMirror\n    p.is-editor-empty:first-child::before {\n    font-weight: 400;\n  }\n}",
     );
   });
 
@@ -201,14 +140,52 @@ describe("bb Monokai contract audit", () => {
     expect(theme).toContain(
       '@media (min-width: 768px) {\n  .dark [data-testid="notification-center"] {\n    overflow: hidden;\n    border-color: var(--border);\n    border-radius: 16px;',
     );
-    expect(template).toContain("0 0 0 1px var(--border)");
+    expect(theme).toContain(
+      '.dark [data-testid="notification-center"] > div:first-child,\n.dark [data-testid="notification-row"] {\n  border-color: var(--border-seam);\n}',
+    );
+  });
+
+  test("gives toasts and the notification center one host edge and the host shadow", () => {
+    expect(theme).toContain(
+      '  .dark [data-testid="notification-center"] {\n    overflow: hidden;\n    border-color: var(--border);\n    border-radius: 16px;\n    background: var(--popover);\n    box-shadow: var(--shadow-md);\n  }',
+    );
+    expect(theme).toContain(
+      "    border-color: var(--border);\n    color: var(--popover-foreground);\n    box-shadow: var(--shadow-md);\n  }",
+    );
+    expect(theme).not.toContain("0 0 0 1px var(--border),");
+  });
+
+  test("leaves Radix checkboxes to bb's checked fill", () => {
+    const rules = theme.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(rules.match(/button\.border-input(?!:not\(\[role="checkbox"\]\))/g)).toBeNull();
+    expect(theme).toContain(
+      '.dark button.border-input:not([role="checkbox"]),\n.dark button.border.bg-card {\n  background-color: var(--control-background);',
+    );
+  });
+
+  test("gives desktop and compact Send the same 14% filled-action layer", () => {
+    expect(theme).toContain(
+      ".dark button.bg-primary,\n.dark button.bg-foreground {\n  background-color: var(--control-primary);",
+    );
+    expect(theme).toContain(
+      `.dark [data-promptbox-send-menu].bg-foreground {\n  --background: ${roleValues["layer.sendSegmentLift"]};\n  background-color: var(--control-primary);\n  color: var(--foreground);`,
+    );
+  });
+
+  test("lifts a hovered desktop Send segment to compact Send's 20% hover", () => {
+    const alpha = (hex: string) => Number.parseInt(hex.slice(7, 9), 16) / 255;
+    // bb's segment hover is `!bg-background/15` over the wrapper's fill.
+    const lift = 0.15 * alpha(roleValues["layer.sendSegmentLift"]);
+    const hovered = 1 - (1 - alpha(roleValues["layer.selected"])) * (1 - lift);
+    expect(hovered).toBeCloseTo(alpha(roleValues["layer.active"]), 2);
   });
 
   test("leaves compact mobile toasts on bb's native layout", () => {
-    expect(theme).toContain(
-      '@media (min-width: 768px) {\n  .dark [data-testid="app-layout-content-shell"] > main,',
+    const toastRules = styleRules(theme).filter((rule) => rule.selector.includes("[data-sonner-"));
+    expect(toastRules.length).toBeGreaterThan(0);
+    expect(toastRules.filter((rule) => rule.atRules[0] !== "@media (min-width: 768px)")).toEqual(
+      [],
     );
-    expect(theme).not.toContain("On narrow screens, keep the full text column");
   });
 
   test("rejects an unknown template role", () => {
@@ -224,8 +201,13 @@ describe("bb Monokai contract audit", () => {
   });
 
   test("gates every hover fill behind a hover-capable pointer", () => {
-    const bareHoverRules = theme.split("\n").filter((line) => /^\.dark[^\n]*:hover/.test(line));
-    expect(bareHoverRules).toEqual([]);
+    const hoverRules = [theme, diffHeaderCss]
+      .flatMap(styleRules)
+      .filter((rule) => rule.selector.includes(":hover"));
+    expect(hoverRules.length).toBeGreaterThan(0);
+    expect(hoverRules.filter((rule) => !rule.atRules.includes("@media (hover: hover)"))).toEqual(
+      [],
+    );
     expect(theme).toContain(
       "@media (hover: hover) {\n  .dark button.bg-primary:hover,\n  .dark button.bg-foreground:hover {",
     );
@@ -234,9 +216,59 @@ describe("bb Monokai contract audit", () => {
     );
   });
 
+  test("neutralizes diff fence tokens and highlights CSS fence properties", () => {
+    expect(theme).toContain(
+      "> :is(.language-diagram, .language-patch, .language-diff) {\n  --sh-identifier: var(--foreground)",
+    );
+    expect(theme).toContain(
+      "> :is(.language-css, .language-scss, .language-less) {\n  --sh-property: #51dae9;\n  --sh-class: #a895fe;",
+    );
+  });
+
   test("joins diagram connectors at the phone code size", () => {
     expect(theme).toContain(
       "@media (max-width: 767px) and (pointer: coarse) {\n  .dark .bb-code-highlight.bb-code-highlight > :is(.language-diagram, .language-patch) {\n    line-height: 1.2;",
+    );
+  });
+
+  test("sets agent replies and trace rows on the Codex rhythm", () => {
+    const agent = ".dark [data-message-column].group\\/message [data-markdown-preview]";
+    expect(theme).toContain(
+      `${agent},\n.dark .bb-markdown-prose,\n.dark .canvas-prose [data-markdown-preview] {\n  --agent-md-space: calc(max(14px, var(--text-sm)) / 4);\n  font-weight: 430;`,
+    );
+    expect(theme).toContain(
+      `${agent} h1,\n.dark .bb-markdown-prose h1 {\n  margin: calc(var(--agent-md-space) * 4) 0 8px;\n  font-size: calc(var(--agent-md-space) * 6);`,
+    );
+    expect(theme).toContain(
+      `${agent} > p + p,\n.dark .bb-markdown-prose > p + p {\n  margin-top: calc(var(--agent-md-space) * 4);`,
+    );
+    expect(theme).toContain(`${agent} li,\n.dark .bb-markdown-prose li {\n  margin: 0 0 4px;`);
+    expect(theme).toContain(
+      `${agent} :is(strong, b),\n.dark .bb-markdown-prose :is(strong, b) {\n  font-weight: 700;`,
+    );
+    expect(theme).toContain('.dark [data-timeline-row-list="top-level"] {\n  gap: 28px;\n}');
+    expect(theme).toContain('.dark [data-timeline-row-list="bundle"] {\n  gap: 8px;');
+    expect(theme).toContain(
+      ".dark [data-timeline-row-list] .rounded-md.text-muted-foreground.opacity-40 {\n  opacity: 1;",
+    );
+    // bb's 20px action row holds the absolutely positioned hover actions.
+    // Collapsing it lets them spill over the next timeline item.
+    expect(theme).not.toContain(".relative.w-full.h-5");
+    expect(theme).toContain(
+      ".dark [data-message-column] .absolute.top-0 > button.size-5 > [data-icon-root].size-3 {\n  width: 16px;\n  height: 16px;",
+    );
+    expect(theme).toContain('> span:empty::after {\n  content: "text";');
+    expect(theme).toContain(
+      "  button,\n.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child button {\n  width: 36px;\n  height: 36px;",
+    );
+    expect(theme).toContain(
+      'a.underline[href^="mailto:"]::before,\n.dark .bb-markdown-prose a[href^="mailto:"]::before {\n  mask-image: url(',
+    );
+    expect(theme).toContain(
+      "a.underline code.bg-muted\\/70,\n.dark .bb-markdown-prose a :not(pre) > code {\n  color: inherit;",
+    );
+    expect(theme).toContain(
+      ".dark [data-timeline-row-list] span.text-sm.leading-5 {\n  font-size: max(14px, var(--text-sm));\n  line-height: 21px;",
     );
   });
 
@@ -248,25 +280,59 @@ describe("bb Monokai contract audit", () => {
 
   test("mirrors the Diffs.com header shell with Monokai color roles", () => {
     expect(theme).toContain(
-      "> .h-0 + .rounded-lg.bg-background button[aria-expanded]\n  ) {\n  overflow: hidden;\n  border-color: var(--border);\n  border-radius: 10px;\n  background-color: #181818;",
+      ".dark [data-monokai-diff-panel] [data-monokai-diff-card] {\n  overflow: hidden;\n  border-color: var(--border);\n  border-radius: 10px;\n  background-color: #181818;",
     );
     expect(theme).toContain(
-      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {\n  min-height: 44px;\n  margin-top: 0;\n  display: flex;\n  align-items: center;\n  padding: 0 16px;\n  border-top: 0;\n  border-radius: 0;\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 400;",
+      ".dark [data-monokai-diff-panel] [data-monokai-diff-shell] {\n  margin-top: 0;\n  display: flex;\n  align-items: center;\n  border-top: 0;\n  border-radius: 0;\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 400;\n}",
     );
     expect(theme).toContain(
-      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded] {\n  width: 24px;\n  height: 24px;\n  margin-left: -5px;\n  padding: 0;\n  border-radius: 8px;\n  background-color: transparent;\n  color: var(--muted-foreground);",
+      ".dark [data-monokai-diff-panel] [data-monokai-diff-shell] button[aria-expanded] {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 8px;\n  background-color: transparent;\n  color: var(--muted-foreground);\n}",
+    );
+    // app/diff-header.css is the one owner of the shell's height and padding.
+    expect(diffHeaderCss).toContain(
+      "[data-monokai-diff-shell] {\n  min-height: 40px;\n  padding-block: 0;\n  padding-inline: 12px;\n}",
     );
     expect(theme).toContain(
-      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded]\n  svg {\n  width: 10px;\n  height: 16px;",
-    );
-    expect(theme).toContain(
-      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded]\n  + span\n  > button:not(.font-mono) {\n  width: 24px;",
+      "[data-monokai-diff-shell]\n  button[aria-expanded]\n  + span\n  > button:not(.font-mono) {\n  width: 24px;",
     );
     expect(theme).not.toContain(
-      ".rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])\n  button[aria-expanded]\n  + span\n  > button {\n  width: 24px;",
+      "[data-monokai-diff-shell]\n  button[aria-expanded]\n  + span\n  > button {\n  width: 24px;",
     );
     expect(theme).toContain(
-      "> span:last-child\n  > .text-xs {\n  display: flex;\n  align-items: center;\n  gap: 1ch;\n  font-family: var(--font-mono);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 400;\n  font-variant-numeric: tabular-nums;",
+      "[data-monokai-diff-shell] > .flex > span:last-child > .text-xs {\n  display: flex;\n  align-items: center;\n  gap: 1ch;\n  font-family: var(--font-mono);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 400;\n  font-variant-numeric: tabular-nums;",
+    );
+  });
+
+  test("feeds Pierre's diff mix slots opaque targets", () => {
+    // Change rows fall back to the opaque feedback colors. Selection targets
+    // land on the 14% layer, #353534, after Pierre's 25% and 40% lab mixes.
+    expect(theme).not.toContain("--diffs-bg-addition-override");
+    expect(theme).not.toContain("--diffs-bg-deletion-override");
+    expect(theme).toContain("--diffs-addition-color-override: #3fa266;");
+    expect(theme).toContain("--diffs-deletion-color-override: #e34671;");
+    expect(theme).toContain("--diffs-bg-addition-emphasis-override: #3fa26644;");
+    expect(theme).toContain("--diffs-bg-deletion-emphasis-override: #e3467144;");
+    expect(theme).toContain("--diffs-bg-hover-override: #e3e3dd;");
+    expect(theme).toContain("--diffs-bg-selection-override: #9b9b97;");
+    expect(theme).toContain("--diffs-bg-selection-number-override: #666664;");
+  });
+
+  test("hands bb's terminal font token the Berkeley stack", () => {
+    expect(theme).toContain(
+      '  --terminal-font-family: "BerkeleyMono Nerd Font Mono", "Berkeley Mono", monospace;\n',
+    );
+    expect(theme).toContain("  --font-terminal: var(--terminal-font-family);\n");
+  });
+
+  test("keeps one fade on timeline status decorations", () => {
+    expect(theme).toContain(
+      ".dark .group\\/timeline-row > button[aria-expanded] > span > .opacity-40,\n.dark .group\\/timeline-row > button[aria-expanded] .text-subtle-foreground.opacity-75 {\n  opacity: 1;\n}",
+    );
+  });
+
+  test("keeps wrapped inline code chips padded and rounded on each line", () => {
+    expect(theme).toContain(
+      ".dark code.rounded.bg-muted\\/70 {\n  box-decoration-break: clone;\n  -webkit-box-decoration-break: clone;\n}",
     );
   });
 
@@ -341,9 +407,33 @@ describe("bb Monokai contract audit", () => {
     );
   });
 
+  test("rejects an attribute selector that changes case", () => {
+    // bb labels the button "Stop run". aria-label matching is case-sensitive.
+    const changed = theme.replaceAll('aria-label="Stop run"', 'aria-label="stop run"');
+    expect(() => auditTheme(changed)).toThrow(
+      '.dark [data-promptbox-submit-action][aria-label="Stop run"]: expected one rule, found 0',
+    );
+  });
+
   test("rejects an illegible registered foreground/background pair", () => {
     const changed = theme.replace("--primary-foreground: #181818", "--primary-foreground: #e3e3dd");
     expect(() => auditTheme(changed)).toThrow("--primary-foreground on --primary:");
+  });
+
+  test("holds machine globes to the 3:1 non-text floor on the sidebar", () => {
+    const changed = theme.replace("--machine-1: #3093f4", "--machine-1: #e3e3dd1f");
+    expect(() => auditTheme(changed)).toThrow("--machine-1 on --sidebar: 1.36:1 (needs 3.0:1)");
+  });
+});
+
+describe("bb Monokai selector cost", () => {
+  test("ships no :has() selectors", () => {
+    // Blink re-checks a :has() subject when DOM beneath it changes, so every
+    // rule made streamed timeline tokens restyle part of the page. Anchor on a
+    // bb hook, or tag the element from a content script that already finds it
+    // (app/diff-header.ts, app/terminal-appearance.ts).
+    for (const css of [theme, diffHeaderCss])
+      expect(css.replace(/\/\*[\s\S]*?\*\//g, "").match(/[^\n]*:has\([^\n]*/g)).toBeNull();
   });
 });
 
@@ -405,6 +495,24 @@ describe("bb Monokai code theme", () => {
     expect(foregroundByScope.get("identifier.ts")).toBe("#e3e3dd");
     expect(foregroundByScope.get("type.identifier.ts")).toBe("#e3e3dd");
     expect(foregroundByScope.get("delimiter")).toBe("#e3e3dd");
+  });
+
+  test("vendors editor colors as palette roles", () => {
+    expect(
+      convertRules([
+        { scope: "markup.heading, entity.name.section", settings: { foreground: "#9DDD54" } },
+        { scope: ["comment"], settings: { foreground: "#BEB89999", fontStyle: "italic" } },
+      ]),
+    ).toEqual([
+      { scope: ["markup.heading", "entity.name.section"], foreground: "code.entity" },
+      { scope: ["comment"], foreground: "text.comment60", fontStyle: "italic" },
+    ]);
+  });
+
+  test("stops the sync on an editor color with no token role", () => {
+    expect(() => convertRules([{ scope: "keyword", settings: { foreground: "#88C0D0" } }])).toThrow(
+      "#88C0D0 on keyword has no role. Amend CONTRACT.md and the palette before syncing.",
+    );
   });
 
   test("rejects a chrome-only role on a token", () => {

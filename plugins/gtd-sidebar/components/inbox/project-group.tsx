@@ -1,14 +1,15 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Icon } from "../ui/icon";
 import { cn } from "../../lib/utils";
-import { usePortalScopeProps } from "../../lib/portal-scope";
 import { FadingText } from "./thread-details";
+import { MENU_ITEM_CLASS, MenuSurface, openMenuFromKeyboard } from "./menu-surface";
 import { useNestProjectHeader } from "../../hooks/use-nest-drag";
 import { DRAG_KIND } from "../../lib/sidebar-drag";
 import type { InboxShelf } from "../../lib/inbox-tree";
+import type { HeaderMeasureProps } from "../../hooks/use-inbox-window";
 
 /**
  * A project group wired into its shelf's sortable list: the header is the
@@ -28,13 +29,14 @@ export function SortableProjectGroup(props: ProjectGroupProps) {
  * header carries only the project name. The count shows while the group is
  * folded, where it is the group's whole footprint: `needs-you / total` when
  * something in it asks for the user, the total alone otherwise. Hovering the
- * header trades the count for a new-thread button.
+ * header trades the count for a new-thread button. Compact viewports keep
+ * both the count and the new-thread button visible for touch access.
  *
  * Right-clicking the header offers "Move up" / "Move down", and a sortable
  * group drags by its header — both reorder the project in bb's own order,
  * the same order every shelf groups by, so the move lands identically under
- * each shelf. The menu stays as the keyboard path: the sortable handle is
- * pointer-only.
+ * each shelf. The menu, opened by Shift+F10 or the Menu key, stays as the
+ * keyboard path: the sortable handle is pointer-only.
  *
  * The header is also the drop target that lifts a nested row back to the top
  * level of its project (see use-nest-drag), lit while a row that may drop
@@ -54,20 +56,37 @@ export function ProjectGroup({
   isCompactViewport,
   dropAllowed,
   sortable,
+  measureRef,
+  measureIndex,
   children,
 }: ProjectGroupProps) {
   const drop = useNestProjectHeader(shelf, projectId, dropAllowed);
-  const portalScope = usePortalScopeProps();
+  const { setDropRef } = drop;
+  const setHeaderRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      setDropRef(element);
+      measureRef(element);
+    },
+    [setDropRef, measureRef],
+  );
   const [hovered, setHovered] = useState(false);
+  // Reaching the new-thread button by keyboard trades the count for it, as
+  // hovering the header does.
+  const [newFocusVisible, setNewFocusVisible] = useState(false);
+  // Keyboard focus on the toggle shows the fold chevron, as hovering does.
+  const [toggleFocusVisible, setToggleFocusVisible] = useState(false);
+  const showChevron = hovered || toggleFocusVisible;
   const count = attention > 0 ? `${attention} / ${families}` : `${families}`;
   const header = (
     <div
-      ref={drop.setDropRef}
+      ref={setHeaderRef}
+      data-index={measureIndex}
       className={cn(
         "gtd-project-group-header group/pg",
         isCompactViewport && "gtd-project-group-header-touch",
       )}
       data-drop-target={drop.isOver ? "true" : undefined}
+      data-new-focus-visible={newFocusVisible}
       onPointerEnter={(event) => {
         if (event.pointerType !== "touch") setHovered(true);
       }}
@@ -81,16 +100,21 @@ export function ProjectGroup({
       <button
         type="button"
         onClick={onToggle}
+        onFocus={(event) => setToggleFocusVisible(event.currentTarget.matches(":focus-visible"))}
+        onBlur={() => setToggleFocusVisible(false)}
+        onKeyDown={(event) => {
+          if (onMoveUp !== undefined || onMoveDown !== undefined) openMenuFromKeyboard(event);
+        }}
         aria-expanded={expanded}
-        aria-label={`${name} project${expanded ? "" : ` (${count})`}`}
+        aria-label={`${name} project${expanded ? "" : `, ${spokenCount(families, attention)}`}`}
         className="gtd-project-group-toggle"
       >
         <span className="gtd-disclosure gtd-project-group-chevron">
           <Icon
-            name={hovered ? "ChevronDown" : "Folder"}
+            name={showChevron ? "ChevronDown" : "Folder"}
             className={cn(
               isCompactViewport ? "size-4" : "size-3",
-              hovered && !expanded && "-rotate-90",
+              showChevron && !expanded && "-rotate-90",
             )}
           />
         </span>
@@ -103,17 +127,11 @@ export function ProjectGroup({
           </span>
         )}
       </button>
-      {isCompactViewport ? null : (
-        <button
-          type="button"
-          aria-label={`New thread in ${name}`}
-          title={`New thread in ${name}`}
-          onClick={() => onNewThread(projectId)}
-          className="gtd-project-group-new"
-        >
-          <Icon name="Plus" className="size-3" />
-        </button>
-      )}
+      <NewThreadButton
+        name={name}
+        onClick={() => onNewThread(projectId)}
+        onFocusVisibleChange={setNewFocusVisible}
+      />
     </div>
   );
   return (
@@ -129,42 +147,66 @@ export function ProjectGroup({
       ) : (
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>{header}</ContextMenu.Trigger>
-          <ContextMenu.Portal>
-            <ContextMenu.Content
-              {...portalScope}
-              aria-label={`${name} project actions`}
-              className="z-50 min-w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
-            >
-              {onMoveUp === undefined ? null : (
-                <ContextMenu.Item
-                  onSelect={onMoveUp}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                >
-                  <Icon name="ChevronUp" className="size-4 shrink-0" />
-                  Move up
-                </ContextMenu.Item>
-              )}
-              {onMoveDown === undefined ? null : (
-                <ContextMenu.Item
-                  onSelect={onMoveDown}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                >
-                  <Icon name="ChevronDown" className="size-4 shrink-0" />
-                  Move down
-                </ContextMenu.Item>
-              )}
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
+          <MenuSurface aria-label={`${name} project actions`}>
+            {onMoveUp === undefined ? null : (
+              <ContextMenu.Item
+                onSelect={onMoveUp}
+                className={cn(MENU_ITEM_CLASS, "data-[highlighted]:text-accent-foreground")}
+              >
+                <Icon name="ChevronUp" className="size-4 shrink-0" />
+                Move up
+              </ContextMenu.Item>
+            )}
+            {onMoveDown === undefined ? null : (
+              <ContextMenu.Item
+                onSelect={onMoveDown}
+                className={cn(MENU_ITEM_CLASS, "data-[highlighted]:text-accent-foreground")}
+              >
+                <Icon name="ChevronDown" className="size-4 shrink-0" />
+                Move down
+              </ContextMenu.Item>
+            )}
+          </MenuSurface>
         </ContextMenu.Root>
       )}
-      {expanded ? (
-        <ul className="gtd-project-group-rows flex flex-col gap-0.5">{children}</ul>
-      ) : null}
+      {expanded ? <ul className="gtd-project-group-rows flex flex-col">{children}</ul> : null}
     </div>
   );
 }
 
-export interface ProjectGroupProps {
+/** The folded count in words: a screen reader reads the visible `2 / 5` as "2 slash 5". */
+function spokenCount(families: number, attention: number) {
+  const threads = `${families} ${families === 1 ? "thread" : "threads"}`;
+  if (attention <= 0) return threads;
+  return `${threads}, ${attention} ${attention === 1 ? "needs" : "need"} you`;
+}
+
+/** The header's new-thread button, reporting keyboard focus so the header can hide its count. */
+function NewThreadButton({
+  name,
+  onClick,
+  onFocusVisibleChange,
+}: {
+  name: string;
+  onClick: () => void;
+  onFocusVisibleChange: (focusVisible: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`New thread in ${name}`}
+      title={`New thread in ${name}`}
+      onClick={onClick}
+      onFocus={(event) => onFocusVisibleChange(event.currentTarget.matches(":focus-visible"))}
+      onBlur={() => onFocusVisibleChange(false)}
+      className="gtd-project-group-new"
+    >
+      <Icon name="Plus" className="size-3" />
+    </button>
+  );
+}
+
+export interface ProjectGroupProps extends HeaderMeasureProps {
   projectId: string;
   shelf: InboxShelf;
   name: string;

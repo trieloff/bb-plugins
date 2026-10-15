@@ -50,32 +50,22 @@
 /* BB keeps the right-panel diff disclosure outside Pierre's shadow tree.
  * Mirror the Diffs.com built-in-slots header shell and controls while retaining
  * BB's collapse state, file actions, sticky positioning, and non-text fallbacks.
- * Color stays on this theme's surface, ink, state, and feedback roles. */
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .overflow-clip.rounded-lg.border.border-border.bg-background:has(
-    > .h-0 + .rounded-lg.bg-background button[aria-expanded]
-  ) {
+ * Color stays on this theme's surface, ink, state, and feedback roles.
+ * app/diff-header.ts tags the panel, card, and shell, so none of these
+ * rules need a :has selector. The panel tag appears only while the panel
+ * shows a diff toolbar or an opted-in [data-monokai-diff-surface]. */
+.dark [data-monokai-diff-panel] [data-monokai-diff-card] {
   overflow: hidden;
   border-color: var(--border);
   border-radius: 10px;
   background-color: #181818;
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
-  min-height: 44px;
+/* app/diff-header.css owns the shell's height, padding, and chevron. */
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] {
   margin-top: 0;
   display: flex;
   align-items: center;
-  padding: 0 16px;
   border-top: 0;
   border-radius: 0;
   font-size: 13px;
@@ -83,91 +73,37 @@
   font-weight: 400;
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  > .flex {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] > .flex {
   height: 100%;
   gap: 8px;
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  > .flex
-  > span:first-child {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] > .flex > span:first-child {
   gap: 8px;
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  button[aria-expanded] {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] button[aria-expanded] {
   width: 24px;
   height: 24px;
-  margin-left: -5px;
   padding: 0;
   border-radius: 8px;
   background-color: transparent;
   color: var(--muted-foreground);
-  transition:
-    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
-    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  button[aria-expanded]
-  svg {
-  width: 10px;
-  height: 16px;
 }
 
 @media (hover: hover) {
-  .dark
-    :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-      [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-    )
-    .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-    button[aria-expanded]:hover {
+  .dark [data-monokai-diff-panel] [data-monokai-diff-shell] button[aria-expanded]:hover {
     background-color: var(--state-hover);
     color: var(--foreground);
   }
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  button[aria-expanded]
-  + span {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] button[aria-expanded] + span {
   padding-left: 0;
   gap: 8px;
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  .font-mono {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] .font-mono {
   font-size: 13px;
   line-height: 20px;
   font-weight: 400;
@@ -175,11 +111,8 @@
 }
 
 .dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+  [data-monokai-diff-panel]
+  [data-monokai-diff-shell]
   button[aria-expanded]
   + span
   > button:not(.font-mono) {
@@ -188,18 +121,12 @@
   border-radius: 8px;
   background-color: transparent;
   color: var(--muted-foreground);
-  transition:
-    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
-    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @media (hover: hover) {
   .dark
-    :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-      [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-    )
-    .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
+    [data-monokai-diff-panel]
+    [data-monokai-diff-shell]
     button[aria-expanded]
     + span
     > button:not(.font-mono):hover {
@@ -208,28 +135,13 @@
   }
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  > .flex
-  > span:last-child {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] > .flex > span:last-child {
   gap: 8px;
   font-size: 13px;
   line-height: 20px;
 }
 
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded])
-  > .flex
-  > span:last-child
-  > .text-xs {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] > .flex > span:last-child > .text-xs {
   display: flex;
   align-items: center;
   gap: 1ch;
@@ -254,6 +166,17 @@
   --diffs-header-font-family: var(--font-sans);
 }
 
+/* macOS draws light-on-dark text heavier than its weight under the default
+ * smoothing, so Inter and Berkeley Mono read bold and soft on the dark grounds.
+ * Grayscale antialiasing restores the drawn weight. Both properties inherit,
+ * so the rule reaches shadow roots such as the diff viewer.
+ * font-synthesis stays on: bb bundles no Inter italic face, and markdown
+ * emphasis depends on the synthesized slant. */
+.dark body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 .dark {
   --bb-monokai-active: 1;
 
@@ -262,6 +185,9 @@
    * script applies these options to both its DOM and WebGL renderers. */
   --terminal-background: #181818;
   --terminal-font-family: "BerkeleyMono Nerd Font Mono", "Berkeley Mono", monospace;
+  /* bb's own family token. bb reads it when it creates a terminal and resets
+   * the family to it on every theme change, so it must name the same stack. */
+  --font-terminal: var(--terminal-font-family);
   --terminal-font-size: 13;
   --terminal-line-height: 1.4;
   --bb-monokai-code-entity: #9ddd54;
@@ -319,12 +245,12 @@
    * --foreground stays opaque: it is also the xterm foreground and cursor, and
    * ANSI bright-white is #E3E3DD. */
   --foreground: #e3e3dd; /* 14.17:1 on --background */
-  --muted-foreground: #e3e3ddbd; /* secondary 74% — 8.02:1 */
-  --readback-foreground: #e3e3dd8c; /* muted 55% — 4.96:1 */
+  --muted-foreground: #e3e3ddbd; /* secondary 74% — 8.20:1 */
+  --readback-foreground: #e3e3dd8c; /* muted 55% — 5.00:1 */
   --subtle-foreground: #e3e3dd4d; /* faint 30% — the deliberately ghosted
                                    * "where, not what" tier */
 
-  --accent-foreground: #e3e3dd; /* on #262626 — 11.74:1 */
+  --accent-foreground: #e3e3dd; /* on --accent over --background (#252525) — 11.90:1 */
   --secondary-foreground: #e3e3dd;
 
   /* ---- Accent ----------------------------------------------------------
@@ -344,9 +270,6 @@
   /* Sidebar search match is a find match, so the accent is legal here; the
    * upstream gold is not in this palette. Alphas match editor.findMatch*. */
   --sidebar-search-match: #88c0d044;
-  --sidebar-search-match-border: #88c0d066;
-
-  --resource-source-shelf-card-hover-border: #e3e3dd33;
 
   /* ---- Feedback — one hex per role ------------------------------------- */
   --destructive: #e34671;
@@ -375,10 +298,21 @@
    * Keep both navigation sidebars on the content ground. Terminal chrome stays
    * on its separate --terminal-background token above. */
   --sidebar: #181818;
-  --sidebar-foreground: #e3e3ddbd; /* 8.02:1 */
+  --sidebar-foreground: #e3e3ddbd; /* 7.98:1 */
   --sidebar-accent: #e3e3dd14;
-  --sidebar-accent-foreground: #e3e3dd; /* selection keeps primary text */
+  --sidebar-accent-foreground: #e3e3dd; /* hover text; the selected-row rule
+                                         * below reuses it */
   --sidebar-border: #e3e3dd1f; /* shared alpha edge; one owner per boundary */
+
+  /* ---- Machine identity ------------------------------------------------
+   * Categorical, like the chart series: a hue names a remote machine and
+   * nothing else. Plugin globes sit beside status glyphs, so no entry comes
+   * from a feedback family. Contrast is on --sidebar, against the 3:1 floor
+   * for glyphs. */
+  --machine-1: #3093f4; /* 5.59:1 */
+  --machine-2: #75f0ff; /* 13.24:1 */
+  --machine-3: #ee8fc8; /* 7.95:1 */
+  --machine-4: #7cacfe; /* 7.77:1 */
 
   /* ---- Mention pills ---------------------------------------------------
    * The gradient syntax is required (the token is consumed as a
@@ -450,18 +384,24 @@
   --diffs-bg-context-gutter-override: #181818;
   --diffs-bg-buffer-override: #181818;
   --diffs-bg-separator-override: #e3e3dd0f;
-  --diffs-bg-addition-override: #3fa26622;
   --diffs-bg-addition-emphasis-override: #3fa26644;
-  --diffs-bg-deletion-override: #e3467122;
   --diffs-bg-deletion-emphasis-override: #e3467144;
-  --diffs-bg-hover-override: #e3e3dd14;
-  --diffs-bg-selection-override: #e3e3dd24;
+
+  /* Pierre treats the row, selection, and hover slots as lab mix targets, not
+   * fills: a change row takes 20% of its target, a selection 25% (40% in the
+   * gutter), and hover 9%. An alpha layer there all but vanishes. Change rows
+   * leave their slots unset, so Pierre mixes the feedback colors above and
+   * keeps its striped deletion bar. The opaque selection targets make the mix
+   * land on the 14% selected layer over the content ground. Hover mixes full
+   * ink, which lifts about 7.5% at a 9% weight, just short of the 8% layer. */
+  --diffs-bg-hover-override: #e3e3dd;
+  --diffs-bg-selection-override: #9b9b97;
 
   /* Number gutters share the neutral code ground, not the change-row wash.
    * Feedback numbers retain their contrast against the content surface. */
   --diffs-bg-addition-number-override: #181818;
   --diffs-bg-deletion-number-override: #181818;
-  --diffs-bg-selection-number-override: #e3e3dd24;
+  --diffs-bg-selection-number-override: #666664;
   --diffs-fg-number-override: #e3e3dd8c;
   --diffs-fg-number-addition-override: #3fa266;
   --diffs-fg-number-deletion-override: #e34671;
@@ -498,8 +438,10 @@
 
 /* The current BB terminal canvas sits inside this padded sidebar surface.
  * Match its padding to xterm's background even when the side panel scopes
- * --sidebar to the editor ground. */
-.dark .bg-sidebar:has(> div > .xterm) {
+ * --sidebar to the editor ground. app/terminal-appearance.ts tags the
+ * surface. A :has selector here put bb's sidebars behind per-mutation
+ * invalidation. */
+.dark [data-monokai-terminal-surface] {
   background-color: var(--terminal-background);
 }
 
@@ -522,6 +464,15 @@
   border-color: transparent;
 }
 
+/* bb paints the active settings and plugins row with the same 8%
+ * --sidebar-accent as hover, but keeps 74% text, so a hovered row would
+ * outrank the selection. Selection takes the 14% layer and primary text. The
+ * rule is unlayered, so a hovered selected row stays at 14%. */
+.dark [data-sidebar="panel"] a[aria-current="page"].bg-sidebar-accent {
+  background-color: var(--surface-selected);
+  color: var(--sidebar-accent-foreground);
+}
+
 /* User requests use the shared 6% ink surface with an 8% edge while keeping
  * bb's native bubble geometry. Agent replies stay flat on the #151515
  * conversation ground. */
@@ -529,10 +480,6 @@
   background-color: var(--agent-surface-background);
   background-clip: padding-box;
   border-color: var(--agent-surface-border);
-}
-
-.dark [data-gh-stack-container] {
-  background-color: var(--agent-surface-background);
 }
 
 /* Some bb captions deliberately reduce the already-faint subtle token to 75%.
@@ -544,11 +491,13 @@
 
 /* bb's collapsed timeline toggles ("Ran 2 commands", "Thought 3s",
  * "Worked for 5m") wrap their label in an opacity-40 span under a subtle or
- * muted button: 30% x 40% is ~12% alpha, which vanishes on this ground. Drop
- * the multiplier and keep one fade per span: subtle lifts to readback, muted
+ * muted button: 30% x 40% is ~12% alpha, which vanishes on this ground. Status
+ * decorations ("1 error") also fade their subtle span to 75%. Drop the
+ * multipliers and keep one fade per span: subtle lifts to readback, muted
  * stays muted, so "Worked for" still sits under its duration. Hover and focus
  * climb one step as upstream intends. */
-.dark .group\/timeline-row > button[aria-expanded] > span > .opacity-40 {
+.dark .group\/timeline-row > button[aria-expanded] > span > .opacity-40,
+.dark .group\/timeline-row > button[aria-expanded] .text-subtle-foreground.opacity-75 {
   opacity: 1;
 }
 .dark .group\/timeline-row > button[aria-expanded].text-subtle-foreground,
@@ -568,12 +517,15 @@
 
 /* Shared host-component adapter. Field and outline-button fills depend only
  * on role, never on which card, sidebar, dialog, or composer contains them.
- * Clip the translucent fill inside its edge to avoid double compositing. */
+ * Clip the translucent fill inside its edge to avoid double compositing.
+ * Radix checkboxes are also `button.border-input`, but bb draws their checked
+ * state with layered utilities this unlayered fill would hide, so they keep
+ * bb's own look. */
 .dark input.border-input,
 .dark textarea.border-input,
 .dark select.border-input,
 .dark [role="combobox"].border-input,
-.dark button.border-input,
+.dark button.border-input:not([role="checkbox"]),
 .dark button.border.bg-card {
   background-color: var(--control-background);
   background-clip: padding-box;
@@ -592,17 +544,36 @@
   .dark textarea.border-input:hover:not(:disabled),
   .dark select.border-input:hover:not(:disabled),
   .dark [role="combobox"].border-input:hover:not(:disabled),
-  .dark button.border-input:hover:not(:disabled),
+  .dark button.border-input:not([role="checkbox"]):hover:not(:disabled),
   .dark button.border.bg-card:hover:not(:disabled) {
     background-color: var(--state-hover);
   }
+
+  /* bb's resource browse card hovers to a 2.5% ink fill, which lifts bb's
+   * opaque card. Over the 4% --card layer it darkens the card instead, and its
+   * 30% hover edge passes the 20% strong edge. Hover takes the 8% step and the
+   * strong edge. The class literal is unique to ResourceBrowseCard (bb 0.45
+   * collection.tsx). */
+  .dark .bg-card.border-border[class*="hover:bg-[color-mix(in_oklab,var(--ink)_2.5%"]:hover {
+    background-color: var(--state-hover);
+    border-color: var(--surface-selected-border);
+  }
 }
 
-.dark button.border-input:active:not(:disabled),
+.dark button.border-input:not([role="checkbox"]):active:not(:disabled),
 .dark button.border.bg-card:active:not(:disabled),
-.dark button.border-input[data-state="open"],
+.dark button.border-input:not([role="checkbox"])[data-state="open"],
 .dark button.border.bg-card[data-state="open"] {
   background-color: var(--surface-selected);
+}
+
+/* bb pads some focus rings with a 2px --background offset, which blends into
+ * bb's opaque cards. Monokai cards and fields are translucent layers, so the
+ * offset paints a #151515 moat inside them. Drop the offset and keep the 25%
+ * ring flush on whatever the control sits on. */
+.dark .ring-offset-background:focus-visible,
+.dark .focus-visible\:ring-offset-background:focus-visible {
+  --tw-ring-offset-width: 0px;
 }
 
 /* The composer owns one 6% layer. Its editor is layout, not another surface. */
@@ -614,6 +585,27 @@
 .dark [data-promptbox] [data-promptbox-editor-scroll] {
   background-color: transparent;
   border-radius: 11px 11px 0 0;
+}
+
+/* bb tucks an attached queue card 20px under the follow-up composer and
+ * relies on the composer's opaque bg-background to cover it. The 6% layer
+ * would composite over that card, so the wrapper restores the opaque ground
+ * beneath it. The top radius matches the promptbox to keep the tucked card
+ * visible at the corners, as upstream shows it. */
+.dark [data-follow-up-composer] {
+  background-color: var(--background);
+  border-radius: 12px 12px 0 0;
+}
+
+/* bb reserves a 20px gutter for an invisible drag grip, even when the list
+ * cannot reorder. Collapse the disabled grip so the message text aligns with
+ * the Queue title. The -0.25rem margin cancels the row's 6px gap, minus the
+ * 2px that separates the row inset (10px) from the title inset (12px). */
+.dark [data-queued-message-row] button[aria-label^="Reorder queued message"]:disabled {
+  width: 0;
+  padding: 0;
+  margin-left: -0.25rem;
+  overflow: hidden;
 }
 
 /* Context is a separate request surface; its compact git inlay is layout. */
@@ -640,33 +632,6 @@
   border-color: var(--agent-surface-border);
 }
 
-/* Settings pages use both section-owned cards and standalone list/detail cards.
- * Scope to the routed settings content, not its navigation or portalled menus.
- * Inputs keep their own well; explicit transparent containers stay transparent. */
-.dark
-  body:has(a[aria-current="page"][href^="/settings"])
-  main
-  main
-  .bg-card:not(button):not(input):not(textarea):not(select):not(.bg-transparent),
-.dark
-  body:has(a[aria-current="page"][href^="/settings"])
-  main
-  main
-  div.rounded-md.border.border-border:not(.bg-transparent),
-.dark
-  body:has(a[aria-current="page"][href^="/settings"])
-  main
-  main
-  li.rounded-md.border.border-border:not(.bg-transparent),
-.dark
-  body:has(a[aria-current="page"][href^="/settings"])
-  main
-  main
-  div.rounded-lg.border.border-border:not(.bg-transparent) {
-  background-color: var(--card);
-  border-width: 0;
-}
-
 /* The bottom-anchored conversation body is transparent upstream. Pin its
  * concrete child as well as --background so split-pane wrappers cannot leak. */
 .dark .thread-scrollbar > .flex.min-h-full.min-w-0.flex-col {
@@ -677,7 +642,8 @@
  * hit area on hover. The fill is the accent at 15% alpha so the conversation
  * ground remains part of the resulting color instead of introducing another
  * opaque surface. Negative inline margins preserve surrounding prose spacing. */
-.dark [data-message-column] [data-markdown-preview] a.underline {
+.dark [data-message-column] [data-markdown-preview] a.underline,
+.dark .bb-markdown-prose a {
   color: var(--primary);
   text-decoration-line: none;
   border-radius: 0.375rem;
@@ -688,7 +654,8 @@
 }
 
 @media (hover: hover) {
-  .dark [data-message-column] [data-markdown-preview] a.underline:hover {
+  .dark [data-message-column] [data-markdown-preview] a.underline:hover,
+  .dark .bb-markdown-prose a:hover {
     background-color: #88c0d026;
   }
 }
@@ -696,8 +663,10 @@
 /* Keep the new-thread composer at the conversation footer's position. The
  * desktop column fills its scroll viewport, with homepage sections above the
  * composer. Compact home already anchors it at the bottom. Both use the same
- * 0.5rem bottom inset, explicitly overriding bb's pb-4 utility. */
-.dark #root-compose-main-panel .\@container\/page > div:has(> [data-promptbox-shell]) {
+ * 0.5rem bottom inset, explicitly overriding bb's pb-4 utility. The desktop
+ * column is the page container's .mx-auto.flex-col child; compact home's root
+ * is not, and it keeps its own layout. */
+.dark #root-compose-main-panel .\@container\/page > .mx-auto.flex-col {
   min-height: 100%;
   padding-bottom: 0.5rem;
 }
@@ -738,256 +707,6 @@
   max-height: calc(70dvh - 3rem) !important;
 }
 
-/* Compact composers keep bb's native Project, Machine, and Permission mode
- * controls. Fixed metadata geometry is a desktop alignment treatment. */
-@media (min-width: 768px) {
-  .dark [data-follow-up-composer-footer] {
-    min-height: 2rem;
-    max-height: 2rem;
-    padding-left: 0.875rem;
-  }
-
-  .dark [data-follow-up-composer-footer] [aria-label="Permission mode"] {
-    height: 2rem;
-  }
-
-  /* Keep metadata slots stable when editable pickers become read-only labels,
-   * and reserve the context meter's space before usage arrives. */
-  .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) {
-    --monokai-metadata-width: 8rem;
-    --monokai-project-width: calc(var(--monokai-metadata-width) * 0.9375);
-    --monokai-detail-width: calc(var(--monokai-metadata-width) * 1.03125);
-  }
-
-  .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) > :last-child {
-    position: relative;
-    padding-right: 2rem;
-  }
-
-  .dark [data-follow-up-composer-footer] [aria-label^="Context window "] {
-    position: absolute;
-    right: 0;
-    margin: 0;
-  }
-
-  .dark [data-follow-up-composer-footer] > :first-child > div {
-    display: grid;
-    grid-template-columns: var(--monokai-project-width) repeat(2, var(--monokai-detail-width)) auto;
-    width: 100%;
-    gap: 0.25rem;
-    padding-right: 0;
-  }
-
-  .dark [data-follow-up-composer-footer] [data-option-display],
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
-    font-weight: 500;
-    height: 2rem;
-  }
-
-  .dark [data-follow-up-composer-footer] [data-option-display] > span,
-  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]) {
-    gap: 0.25rem;
-  }
-
-  .dark [data-promptbox-shell] div > [data-promptbox-project-control],
-  .dark [data-promptbox-shell] [data-promptbox-project-slot],
-  .dark [data-follow-up-composer-footer] [data-option-display]:has([data-icon="Folder"]) {
-    width: var(--monokai-project-width);
-    max-width: var(--monokai-project-width);
-    flex: 0 0 var(--monokai-project-width);
-  }
-
-  .dark [data-promptbox-shell] [aria-label="Environment"],
-  .dark [data-promptbox-shell] [aria-label="Machine"],
-  .dark [data-promptbox-shell] [aria-label="Branch"],
-  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]),
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
-    width: var(--monokai-detail-width);
-    max-width: var(--monokai-detail-width);
-    flex: 0 0 var(--monokai-detail-width);
-  }
-
-  .dark [data-promptbox-shell] :is([data-promptbox-project-control], [aria-label="Environment"], [aria-label="Machine"], [aria-label="Branch"], [aria-label="Permission mode"]) {
-    position: relative;
-    padding-left: 0.5rem;
-    padding-right: 1.75rem;
-  }
-
-  .dark [data-promptbox-shell] :is([data-promptbox-project-control], [aria-label="Environment"], [aria-label="Machine"], [aria-label="Branch"], [aria-label="Permission mode"]) > [data-icon="ChevronDown"] {
-    position: absolute;
-    right: 0.5rem;
-    width: 1rem;
-  }
-
-  .dark [data-promptbox-shell] [data-promptbox-project-slot] > [aria-label="Don't work in a project"] {
-    left: 0.375rem;
-  }
-
-  /* Unlike the pickers these chips carry no chevron, so the padding stays
-   * symmetric — a right-side reserve would offset the centered label group
-   * from the column's middle. */
-  .dark [data-follow-up-composer-footer] [data-option-display]:has([data-icon="Folder"]),
-  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]),
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
-  }
-
-  .dark [data-follow-up-composer-footer] [data-option-display]:has([data-icon="Folder"]) {
-    grid-column: 1;
-  }
-
-  .dark [data-follow-up-composer-footer] div:has(> [aria-label^="Environment type:"]) {
-    grid-column: 2;
-  }
-
-  /* Outside a project, the environment is the whole thread location summary.
-   * Remove the empty project and checkout columns instead of leaving the machine
-   * label stranded in the second fixed slot. */
-  .dark
-    [data-follow-up-composer-footer]
-    > :first-child
-    > div:not(:has(> [data-option-display], > [data-promptbox-hide-branch-compact]))
-    > div:has(> [data-option-display]) {
-    grid-column: 1 / -1;
-    width: 100%;
-    max-width: none;
-    flex: 1 1 auto;
-  }
-
-  .dark
-    [data-follow-up-composer-footer]
-    > :first-child
-    > div:not(:has(> [data-option-display], > [data-promptbox-hide-branch-compact]))
-    > div
-    > [data-option-display] {
-    flex: 1 1 auto;
-    max-width: none;
-  }
-
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
-    grid-column: 3;
-    line-height: 1.25;
-  }
-
-  /* The "new thread in this environment" control lands in the grid's `auto`
-   * track, which the default justify-content stretches to the row's leftover
-   * width; the button's default justify-self then fills that track. Pin it to
-   * the start edge at natural icon-button size, beside the checkout chip. The
-   * -ml-1 utility is the stable hook — bb renamed the control's aria-label
-   * across releases while keeping the negative margin. */
-  .dark [data-follow-up-composer-footer] button.-ml-1 {
-    justify-self: start;
-  }
-
-  /* Composer environment controls render on two surfaces and share one
-   * treatment — adjust them together, not per surface:
-   *   - [data-follow-up-composer-footer]: read-only chips on thread pages.
-   *     The footer itself nests inside [data-promptbox-shell], so the union
-   *     below is what keeps the two surfaces in one selector list.
-   *   - [data-promptbox-shell]: the new-thread composer's picker row
-   *     ([data-promptbox-project-control], Environment, Machine, Branch).
-   *
-   * The icon stays pinned to the left edge while the label centers in the
-   * space to its right. OptionDisplay and the pickers wrap icon and label in
-   * a content-sized inner span, and bb 0.43 renders the footer's machine
-   * chip as a w-fit grid item, so those boxes must fill before the label has
-   * room to center. A truncated label's auto margins collapse, keeping the
-   * clip start-aligned. */
-  .dark
-    :is([data-follow-up-composer-footer], [data-promptbox-shell])
-    :is(
-      [data-option-display],
-      [data-promptbox-project-control],
-      [aria-label="Environment"],
-      [aria-label="Machine"],
-      [aria-label="Branch"]
-    )
-    :is(span, div):has(> :is([data-promptbox-full-label], [data-promptbox-compact-label], span.truncate)),
-  .dark
-    [data-follow-up-composer-footer]
-    div:has(> [aria-label^="Environment type:"])
-    > [data-option-display] {
-    flex: 1 1 auto;
-  }
-
-  .dark [data-follow-up-composer-footer] > :first-child > div > span:has(> [data-icon]) {
-    width: 100%;
-  }
-
-  .dark
-    :is([data-follow-up-composer-footer], [data-promptbox-shell])
-    :is(
-      [data-option-display],
-      [data-promptbox-project-control],
-      [aria-label="Environment"],
-      [aria-label="Machine"],
-      [aria-label="Branch"],
-      [data-promptbox-hide-branch-compact]
-    )
-    :is([data-promptbox-full-label], [data-promptbox-compact-label], span.truncate),
-  .dark
-    [data-follow-up-composer-footer]
-    > :first-child
-    > div
-    > span:has(> [data-icon])
-    > span:last-of-type {
-    margin-inline: auto;
-  }
-
-  /* The checkout label fades at the end of its lane instead of ellipsizing.
-   * The mask sits on the label element itself, so only the text dissolves —
-   * the icon, chevron, and chip background stay opaque. The label fills its
-   * lane and centers its text inside, which keeps the vru centering for
-   * short labels while anchoring the fade zone to the lane's right edge;
-   * `safe center` (and Chrome's start-aligned overflow for inline text)
-   * keeps the label's beginning visible when it clips. On the picker the
-   * lane ends at the chevron reserve, on the footer chip at the padding. */
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] > span:last-of-type,
-  .dark [data-promptbox-shell] [aria-label="Branch"] > span.contents > span.truncate,
-  .dark [data-promptbox-shell] [aria-label="Branch"] > span.truncate {
-    flex: 1 1 auto;
-    min-width: 0;
-    text-align: center;
-    justify-content: safe center;
-    -webkit-mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent 100%);
-    mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent 100%);
-  }
-
-  /* Clip must reach every truncating descendant, not only the outer label:
-   * the picker's parenthetical label nests a second .truncate for the branch
-   * name (BranchPicker's `Current (<name>)` shape), and that inner span is
-   * what actually ellipsizes. */
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] span.truncate,
-  .dark [data-promptbox-shell] [aria-label="Branch"] span.truncate {
-    text-overflow: clip;
-  }
-
-  .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] > svg {
-    width: 1rem;
-    height: 1rem;
-  }
-
-  @container promptbox-shell (max-width: 40rem) {
-    .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) {
-      --monokai-metadata-width: 6.5rem;
-    }
-  }
-
-  @container promptbox-shell (max-width: 30rem) {
-    .dark :is([data-follow-up-composer-footer], [data-promptbox-shell] div:has(> div > [data-promptbox-project-control]), [data-promptbox-shell] div:has(> div > [data-promptbox-project-slot])) {
-      --monokai-metadata-width: clamp(4.5rem, 28cqw, 6.5rem);
-      --monokai-project-width: var(--monokai-metadata-width);
-      --monokai-detail-width: var(--monokai-metadata-width);
-    }
-
-    .dark [data-promptbox-shell] [aria-label="Branch"],
-    .dark [data-follow-up-composer-footer] [data-promptbox-hide-branch-compact] {
-      display: none;
-    }
-  }
-}
-
 /* Narrow-pane rules otherwise hide the metadata row even while expanded. */
 .dark [data-follow-up-composer-expanded] {
   --follow-up-composer-container-compact: false;
@@ -1026,19 +745,22 @@
 
 /* Inline images must read as pictures, not as part of the panel. Most of them
  * are dark screenshots on the #181818 ground, so without an edge they merge
- * into the message. Every image surface gets the theme's standard --border
- * keyline: markdown images (which bb ships frameless), attachment thumbnails
- * in both bubbles, and timeline row previews. Markdown images also get bb's
- * rounded-md radius, a border-box so max-w-full holds, and more block margin
- * than bb's my-2 so the frame is not packed against the surrounding prose.
- * vertical-align drops the inline baseline gap under the frame. */
-.dark img.cursor-zoom-in,
-.dark button.cursor-zoom-in:has(> img) {
+ * into the message. Markdown images (which bb ships frameless) and the
+ * bordered zoom buttons around attachment thumbnails in both bubbles and
+ * timeline row previews get the theme's standard --border keyline. Unbordered
+ * zoom buttons (image diffs, file previews) frame their own image or fill a
+ * panel, so they stay out. Markdown images also get bb's rounded-md radius, a
+ * border-box so max-w-full holds, and more block margin than bb's my-2 so the
+ * frame is not packed against the surrounding prose. vertical-align drops the
+ * inline baseline gap under the frame. Every bb zoom button wraps its image
+ * directly, so the button needs no :has selector. */
+.dark img[data-markdown-image],
+.dark button.cursor-zoom-in.border {
   border: 1px solid var(--border);
 }
 
-.dark img.cursor-zoom-in {
-  border-radius: 0.375rem; /* = rounded-md; bb defines no --radius token */
+.dark img[data-markdown-image] {
+  border-radius: calc(var(--radius) - 2px); /* = bb's rounded-md */
   box-sizing: border-box;
   margin-block: 1.25rem;
   vertical-align: middle;
@@ -1048,6 +770,18 @@
  * which continues to own links and mention accents. */
 .dark button.bg-primary,
 .dark button.bg-foreground {
+  background-color: var(--control-primary);
+  color: var(--foreground);
+}
+
+/* On desktop bb 0.45 paints the send fill on a send-menu wrapper and forces
+ * the buttons inside it transparent with !important, so the rule above misses
+ * Send. Give the wrapper the same 14% layer and ink that compact Send gets as a
+ * bare button. bb lifts a hovered or open segment with 15% of --background
+ * through an !important utility the theme cannot outrank, so --background here
+ * is the ink alpha that makes that lift land on compact Send's 20% hover. */
+.dark [data-promptbox-send-menu].bg-foreground {
+  --background: #e3e3dd74;
   background-color: var(--control-primary);
   color: var(--foreground);
 }
@@ -1076,8 +810,9 @@
 
 /* Tooltips use the same bg-primary utility as action buttons upstream, but
  * they are neutral informational surfaces. Keep the accent for links and
- * mentions; render tooltip content as an elevated dark control instead. */
-.dark .bg-primary:has([role="tooltip"]) {
+ * mentions; render tooltip content as an elevated dark control instead.
+ * Radix puts data-side on the content, which a bg-primary button never has. */
+.dark .bg-primary[data-side] {
   background-color: var(--popover);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--foreground);
@@ -1090,8 +825,17 @@
   --state-active: var(--state-hover);
 }
 
-/* The model-search row is one field, including its inset around the input. */
-.dark .bg-popover > .border-b:has(input[aria-label="Search models"]) {
+/* bb draws menu dividers with bg-muted, which this palette maps to the 14%
+ * selected layer, brighter than the menu's own 12% edge. Use the context
+ * menu's divider tone. The compact dropdown renders its divider as an <hr>. */
+.dark [role="menu"] [role="separator"].bg-muted,
+.dark hr.bg-muted {
+  background-color: var(--border);
+}
+
+/* The model-search row is one field, including its inset around the input.
+ * bb gives no other popover row this exact padding pair. */
+.dark .bg-popover > .shrink-0.border-b.px-1\.5.py-1 {
   background-color: var(--control-background);
   border-bottom-width: 0;
 }
@@ -1105,12 +849,6 @@
 .dark .smart-embed {
   background-clip: padding-box;
   box-shadow: none;
-}
-
-/* Pierre centers the prefix slot. A block flex button avoids the inline
- * baseline space that otherwise shifts its visual center upward. */
-.dark .last-turn-diff-chevron {
-  display: flex;
 }
 
 /* Radix publishes these context-menu sizing variables on both root menus and
@@ -1196,11 +934,11 @@
 
 /* Composer stop button.
  *
- * bb 0.36 renders the run-interrupt control as `variant="secondary"`, so the
- * chip lands on --secondary (#262626) over the composer's #212121 ground —
- * 1.35:1, under the 3:1 floor for a UI component. The send chip it replaces is
- * `variant="default"` (--foreground on --background) at 14.17:1, so the control
- * fades out at the one moment it is the only one that can be pressed.
+ * bb renders the run-interrupt control as `variant="secondary"`, so the chip
+ * lands on --secondary (#2C2C2C over the composer's #212121 ground) — 1.15:1,
+ * under the 3:1 floor for a UI component. The send chip it replaces is the 14%
+ * --control-primary layer (#3C3C3C, 1.46:1), so the control fades out at the
+ * one moment it is the only one that can be pressed.
  *
  * Stop is an interrupt, which is the destructive role — the same reading later
  * bb builds adopt by switching this button to `variant="destructive"`. When
@@ -1215,7 +953,7 @@
  * because `hover:bg-secondary/80` ties at 0,2,0 and would otherwise decide on
  * sheet order; the /90 step mirrors what `variant="destructive"` uses. */
 .dark [data-promptbox-submit-action][aria-label="Stop run"] {
-  background-color: var(--destructive); /* 4.31:1 on the composer ground */
+  background-color: var(--destructive); /* 4.13:1 on the composer ground */
   border-color: transparent;
   color: var(--foreground); /* the ladder white on the fill — 3.03:1, over the
                              * 3:1 floor this glyph answers to (WCAG 1.4.11,
@@ -1233,34 +971,94 @@
   }
 }
 
+/* bb draws inline code as a rounded, padded chip. Like conversation links,
+ * clone the decoration so a chip that wraps keeps its padding and radius on
+ * each line. */
+.dark code.rounded.bg-muted\/70 {
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 /* Lightweight code highlighter (sugar-high) used for code blocks in the
  * thread. This IS a code surface, so the code hues are legal.
  * bb declares six of these on `.dark .bb-code-highlight` in its lazily-loaded
  * workspace-checkout-display chunk. That chunk arrives after this sheet, so a
  * tie on specificity loses the moment a thread is opened. Repeating the class
  * outranks it without reaching for `!important`.
- * Measured on the content ground #181818. */
-.dark .bg-surface-recessed:has(> .bb-code-highlight) {
+ * Measured on the content ground #181818. bb's code block and mermaid
+ * wrappers share this class chain, so both sit on the content ground.
+ * :where() keeps the specificity of the rule this replaced, so a plugin
+ * that restyles these wrappers (canvas's GitHub style) still wins. */
+.dark .bg-surface-recessed.my-2:where(.overflow-hidden.rounded-md.border) {
   background-color: #181818;
 }
 
-/* Backtick-delimited inline code is prose emphasis, not a fenced code body. */
-.dark code.bg-muted\/70 {
+/* Backtick-delimited inline code is prose emphasis, not a fenced code body.
+ * A soft yellow sets it apart from white body prose. Full-strength string
+ * yellow pulled the eye off the sentence, and alpha over the ground went
+ * muddy, so the role blends the yellow into the ink instead. */
+.dark code.bg-muted\/70,
+.dark .bb-markdown-prose :not(pre) > code {
   background-color: var(--accent);
+  color: #eed996;
+}
+
+/* Agent message prose reads at 14px instead of bb's 13px `text-sm`. The
+ * agent column carries `group/message` itself; the user column nests it in a
+ * bubble, so this skips user requests. The markdown preview re-declares
+ * `text-sm`, so it needs the size too. max() keeps bb's 15px phone size. */
+.dark [data-message-column].group\/message,
+.dark [data-message-column].group\/message [data-markdown-preview],
+.dark .bb-markdown-prose,
+.dark .canvas-prose [data-markdown-preview] {
+  font-size: max(14px, var(--text-sm));
+}
+
+/* Markdown line breaking and tracking. Paragraphs and list items avoid a
+ * one-word last line. Headings split into lines of even length. bb's 16-18px
+ * h1 and h2 take Inter's recommended tracking for that size. The uppercase h5
+ * and h6 labels open up so capitals do not crowd. */
+.dark [data-markdown-preview] :is(p, li),
+.dark .bb-markdown-prose :is(p, li) {
+  text-wrap: pretty;
+}
+
+.dark [data-markdown-preview] :is(h1, h2, h3, h4, h5, h6),
+.dark .bb-markdown-prose :is(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+.dark [data-markdown-preview] :is(h1, h2),
+.dark .bb-markdown-prose :is(h1, h2) {
+  letter-spacing: -0.011em;
+}
+
+.dark [data-markdown-preview] :is(h5, h6),
+.dark .bb-markdown-prose :is(h5, h6) {
+  letter-spacing: 0.05em;
+}
+
+/* Agent message prose reads at 14px instead of bb's 13px `text-sm`. The
+ * agent column carries `group/message` itself; the user column nests it in a
+ * bubble, so this skips user requests. The markdown preview re-declares
+ * `text-sm`, so it needs the size too. max() keeps bb's 15px phone size. */
+.dark [data-message-column].group\/message,
+.dark [data-message-column].group\/message [data-markdown-preview] {
+  font-size: max(14px, var(--text-sm));
 }
 
 .dark .bb-code-highlight.bb-code-highlight {
   background-color: #181818;
   --sh-space: inherit;
-  --sh-identifier: #e3e3dd; /* everything else — 12.79:1 */
+  --sh-identifier: #e3e3dd; /* everything else — 13.78:1 */
   --sh-property: #e3e3dd; /* properties are white by contract */
   --sh-sign: #e3e3dd; /* punctuation; sugar-high cannot split operators out */
   --sh-comment: #beb89999; /* blends to #7C7865 — 4.00:1, the contract's
                             * deliberately sub-AA comment tier */
-  --sh-keyword: #fe5d86; /* language machinery — 5.59:1 */
-  --sh-string: #f7d05c; /* literal text — 11.09:1 */
-  --sh-class: #51dae9; /* compile-time structure — 9.85:1 */
-  --sh-entity: #9ddd54; /* callables — 10.13:1 */
+  --sh-keyword: #fe5d86; /* language machinery — 6.02:1 */
+  --sh-string: #f7d05c; /* literal text — 11.95:1 */
+  --sh-class: #51dae9; /* compile-time structure — 10.62:1 */
+  --sh-entity: #9ddd54; /* callables — 10.91:1 */
   --sh-jsxliterals: #fe5d86; /* JSX tags are machinery, same as keywords */
   /* The pre inherits the prose `leading-relaxed` strut from the thread
    * container, while sugar-high renders each line as an inline-block. The
@@ -1312,8 +1110,15 @@
 /* Diagram fences describe structure rather than source code, but sugar-high
  * still classifies capitalized labels and connectors as code tokens. Collapse
  * every token to the text color so the diagram stays legible instead of
- * acquiring arbitrary syntax hues. */
-.dark .bb-code-highlight.bb-code-highlight:has(> :is(.language-diagram, .language-patch)) {
+ * acquiring arbitrary syntax hues. The fence's code element carries the
+ * language class, and its tokens inherit the variables from it.
+ * `diff` fences collapse too. Sugar-high's diff preset has no grammar for the
+ * embedded language, so an apostrophe in a changed line opens a string that
+ * paints every following line yellow. The add/remove row shading carries the
+ * meaning. */
+.dark
+  .bb-code-highlight.bb-code-highlight
+  > :is(.language-diagram, .language-patch, .language-diff) {
   --sh-identifier: var(--foreground);
   --sh-property: var(--foreground);
   --sh-sign: var(--foreground);
@@ -1323,6 +1128,17 @@
   --sh-class: var(--foreground);
   --sh-entity: var(--foreground);
   --sh-jsxliterals: var(--foreground);
+}
+
+/* Sugar-high's CSS lexer tags declaration names as properties, numbers with
+ * units as classes, and hex colors as strings. Left on the shared mapping,
+ * properties stay white and only numbers and hexes carry hue, so a CSS fence
+ * reads as unhighlighted. Follow the code theme instead: property names cyan
+ * (meta.property-name.css) and numbers purple (constant.numeric). Selector
+ * segments after a `.` also lex as properties, so they turn cyan with them. */
+.dark .bb-code-highlight.bb-code-highlight > :is(.language-css, .language-scss, .language-less) {
+  --sh-property: #51dae9;
+  --sh-class: #a895fe;
 }
 
 /* Code and diff surface ground. `--diffs-bg` and `--diffs-fg` have no
@@ -1337,58 +1153,35 @@ diffs-container {
 }
 
 /* BB owns the GitDiffCardHeader outside Pierre's shadow root. The wrapper
- * has no dedicated data attribute in BB 0.42.1: match its direct collapse
- * control structure, including collapsed cards, within the Git diff panel.
- * Smart embeds expose their own header class. Bodies keep the content ground. */
+ * has no dedicated data attribute in BB 0.44, so app/diff-header.ts tags it,
+ * including collapsed cards, within the secondary panel. Smart embeds expose
+ * their own header class. Bodies keep the content ground. */
 .dark .smart-embed-header,
 .dark .last-turn-diff-heading {
   background-color: var(--agent-surface-background);
 }
 
-.dark
-  #thread-detail-secondary-panel
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]),
-.dark
-  [data-secondary-panel-shelf]
-  .rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
+.dark [data-monokai-diff-shell] {
   background-color: var(--agent-surface-background);
 }
 
 /* Sticky headers must hide scrolling code. Their solid fallback is generated
  * from the same 6% layer over content, not a separately chosen header color. */
-.dark
-  #thread-detail-secondary-panel
-  .sticky.rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]),
-.dark
-  [data-secondary-panel-shelf]
-  .sticky.rounded-lg.bg-background:has(> .flex > span > button[aria-expanded]) {
+.dark [data-monokai-diff-shell].sticky {
   background-color: var(--surface-raised-solid);
 }
 
 .dark .smart-embed-header,
 .dark .smart-embed-path,
-.dark
-  :is(#thread-detail-secondary-panel, [data-secondary-panel-shelf]):has(
-    [data-testid="git-diff-toolbar-layout"],
-    [data-monokai-diff-surface]
-  )
-  .bg-background:has(> .flex > span > button[aria-expanded])
-  .font-mono {
+.dark [data-monokai-diff-panel] [data-monokai-diff-shell] .font-mono {
   font-family: var(--font-sans);
 }
 
-/* The canvas plugin renders `.canvas-mdx` prose on the Cursor theme's rendered
- * Markdown contract. Its stylesheet exposes these hooks so a theme can supply
- * the accent hues; without them it falls back to bb's neutral tokens. */
+/* Canvas components share the stream's content surface and border tokens.
+ * Markdown presentation is owned by the shared stream rules above. */
 .dark .canvas-prose {
-  --canvas-prose-heading: #e3e3dd;
-  --canvas-prose-strong: #51dae9;
-  --canvas-prose-link: #51dae9;
-  --canvas-prose-link-hover: #75f0ff;
-  --canvas-prose-marker: #7c7865;
-  --canvas-prose-quote-rule: #fe5d86;
   --canvas-prose-rule: var(--border-hairline);
-  --canvas-prose-code-well: var(--accent);
+  --canvas-prose-code-well: #181818;
 }
 
 /* Plugin marketplace category icons are decoration, not feedback. bb tints
@@ -1411,6 +1204,13 @@ diffs-container {
   color: inherit !important;
 }
 
+/* p-0 replaces responsive overlays' safe-area padding in pickers and dialogs.
+ * Keep explicit max-md:p-0 bodies unchanged: the context-window card owns its
+ * mobile padding. BB's body variable removes the inset while the keyboard is up. */
+.dark [data-persistent-drawer-content] > .p-0:not(.max-md\:p-0) {
+  padding-bottom: max(1rem, var(--bb-safe-area-bottom, env(safe-area-inset-bottom)));
+}
+
 /* bb's notification history is a first-class themed surface, separate from
  * the native browser and operating-system banners delivered by the push
  * notification plugin. The host owns responsive placement: a popover on
@@ -1419,12 +1219,10 @@ diffs-container {
   font-family: var(--font-sans);
 }
 
-.dark [data-testid="notification-center"] > div:first-child {
-  border-color: var(--border-seam);
-}
-
+/* The header divider and bb's divide-y row dividers share one 4% seam. */
+.dark [data-testid="notification-center"] > div:first-child,
 .dark [data-testid="notification-row"] {
-  transition: background-color 120ms ease-out;
+  border-color: var(--border-seam);
 }
 
 .dark [data-testid="notification-row"][data-focused="true"] {
@@ -1442,20 +1240,16 @@ diffs-container {
   }
 }
 
-.dark [data-testid="notification-center"] button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
+/* The host border is the one 1px edge. Elevation is bb's --shadow-md, as on
+ * context menus. A shadow in the #181818 chrome ground would be lighter than
+ * the #151515 conversation under it. */
 @media (min-width: 768px) {
   .dark [data-testid="notification-center"] {
     overflow: hidden;
     border-color: var(--border);
     border-radius: 16px;
     background: var(--popover);
-    box-shadow:
-      0 0 0 1px var(--border),
-      0 4px 12px -4px #181818eb;
+    box-shadow: var(--shadow-md);
   }
 }
 
@@ -1470,130 +1264,678 @@ diffs-container {
     anchor-name: --bb-monokai-conversation;
   }
 
-.dark [data-split-pane-id][data-focused="false"] [data-thread-window] {
-  anchor-name: none;
-}
+  .dark [data-split-pane-id][data-focused="false"] [data-thread-window] {
+    anchor-name: none;
+  }
 
-.dark [data-sonner-toaster] {
-  position-anchor: --bb-monokai-conversation;
-  top: calc(env(safe-area-inset-top) + var(--bb-app-chrome-row-height, 48px) + 16px) !important;
-  right: auto !important;
-  bottom: auto !important;
-  left: 50% !important;
-  width: min(384px, calc(100vw - 32px)) !important;
-  transform: translateX(-50%) !important;
-  font-family: var(--font-sans);
-  --normal-bg: var(--popover);
-  --normal-text: var(--popover-foreground);
-  --normal-border: var(--border);
-}
-
-@supports (position-anchor: --bb-monokai-conversation) {
   .dark [data-sonner-toaster] {
-    top: max(
-      calc(env(safe-area-inset-top) + var(--bb-app-chrome-row-height, 48px) + 16px),
-      calc(anchor(top, 0px) + 16px)
-    ) !important;
-    left: anchor(center, 50%) !important;
-    width: min(384px, calc(anchor-size(width, 100vw) - 32px)) !important;
+    position-anchor: --bb-monokai-conversation;
+    top: calc(env(safe-area-inset-top) + var(--bb-app-chrome-row-height, 48px) + 16px) !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: 50% !important;
+    width: min(384px, calc(100vw - 32px)) !important;
+    transform: translateX(-50%) !important;
+    font-family: var(--font-sans);
+    --normal-bg: var(--popover);
+    --normal-text: var(--popover-foreground);
+    --normal-border: var(--border);
+  }
+
+  @supports (position-anchor: --bb-monokai-conversation) {
+    .dark [data-sonner-toaster] {
+      top: max(
+        calc(env(safe-area-inset-top) + var(--bb-app-chrome-row-height, 48px) + 16px),
+        calc(anchor(top, 0px) + 16px)
+      ) !important;
+      left: anchor(center, 50%) !important;
+      width: min(384px, calc(anchor-size(width, 100vw) - 32px)) !important;
+    }
+  }
+
+  /* bb still declares bottom-position data attributes. Reverse Sonner's stack
+   * direction without replacing its animation, dismissal, or button handlers. */
+  .dark [data-sonner-toast] {
+    top: 0;
+    bottom: auto;
+    width: 100%;
+    --lift: 1;
+    --lift-amount: var(--gap);
+  }
+
+  .dark [data-sonner-toast][data-mounted="false"] {
+    --y: translateY(-100%);
+  }
+
+  /* One 1px host edge and bb's --shadow-md, like the notification center. */
+  .dark [data-sonner-toast].bb-app-toast > div {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    padding: 12px;
+    border-radius: 16px;
+    background: var(--popover);
+    border-color: var(--border);
+    color: var(--popover-foreground);
+    box-shadow: var(--shadow-md);
+  }
+
+  .dark [data-sonner-toast].bb-app-toast > div > div {
+    align-items: center;
+    gap: 10px;
+  }
+
+  .dark [data-sonner-toast].bb-app-toast > div > div > div:first-child {
+    margin-top: 0;
+    color: var(--muted-foreground);
+  }
+
+  /* Keep bb's title and details rows in normal flow. Flattening the details
+   * into a grid can place wrapped actions on top of the description. */
+  .dark [data-sonner-toast].bb-app-toast svg {
+    margin: 0;
+  }
+
+  .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > div {
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--muted-foreground);
+  }
+
+  /* bb 0.45 wraps toast actions in a .flex-wrap row. Stepping through it keeps
+   * the description's "Show more" link out of the chip. */
+  .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > .flex-wrap > button {
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--secondary);
+    background-clip: padding-box;
+    color: var(--secondary-foreground);
+    text-decoration: none;
+  }
+
+  @media (hover: hover) {
+    .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > .flex-wrap > button:hover {
+      background: var(--state-hover);
+    }
+  }
+
+  .dark [data-sonner-toast].bb-app-toast button[aria-label="Dismiss notification"] {
+    position: static;
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    transform: none;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted-foreground);
+  }
+
+  @media (hover: hover) {
+    .dark [data-sonner-toast].bb-app-toast button[aria-label="Dismiss notification"]:hover {
+      background: var(--state-hover);
+      color: var(--popover-foreground);
+    }
   }
 }
 
-/* bb still declares bottom-position data attributes. Reverse Sonner's stack
- * direction without replacing its animation, dismissal, or button handlers. */
-.dark [data-sonner-toast] {
-  top: 0;
-  bottom: auto;
-  width: 100%;
-  --lift: 1;
-  --lift-amount: var(--gap);
+/* Agent replies copy the Codex app's markdown geometry, measured from its
+ * renderer: every gap, size, and leading is a multiple of one quarter of the
+ * body size (3.5px at 14px). Colors stay on this palette's roles. Scoped to
+ * the agent column and the editable Docs/Canvas adapters; user bubbles keep bb's compact markdown. Bold weight, the
+ * gap under headings and paragraphs, and the gap between list items keep bb's
+ * own values, which read less packed than Codex's. */
+.dark [data-message-column].group\/message [data-markdown-preview],
+.dark .bb-markdown-prose,
+.dark .canvas-prose [data-markdown-preview] {
+  --agent-md-space: calc(max(14px, var(--text-sm)) / 4);
+  font-weight: 430;
 }
 
-.dark [data-sonner-toast][data-mounted="false"] {
-  --y: translateY(-100%);
+.dark [data-message-column].group\/message [data-markdown-preview] :is(strong, b),
+.dark .bb-markdown-prose :is(strong, b) {
+  font-weight: 700;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div {
-  position: relative;
-  width: 100%;
-  max-width: 100%;
-  padding: 12px;
-  border-radius: 16px;
-  background: var(--popover);
-  border-color: var(--border);
-  color: var(--popover-foreground);
-  box-shadow:
-    0 0 0 1px var(--border),
-    0 4px 12px -4px #181818eb;
+.dark [data-message-column].group\/message [data-markdown-preview] th,
+.dark .bb-markdown-prose th {
+  font-weight: 600;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div > div {
-  align-items: center;
-  gap: 10px;
+/* Codex keeps an agent's single newlines as line breaks. bb's renderer leaves
+ * them in the paragraph text, so pre-line shows them. A hard break renders as
+ * a <br> followed by that same newline, so the <br> would double it. */
+.dark [data-message-column].group\/message [data-markdown-preview] p,
+.dark .bb-markdown-prose p {
+  margin: 0 0 8px;
+  white-space: pre-line;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div > div > div:first-child {
+.dark [data-message-column].group\/message [data-markdown-preview] p > br {
+  display: none;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] > p:where(:not(:first-child)),
+.dark .bb-markdown-prose > p:where(:not(:first-child)) {
+  margin-top: calc(var(--agent-md-space) * 2);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] > p + p,
+.dark .bb-markdown-prose > p + p {
+  margin-top: calc(var(--agent-md-space) * 4);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] > :is(h1, h2, h3) + p,
+.dark [data-message-column].group\/message [data-markdown-preview] h4 + p,
+.dark .bb-markdown-prose > :is(h1, h2, h3) + p,
+.dark .bb-markdown-prose h4 + p {
   margin-top: 0;
-  color: var(--muted-foreground);
 }
 
-/* Keep bb's title and details rows in normal flow. Flattening the details
- * into a grid can place wrapped actions on top of the description. */
-.dark [data-sonner-toast].bb-app-toast svg {
+.dark [data-message-column].group\/message [data-markdown-preview] :is(h1, h2, h3, h4, h5, h6),
+.dark .bb-markdown-prose :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--foreground);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] h1,
+.dark .bb-markdown-prose h1 {
+  margin: calc(var(--agent-md-space) * 4) 0 8px;
+  font-size: calc(var(--agent-md-space) * 6);
+  line-height: calc(var(--agent-md-space) * 8);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] h2,
+.dark .bb-markdown-prose h2 {
+  margin: calc(var(--agent-md-space) * 4) 0 8px;
+  font-size: calc(var(--agent-md-space) * 5);
+  line-height: calc(var(--agent-md-space) * 7);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] h3,
+.dark .bb-markdown-prose h3 {
+  margin: calc(var(--agent-md-space) * 4) 0 8px;
+  font-size: calc(var(--agent-md-space) * 4.5);
+  line-height: calc(var(--agent-md-space) * 7);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] h4,
+.dark .bb-markdown-prose h4 {
+  margin: calc(var(--agent-md-space) * 4) 0 0;
+  font-size: calc(var(--agent-md-space) * 4);
+  line-height: calc(var(--agent-md-space) * 6);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(h5, h6),
+.dark .bb-markdown-prose :is(h5, h6) {
+  margin: 0;
+  font-size: calc(var(--agent-md-space) * 4);
+  line-height: calc(var(--agent-md-space) * 6.5);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(ul, ol),
+.dark .bb-markdown-prose :is(ul, ol) {
+  margin: 0;
+  padding-inline-start: calc(var(--agent-md-space) * 6.5);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(ul, ol) ul,
+.dark .bb-markdown-prose :is(ul, ol) ul {
+  list-style-type: circle;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(ul, ol) :is(ul, ol) ul,
+.dark .bb-markdown-prose :is(ul, ol) :is(ul, ol) ul {
+  list-style-type: square;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] li,
+.dark .bb-markdown-prose li {
+  margin: 0 0 4px;
+  padding-inline-start: calc(var(--agent-md-space) * 1.5);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] li::marker,
+.dark .bb-markdown-prose li::marker {
+  font-weight: 600;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] li > p,
+.dark .bb-markdown-prose li > p {
   margin: 0;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:first-child > div {
-  font-size: 13px;
+.dark [data-message-column].group\/message [data-markdown-preview] li > p + p,
+.dark .bb-markdown-prose li > p + p {
+  margin-top: calc(var(--agent-md-space) * 4);
+}
+
+/* Task checkboxes are Codex's 14px rounded box with Lucide's check. bb
+ * renders native inputs, which take no pseudo-elements, so the box, fill, and
+ * check are mask layers over the ink: 12% edge like --border, 8% fill like
+ * --accent. */
+.dark [data-message-column].group\/message [data-markdown-preview] li > input[type="checkbox"],
+.dark .bb-markdown-prose li > input[type="checkbox"],
+.dark .bb-markdown-prose li > label > input[type="checkbox"],
+.dark .bb-markdown-prose li[role="checkbox"]::before {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 calc(var(--agent-md-space) * 1.5) 0 0;
+  vertical-align: -0.125rem;
+  background-color: var(--foreground);
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><rect x='0.5' y='0.5' width='13' height='13' rx='4.5' fill='none' stroke='black' stroke-opacity='0.12'/></svg>") center / 14px no-repeat;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] li > input[type="checkbox"]:checked,
+.dark .bb-markdown-prose li > input[type="checkbox"]:checked,
+.dark .bb-markdown-prose li > label > input[type="checkbox"]:checked,
+.dark .bb-markdown-prose li[role="checkbox"][aria-checked="true"]::before {
+  mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><rect width='14' height='14' rx='5' fill-opacity='0.08'/><rect x='0.5' y='0.5' width='13' height='13' rx='4.5' fill='none' stroke='black' stroke-opacity='0.12'/><svg x='1' y='1' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'><path d='M20 6 9 17l-5-5'/></svg></svg>");
+}
+
+/* The quote rule is an inset bar, not a border, so it stops short of the
+ * quote's padding like Codex's. */
+.dark [data-message-column].group\/message [data-markdown-preview] blockquote,
+.dark .bb-markdown-prose blockquote {
+  position: relative;
+  margin: 0 0 calc(var(--agent-md-space) * 2);
+  border-left: 0;
+  padding: calc(var(--agent-md-space) * 2) 0 calc(var(--agent-md-space) * 2)
+    calc(var(--agent-md-space) * 6);
+  color: var(--foreground);
+  font-style: normal;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] blockquote::after,
+.dark .bb-markdown-prose blockquote::after {
+  content: "";
+  position: absolute;
+  inset-block: calc(var(--agent-md-space) * 2);
+  inset-inline-start: 0;
+  width: var(--agent-md-space);
+  border-radius: calc(var(--agent-md-space) / 2);
+  background-color: var(--border);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] blockquote > p,
+.dark .bb-markdown-prose blockquote > p {
+  margin: 0;
+  font-weight: 400;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(blockquote, li) > :last-child,
+.dark [data-message-column].group\/message [data-markdown-preview] > :last-child,
+.dark .bb-markdown-prose :is(blockquote, li) > :last-child,
+.dark .bb-markdown-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(blockquote, li) > :first-child,
+.dark [data-message-column].group\/message [data-markdown-preview] > :first-child,
+.dark [data-message-column].group\/message [data-markdown-preview] hr + *,
+.dark .bb-markdown-prose :is(blockquote, li) > :first-child,
+.dark .bb-markdown-prose > :first-child,
+.dark .bb-markdown-prose hr + * {
+  margin-top: 0;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] hr,
+.dark .bb-markdown-prose hr {
+  margin: calc(var(--agent-md-space) * 7) 0;
+}
+
+/* Tables start at the column edge, fill at least its width, and break out to
+ * the right only, with rules between rows. bb centres a wider breakout box
+ * with inline styles and publishes the column width as --md-content-w, so
+ * the scroller shifts back to the column edge instead of fighting them. */
+.dark [data-message-column].group\/message [data-markdown-preview] .my-2.flex.justify-center,
+.dark .bb-markdown-prose .my-2.flex.justify-center {
+  justify-content: flex-start;
+  margin-block: calc(var(--agent-md-space) * 4) 0;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] .my-2.flex.justify-center > div,
+.dark .bb-markdown-prose .my-2.flex.justify-center > div {
+  --agent-md-table-shift: max(0px, calc((100% - var(--md-content-w, 100%)) / 2));
+  max-width: calc(100% - var(--agent-md-table-shift));
+  margin-inline-start: var(--agent-md-table-shift);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] table,
+.dark .bb-markdown-prose table {
+  min-width: var(--md-content-w, 100%);
+  border: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: max(13px, calc(var(--agent-md-space) * 3.5));
+  font-variant-numeric: tabular-nums;
+  line-height: calc(var(--agent-md-space) * 6.5);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] thead,
+.dark .bb-markdown-prose thead {
+  background-color: transparent;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] :is(th, td),
+.dark .bb-markdown-prose :is(th, td) {
+  border: 0;
+  vertical-align: top;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] th,
+.dark .bb-markdown-prose th {
+  border-bottom: 1px solid var(--border);
+  padding: calc(var(--agent-md-space) * 2) calc(var(--agent-md-space) * 6)
+    calc(var(--agent-md-space) * 2) 0;
+  line-height: calc(var(--agent-md-space) * 4);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] th:last-child,
+.dark .bb-markdown-prose th:last-child {
+  padding-inline-end: calc(var(--agent-md-space) * 10);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] td,
+.dark .bb-markdown-prose td {
+  padding: calc(var(--agent-md-space) * 2.5) calc(var(--agent-md-space) * 6)
+    calc(var(--agent-md-space) * 2.5) 0;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] td:last-child,
+.dark .bb-markdown-prose td:last-child {
+  padding-inline-end: 0;
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] tbody tr:not(:last-child) td,
+.dark .bb-markdown-prose tbody tr:not(:last-child) td {
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] tbody tr:last-child td,
+.dark .bb-markdown-prose tbody tr:last-child td {
+  padding-bottom: calc(var(--agent-md-space) * 6);
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] code.bg-muted\/70,
+.dark .bb-markdown-prose :not(pre) > code {
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.92em;
+  line-height: inherit;
+}
+
+/* Fenced blocks: a 48px header row, 20px gutters, and 13px code. :where()
+ * lets the first- and last-child resets above trim the outer margins. */
+.dark [data-message-column].group\/message [data-markdown-preview] :where(.bg-surface-recessed.my-2.rounded-md),
+.dark .bb-markdown-prose :where(.bg-surface-recessed.my-2.rounded-md) {
+  margin: calc(var(--agent-md-space) * 5) 0;
+  border-radius: 20px;
+}
+
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child {
+  min-height: 48px;
+  padding: 6px 6px 6px 20px;
+}
+
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child
+  > span,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   line-height: 20px;
+}
+
+/* Lucide's code-xml glyph leads every label. It is a mask over currentColor
+ * so the icon follows the label's muted ink. Its 1.6 stroke at 20px draws the
+ * same 1.33px line as the 16px wrap and copy icons beside it. */
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child
+  > span::before,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child > span::before {
+  content: "";
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background-color: currentColor;
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.6'><path d='m18 16 4-4-4-4'/><path d='m6 8-4 4 4 4'/><path d='m14.5 4-5 16'/></svg>") center / 20px no-repeat;
+}
+
+/* A fence without a language has an empty label; name it plain text. */
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child
+  > span:empty::after,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child > span:empty::after {
+  content: "text";
+}
+
+/* Wrap and copy take Codex's 36px round targets with 16px glyphs. */
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child
+  > div,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child > div {
+  gap: 1px;
+}
+
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child
+  button,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child button {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+}
+
+.dark
+  [data-message-column].group\/message
+  [data-markdown-preview]
+  .bg-surface-recessed.my-2.rounded-md
+  > .flex.justify-between:first-child
+  button
+  svg,
+.dark .bb-markdown-prose .bg-surface-recessed.my-2.rounded-md > .flex.justify-between:first-child button svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) {
+  .dark
+    [data-message-column].group\/message
+    [data-markdown-preview]
+    .bg-surface-recessed.my-2.rounded-md
+    > .flex.justify-between:first-child
+    button:hover {
+    background-color: var(--state-hover);
+  }
+}
+
+.dark [data-message-column].group\/message [data-markdown-preview] pre.bb-code-highlight,
+.dark .bb-markdown-prose pre.bb-code-highlight {
+  padding: 0 20px 12px;
+}
+
+@media (min-width: 768px), (pointer: fine) {
+  .dark [data-message-column].group\/message [data-markdown-preview] pre.bb-code-highlight > code {
+    font-size: 13px;
+  }
+
+  .dark
+    [data-message-column].group\/message
+    [data-markdown-preview]
+    pre.bb-code-highlight
+    > code:not(.language-diagram, .language-patch) {
+    line-height: 20px;
+  }
+}
+
+/* Links lead with a 16px Lucide glyph and a 3px gap, at medium weight: a
+ * globe for web and in-page links, an envelope for mail. Footnote markers
+ * stay bare, and file links keep bb's own open-file glyph. */
+.dark [data-message-column] [data-markdown-preview] a.underline:not([data-footnote-ref], [data-footnote-backref], [href^="file:"]),
+.dark .bb-markdown-prose a:not([data-footnote-ref], [data-footnote-backref], [href^="file:"]) {
   font-weight: 500;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > div {
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--muted-foreground);
+.dark
+  [data-message-column]
+  [data-markdown-preview]
+  a.underline:not([data-footnote-ref], [data-footnote-backref], [href^="file:"])::before,
+.dark .bb-markdown-prose a:not([data-footnote-ref], [data-footnote-backref], [href^="file:"])::before {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 3px;
+  vertical-align: text-top;
+  background-color: currentColor;
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'><circle cx='12' cy='12' r='10'/><path d='M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20'/><path d='M2 12h20'/></svg>") center / 16px no-repeat;
 }
 
-.dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > button {
-  height: 28px;
-  padding: 0 10px;
+.dark [data-message-column] [data-markdown-preview] a.underline[href^="mailto:"]::before,
+.dark .bb-markdown-prose a[href^="mailto:"]::before {
+  mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'><path d='m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7'/><rect x='2' y='4' width='20' height='16' rx='2'/></svg>");
+}
+
+/* Code inside a link reads as the link: it takes the link color over the
+ * inline-code yellow and keeps the code chip. */
+.dark [data-message-column] [data-markdown-preview] a.underline code.bg-muted\/70,
+.dark .bb-markdown-prose a :not(pre) > code {
+  color: inherit;
+}
+
+/* Trace entries: activity rows follow Codex, 14px on a 21px line with a 16px
+ * icon. Rows sit 29px apart and conversation items 28px apart, a little looser
+ * than Codex's 25px and 16px so long runs of tool calls don't read as a block. */
+.dark [data-timeline-row-list="top-level"] {
+  gap: 28px;
+}
+
+.dark [data-timeline-row-list="bundle"] {
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* bb fades every finished tool row to 40%, which turns a run of calls into one
+ * gray block. Codex keeps the row at full strength and fades only the target:
+ * the verb ("Read", "Searched for") and icon stay muted, the path or query
+ * steps down to readback. */
+.dark [data-timeline-row-list] .rounded-md.text-muted-foreground.opacity-40 {
+  opacity: 1;
+}
+
+.dark [data-timeline-row-list] span.text-sm.leading-5 > span.shrink-0.whitespace-pre + span.min-w-0.truncate {
+  color: var(--readback-foreground);
+}
+
+/* bb wraps each row's icon and label in an inline-flex span on a 13px strut,
+ * which pads the row to 23px. Making its wrapper a flex box drops the strut. */
+.dark [data-timeline-row-list] .flex.leading-5 > span.min-w-0.max-w-full {
+  display: flex;
+}
+
+.dark [data-timeline-row-list] span.inline-flex.gap-1\.5 > svg.size-3\.5 {
+  width: 16px;
+  height: 16px;
+}
+
+/* Message hover actions draw 12px icons on a 24px grid with a 1.5 stroke,
+ * a 0.75px line that blurs across device pixels. At 16px the line is 1px,
+ * the size bb already uses on touch. The 20px buttons keep their size, so
+ * bb's row layout math is unchanged. */
+.dark [data-message-column] .absolute.top-0 > button.size-5 > [data-icon-root].size-3 {
+  width: 16px;
+  height: 16px;
+}
+
+.dark [data-timeline-row-list] span.text-sm.leading-5 {
+  font-size: max(14px, var(--text-sm));
+  line-height: 21px;
+}
+
+/* Editable fenced blocks have their own controls and markup. Match the stream's
+ * code body without applying prose rules to CodeMirror's toolbar. */
+.dark .bb-markdown-prose pre:not(.bb-code-highlight),
+.dark .bb-markdown-prose .canvas-mdx-code {
+  margin: calc(var(--agent-md-space) * 5) 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--secondary);
-  background-clip: padding-box;
-  color: var(--secondary-foreground);
+  border-radius: 20px;
+  background-color: #181818;
+  font-size: 13px;
+  font-weight: 430;
+  line-height: 20px;
+  overflow: hidden;
+}
+.dark .bb-markdown-prose pre:not(.bb-code-highlight) {
+  padding: 12px 20px;
+  overflow-x: auto;
+}
+.dark .bb-markdown-prose .canvas-mdx-code > div {
+  background: transparent;
+}
+.dark .bb-markdown-prose .canvas-mdx-code > div > div:first-child {
+  min-height: 48px;
+  padding: 6px;
+  border: 0;
+}
+.dark .bb-markdown-prose .canvas-mdx-code > div > div:nth-child(2) {
+  padding: 0 20px 12px;
+}
+.dark .bb-markdown-prose .canvas-mdx-code .cm-editor {
+  font-size: 13px;
+  font-weight: 430;
+  line-height: 20px;
+}
+.dark .bb-markdown-prose .tableWrapper {
+  margin: calc(var(--agent-md-space) * 4) 0 0;
+}
+.dark .bb-markdown-prose li > div > p { margin: 0; }
+.dark .bb-markdown-prose li > div > p + p { margin-top: calc(var(--agent-md-space) * 4); }
+
+/* Lexical uses a pseudo-element checkbox rather than a native input. Its
+ * click target still owns the interaction while the stream owns the shape. */
+.dark .bb-markdown-prose li[role="checkbox"] {
+  margin-inline: 0;
+  padding-inline-start: calc(14px + var(--agent-md-space) * 1.5);
+  padding-inline-end: 0;
   text-decoration: none;
 }
-
-@media (hover: hover) {
-  .dark [data-sonner-toast].bb-app-toast > div > div > div:nth-child(2) > div:nth-child(2) > button:hover {
-    background: var(--state-hover);
-  }
-}
-
-.dark [data-sonner-toast].bb-app-toast button[aria-label="Dismiss notification"] {
-  position: static;
-  width: 28px;
-  height: 28px;
-  margin: 0;
-  transform: none;
+.dark .bb-markdown-prose li[role="checkbox"]::before {
+  content: "";
   border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--muted-foreground);
+  border-radius: 0;
+  top: calc((1.625em - 14px) / 2);
 }
-
-@media (hover: hover) {
-  .dark [data-sonner-toast].bb-app-toast button[aria-label="Dismiss notification"]:hover {
-    background: var(--state-hover);
-    color: var(--popover-foreground);
-  }
-}
-
-.dark [data-sonner-toast].bb-app-toast button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
+.dark .bb-markdown-prose li[role="checkbox"]::after {
+  display: none;
 }

@@ -254,6 +254,8 @@ interface LifecycleDbRow {
 }
 
 const threadIdSchema = z.object({ threadId: z.string().trim().min(1) });
+/** The host's 5 s limit on `but status`, plus the trip to and from the machine. */
+const BRANCH_SUMMARY_TIMEOUT_MS = 8_000;
 
 function asPersistedBrowserTab(
   candidate: {
@@ -553,7 +555,7 @@ export default async function plugin(bb: BbPluginApi) {
     localMachineId: {
       type: "string",
       label: "Local machine",
-      description: "Machine ID whose threads show no machine globe.",
+      description: "Machine ID whose threads show no machine globe. Empty uses bb's primary host.",
       default: "",
     },
     groupThreadsByProject: {
@@ -1533,6 +1535,14 @@ export default async function plugin(bb: BbPluginApi) {
     },
     async listEnvironmentBranches({ environmentIds }) {
       if (!(await pluginSettings.get()).gitButlerBranches) return { environments: [] };
+      // Environments live on every machine, and the answer waits for the
+      // slowest. A disconnected machine is skipped, and a connected one that
+      // stalls is cut off just past the host's own 5 s limit on `but`.
+      const connected = new Set(
+        (await bb.sdk.hosts.list())
+          .filter((machine) => machine.status === "connected")
+          .map((machine) => machine.id),
+      );
       const environments = await Promise.all(
         [...new Set(environmentIds)].map(async (environmentId) => {
           try {
@@ -1544,11 +1554,12 @@ export default async function plugin(bb: BbPluginApi) {
             if (!environment.isGitRepo || environment.isWorktree || environment.path === null) {
               return null;
             }
+            if (!connected.has(environment.hostId)) return null;
 
             const summary = await host.call(
               "branchSummary",
               { cwd: environment.path },
-              { hostId: environment.hostId },
+              { hostId: environment.hostId, timeoutMs: BRANCH_SUMMARY_TIMEOUT_MS },
             );
             if (summary.label === null) return null;
             return {

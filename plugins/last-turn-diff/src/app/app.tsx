@@ -1,5 +1,4 @@
 import { UnityDiffView } from "@bb-plugins/unity-inspector/app";
-import type { UnityDiff } from "@bb-plugins/unity-inspector/model";
 import { PluginQueryBoundary } from "@bb-kit/core/rpc/query";
 import {
   definePluginApp,
@@ -14,46 +13,104 @@ import { CHANGED_CHANNEL, type Change, type LatestTurn } from "../shared/contrac
 import { mountDiffPortal } from "./portal.ts";
 import { turnChanges } from "../shared/patches.ts";
 import { rpc } from "./rpc.ts";
-import { FileHeader } from "./file-header.tsx";
+import { Chevron, DiffCounts, FileHeader } from "./file-header.tsx";
 import "./app.css";
 
-type WorkspaceGroup = { key: string; label: string; changes: Change[] };
+/** `other` marks changes made while other agents in this checkout ran, whatever the workspace label. */
+type WorkspaceGroup = { key: string; label: string; other: boolean; changes: Change[] };
 
 /**
  * Group changes by owning workspace: the thread's own first, foreign
- * workspaces after in the order their changes appeared.
+ * workspaces after in the order their changes appeared, and changes other
+ * agents made in this checkout during the turn last.
  */
 function groupByWorkspace(changes: Change[], ownLabel: string | undefined): WorkspaceGroup[] {
-  const own: WorkspaceGroup = { key: "", label: ownLabel ?? "This workspace", changes: [] };
+  const own: WorkspaceGroup = {
+    key: "own",
+    label: ownLabel ?? "This workspace",
+    other: false,
+    changes: [],
+  };
+  const others: WorkspaceGroup = {
+    key: "other",
+    label: "Changed while other agents ran",
+    other: true,
+    changes: [],
+  };
   const foreign = new Map<string, WorkspaceGroup>();
   for (const change of changes) {
+    if (change.other) {
+      others.changes.push(change);
+      continue;
+    }
     if (change.workspace === undefined) {
       own.changes.push(change);
       continue;
     }
     let group = foreign.get(change.workspace);
     if (!group) {
-      group = { key: change.workspace, label: change.workspace, changes: [] };
+      group = {
+        key: `workspace:${change.workspace}`,
+        label: change.workspace,
+        other: false,
+        changes: [],
+      };
       foreign.set(change.workspace, group);
     }
     group.changes.push(change);
   }
-  return [own, ...foreign.values()].filter((group) => group.changes.length > 0);
+  return [own, ...foreign.values(), others].filter((group) => group.changes.length > 0);
+}
+
+type FileEntry = { change: Change; edits: Change[] };
+
+function groupFiles(changes: Change[]): FileEntry[] {
+  const files = new Map<string, FileEntry>();
+  for (const change of changes) {
+    const file = files.get(change.path);
+    if (file) {
+      file.edits.push(change);
+    } else {
+      files.set(change.path, { change, edits: [change] });
+    }
+  }
+  return [...files.values()];
+}
+
+/** Totals describe this turn; other agents' changes are listed but not counted. */
+function turnTotals(groups: { other: boolean; files: FileEntry[] }[]) {
+  const counted = groups.filter((group) => !group.other);
+  const edits = counted.flatMap((group) => group.files.flatMap((file) => file.edits));
+  return {
+    workspaces: counted.length,
+    fileCount: counted.reduce((total, group) => total + group.files.length, 0),
+    added: edits.reduce((total, edit) => total + edit.added, 0),
+    removed: edits.reduce((total, edit) => total + edit.removed, 0),
+  };
 }
 
 function TurnDiff({ turn }: { turn: LatestTurn }) {
   const bodyIdPrefix = useId();
   const changes = useMemo(() => turnChanges(turn), [turn]);
   const groups = useMemo(
-    () => groupByWorkspace(changes, turn.workspace),
+    () =>
+      groupByWorkspace(changes, turn.workspace).map((group) => ({
+        key: group.key,
+        label: group.label,
+        other: group.other,
+        files: groupFiles(group.changes),
+      })),
     [changes, turn.workspace],
   );
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const hasExpanded = changes.some((change) => expanded.has(change.id));
+  // Others' changes are context, not this turn's work, so they start collapsed.
+  const [othersOpen, setOthersOpen] = useState(false);
+  const visible = groups
+    .filter((group) => othersOpen || !group.other)
+    .flatMap((group) => group.files.map((file) => file.change));
+  const hasExpanded = visible.some((change) => expanded.has(change.id));
   if (changes.length === 0 && !turn.limited) return null;
-  const fileCount = new Set(changes.map((change) => change.path)).size;
-  const added = changes.reduce((total, change) => total + change.added, 0);
-  const removed = changes.reduce((total, change) => total + change.removed, 0);
+  const { workspaces, fileCount, added, removed } = turnTotals(groups);
   return (
     <section
       className="last-turn-diff"
@@ -61,18 +118,30 @@ function TurnDiff({ turn }: { turn: LatestTurn }) {
       data-last-turn-id={turn.turnId}
     >
       <header className="last-turn-diff-heading">
-        <strong>Last turn</strong>
-        <span>
-          {fileCount} {fileCount === 1 ? "file" : "files"} changed
-        </span>
-        <span className="last-turn-diff-added">+{added}</span>
-        <span className="last-turn-diff-removed">−{removed}</span>
-        {changes.length > 0 ? (
+        <h3 className="last-turn-diff-title">
+          <strong>Last turn</strong>
+          {/* A turn whose only files changed while other agents ran claims none. */}
+          {fileCount > 0 ? (
+            <span>
+              {fileCount} {fileCount === 1 ? "file" : "files"} changed
+            </span>
+          ) : null}
+          {added + removed > 0 ? <DiffCounts added={added} removed={removed} /> : null}
+        </h3>
+        {visible.length > 0 ? (
           <button
             type="button"
             className="last-turn-diff-toggle-all"
             onClick={() =>
-              setExpanded(hasExpanded ? new Set() : new Set(changes.map((change) => change.id)))
+              // Only visible files change, so a collapsed group keeps its own state.
+              setExpanded((current) => {
+                const next = new Set(current);
+                for (const { id } of visible) {
+                  if (hasExpanded) next.delete(id);
+                  else next.add(id);
+                }
+                return next;
+              })
             }
           >
             {hasExpanded ? "Collapse all" : "Expand all"}
@@ -80,77 +149,104 @@ function TurnDiff({ turn }: { turn: LatestTurn }) {
         ) : null}
       </header>
       {turn.limited ? (
-        <p className="last-turn-diff-notice">Some changes exceed the preview limit.</p>
+        <p className="last-turn-diff-notice">
+          Some changes are too large to preview, so the file list and totals may be incomplete.
+        </p>
       ) : null}
       {groups.map((group) => (
-        <section className="last-turn-diff-workspace" key={group.key || "own"}>
-          {groups.length > 1 ? (
-            <h3 className="last-turn-diff-workspace-label" title={group.label}>
+        <section key={group.key}>
+          {/* Others' changes are always labeled so they never read as this turn's. */}
+          {group.other ? (
+            <h4
+              className="last-turn-diff-workspace-label last-turn-diff-workspace-toggle"
+              title={group.label}
+            >
+              <button
+                type="button"
+                className="last-turn-diff-group-toggle"
+                aria-expanded={othersOpen}
+                aria-controls={`${bodyIdPrefix}-other`}
+                onClick={() => setOthersOpen((open) => !open)}
+              >
+                {group.label}
+                <span className="last-turn-diff-group-count">
+                  {group.files.length} {group.files.length === 1 ? "file" : "files"}
+                </span>
+                <Chevron />
+              </button>
+            </h4>
+          ) : groups.length > 1 && (group.key !== "own" || workspaces > 1) ? (
+            // The others group labels itself, so the turn's own files need a
+            // label only beside another workspace's.
+            <h4 className="last-turn-diff-workspace-label" title={group.label}>
               {group.label}
-            </h3>
+            </h4>
           ) : null}
-          {group.changes.map((change) => (
-            <div className="last-turn-diff-file" key={change.id}>
-              <FileHeader
-                change={change}
-                open={expanded.has(change.id)}
-                bodyId={`${bodyIdPrefix}-${change.id}`}
-                onToggle={() => {
-                  setExpanded((current) => {
-                    const next = new Set(current);
-                    if (next.has(change.id)) next.delete(change.id);
-                    else next.add(change.id);
-                    return next;
-                  });
-                }}
-              />
-              <div id={`${bodyIdPrefix}-${change.id}`} hidden={!expanded.has(change.id)}>
-                <FileBody
-                  unity={turn.unity?.[change.id]}
-                  patch={change.patch}
-                  path={change.relPath ?? change.path}
-                  open={expanded.has(change.id)}
-                  showLineNumbers={!change.unpositioned}
-                />
-              </div>
-            </div>
-          ))}
+          <div id={group.other ? `${bodyIdPrefix}-other` : undefined}>
+            {group.other && !othersOpen
+              ? null
+              : group.files.map(({ change, edits }) => (
+                  <div className="last-turn-diff-file" key={change.id}>
+                    <FileHeader
+                      changes={edits}
+                      open={expanded.has(change.id)}
+                      bodyId={`${bodyIdPrefix}-${change.id}`}
+                      onToggle={() => {
+                        setExpanded((current) => {
+                          const next = new Set(current);
+                          if (next.has(change.id)) next.delete(change.id);
+                          else next.add(change.id);
+                          return next;
+                        });
+                      }}
+                    />
+                    {/* Mounted while closed so the toggle's aria-controls resolves. */}
+                    <div id={`${bodyIdPrefix}-${change.id}`} hidden={!expanded.has(change.id)}>
+                      {expanded.has(change.id) ? (
+                        <FileEdits edits={edits} unity={turn.unity} />
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+          </div>
         </section>
       ))}
     </section>
   );
 }
 
-function FileBody({
-  patch,
-  path,
-  open,
-  unity,
-  showLineNumbers,
-}: {
-  patch: string | null;
-  path: string;
-  open: boolean;
-  unity?: UnityDiff;
-  showLineNumbers: boolean;
-}) {
-  if (!open) return <div className="last-turn-diff-body" />;
-  const raw = patch ? (
-    <Diff
-      patch={patch}
-      path={path}
-      view="unified"
-      overflow="scroll"
-      showLineNumbers={showLineNumbers}
-    />
-  ) : (
-    <p className="last-turn-diff-notice">No text diff recorded for this change.</p>
-  );
-  return (
-    <div className="last-turn-diff-body">
-      {unity ? <UnityDiffView diff={unity} path={path} raw={raw} /> : raw}
-    </div>
-  );
+/** An expanded file: each recorded edit's diff, captioned when there are several. */
+function FileEdits({ edits, unity }: { edits: Change[]; unity: LatestTurn["unity"] }) {
+  return edits.map((edit, index) => {
+    const path = edit.relPath ?? edit.path;
+    const diff = unity?.[edit.id];
+    const raw = edit.patch ? (
+      <Diff
+        patch={edit.patch}
+        path={path}
+        view="unified"
+        overflow="scroll"
+        showLineNumbers={!edit.unpositioned}
+      />
+    ) : (
+      <p className="last-turn-diff-notice">No text diff recorded for this change.</p>
+    );
+    return (
+      <div key={edit.id}>
+        {edits.length > 1 ? (
+          <p className="last-turn-diff-edit-label">
+            <span>
+              Edit {index + 1} of {edits.length}
+            </span>
+            <DiffCounts added={edit.added} removed={edit.removed} hideZero />
+          </p>
+        ) : null}
+        <div className="last-turn-diff-body">
+          {diff ? <UnityDiffView diff={diff} path={path} raw={raw} /> : raw}
+        </div>
+      </div>
+    );
+  });
 }
 
 function LatestDiff({ threadId }: { threadId: string }) {

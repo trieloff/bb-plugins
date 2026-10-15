@@ -1,5 +1,3 @@
-import type { BranchStatus } from "../shared/schema.ts";
-
 /** Presentation helpers. Pure, so the panel's labels are unit-testable. */
 
 export function shortId(commitId: string): string {
@@ -8,6 +6,16 @@ export function shortId(commitId: string): string {
 
 export function subject(message: string): string {
   return message.split("\n", 1)[0] ?? "";
+}
+
+/**
+ * What a branch's commits, given newest first, are squashed into when it
+ * lands: the subject of the oldest, which started the branch, then the later
+ * subjects as a list, oldest first.
+ */
+export function squashMessage(newestFirst: readonly string[]): string {
+  const [first = "", ...later] = newestFirst.map(subject).reverse();
+  return later.length === 0 ? first : `${first}\n\n${later.map((line) => `- ${line}`).join("\n")}`;
 }
 
 const MINUTE = 60_000;
@@ -25,20 +33,20 @@ export function relativeTime(value: string, now = Date.now()): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export const BRANCH_STATUS_LABEL: Readonly<Record<BranchStatus, string>> = {
-  unpushed: "unpushed",
-  pushed: "pushed",
-  diverged: "diverged",
-  integrated: "integrated",
-  conflicted: "conflicted",
-  empty: "empty",
-  unknown: "",
-};
+const ABSOLUTE_STYLE = { dateStyle: "medium", timeStyle: "short" } as const;
+// Made once: a board draws one per commit, and building a format is the slow part.
+const absoluteFormat = new Intl.DateTimeFormat(undefined, ABSOLUTE_STYLE);
 
-export function changeSymbol(kind: string): string {
-  if (kind === "added") return "A";
-  if (kind === "deleted") return "D";
-  if (kind === "renamed") return "R";
-  if (kind === "copied") return "C";
-  return "M";
+/**
+ * The date and time in full, for a tooltip under a relative one. The reader's
+ * locale and zone unless given, which only a test needs.
+ */
+export function absoluteTime(value: string, locale?: string, timeZone?: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "";
+  const format =
+    locale === undefined && timeZone === undefined
+      ? absoluteFormat
+      : new Intl.DateTimeFormat(locale, { ...ABSOLUTE_STYLE, timeZone });
+  return format.format(timestamp);
 }

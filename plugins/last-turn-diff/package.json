@@ -36,6 +36,7 @@
     },
     "server": "./src/server/server.ts",
     "app": "./src/app/app.tsx",
+    "host": "./src/host/host.ts",
     "skills": []
   },
   "files": [
@@ -72,7 +73,7 @@
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "bun test --preload ./test/sqlite-preload.js src test",
-    "check": "node --import tsx ../../packages/bb-kit-core/src/bin/bin.ts check",
+    "check": "node --import tsx ../../packages/bb-kit-dev/src/bin.ts check",
     "clean": "rm -rf dist"
   }
 }

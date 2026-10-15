@@ -1,0 +1,1 @@
+Start an independent design or implementation review. Modes select effort: Quick, Standard, Deep. Implementation requires a fixed branch or base/head. Reuse defaults to auto. Publication requires a completed Deep assessment; reuse its run ID at push, PR update, and merge when the candidate is unchanged.

@@ -17,8 +17,10 @@ function tokenStyle(values: Record<`--${string}`, string>): TokenStyle {
 function Swatch({ label, token }: { label: string; token: string }) {
   return (
     <article className="sb-swatch" style={tokenStyle({ "--swatch": `var(${token})` })}>
-      <span className="sb-token-name">{label}</span>
-      <p>{token}</p>
+      <div className="sb-swatch-caption">
+        <span className="sb-token-name">{label}</span>
+        <p>{token}</p>
+      </div>
     </article>
   );
 }
@@ -163,7 +165,7 @@ export const ChromeAndStates: Story = {
                 <span className="sb-pill">
                   <span style={{ color: "var(--pill-icon)" }}>@</span>theme
                 </span>
-                <span className="sb-tooltip bg-primary">
+                <span className="sb-tooltip bg-primary" data-side="top">
                   <span role="tooltip">Neutral tooltip</span>
                 </span>
               </div>
@@ -201,7 +203,7 @@ export const ContentPalettes: Story = {
     <Page
       kicker="Program-owned color"
       title="Content palettes"
-      description="ANSI, code, diff, and tree colors keep content semantics separate from the single chrome accent."
+      description="ANSI, code, diff, tree, and machine colors keep content semantics separate from the single chrome accent."
     >
       <section className="sb-section">
         <h2>Terminal ANSI</h2>
@@ -250,7 +252,8 @@ export const ContentPalettes: Story = {
           <div
             className="sb-diff-row"
             style={tokenStyle({
-              "--diff-bg": "var(--diffs-bg-addition-override)",
+              "--diff-bg":
+                "color-mix(in lab, var(--diffs-bg-context-override) 80%, var(--diffs-addition-color-override))",
               "--diff-number-bg": "var(--diffs-bg-addition-number-override)",
               "--diff-number-fg": "var(--diffs-fg-number-addition-override)",
             })}
@@ -261,7 +264,8 @@ export const ContentPalettes: Story = {
           <div
             className="sb-diff-row"
             style={tokenStyle({
-              "--diff-bg": "var(--diffs-bg-deletion-override)",
+              "--diff-bg":
+                "color-mix(in lab, var(--diffs-bg-context-override) 80%, var(--diffs-deletion-color-override))",
               "--diff-number-bg": "var(--diffs-bg-deletion-number-override)",
               "--diff-number-fg": "var(--diffs-fg-number-deletion-override)",
             })}
@@ -300,6 +304,16 @@ export const ContentPalettes: Story = {
               </span>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="sb-section">
+        <h2>Machine identity</h2>
+        <div className="sb-grid">
+          <Swatch label="Blue" token="--machine-1" />
+          <Swatch label="Cyan" token="--machine-2" />
+          <Swatch label="Rose" token="--machine-3" />
+          <Swatch label="Periwinkle" token="--machine-4" />
         </div>
       </section>
     </Page>

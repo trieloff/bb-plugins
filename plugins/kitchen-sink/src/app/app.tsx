@@ -17,9 +17,10 @@ import {
 } from "../shared/contract.ts";
 import { embedCache, embedCacheKey, type EmbedRequest } from "./embed-cache.ts";
 import { UnityCitationView } from "@bb-plugins/unity-inspector/app";
+import { CompletionSound } from "./completion-sound.tsx";
 import { DevinIcon } from "./devin-branding.tsx";
+import { SendHaptic } from "./send-haptic.tsx";
 import { SmartImageCompareDirective } from "./smart-image-compare.tsx";
-import { InlineVisDirective } from "./inline-vis.tsx";
 import "./app.css";
 import "./timeline-motion/timeline-motion.css";
 import { mountTimelineMotion } from "./timeline-motion/timeline-motion.ts";
@@ -291,6 +292,7 @@ export default definePluginApp((app) => {
     providerId: "acp-devin",
     icon: DevinIcon,
   });
+  app.slots.experimental_appOverlay({ id: "completion-sound", component: CompletionSound });
   app.slots.experimental_threadHeaderAction({
     id: "thread-activity-probe",
     title: PROBE_GROUP_TITLE,
@@ -307,9 +309,13 @@ export default definePluginApp((app) => {
       if (threadId !== null) jumpToLatestEvent(document, threadId);
     },
   });
+  app.composer.customize({
+    id: "send-haptic",
+    scopes: ["thread", "new-thread"],
+    banners: [{ id: "send-haptic", chrome: "bare", component: SendHaptic }],
+  });
   app.slots.messageDirective({ id: "smart-diff", component: SmartChangeDirective });
   app.slots.messageDirective({ id: "smart-patch", component: SmartPatchDirective });
   app.slots.messageDirective({ id: "smart-code", component: SmartCodeDirective });
-  app.slots.messageDirective({ id: "inline-vis", component: InlineVisDirective });
   app.slots.messageDirective({ id: "smart-image-compare", component: SmartImageCompareDirective });
 });

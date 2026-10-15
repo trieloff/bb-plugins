@@ -1,0 +1,394 @@
+/*
+ * Document chrome fitted to bb's panels. Layered after tokens.css, which only
+ * holds bb tokens (tokens.test.ts); these rules read the vendored --review-*
+ * layout variables. Every selector adds `[data-review-theme]` to win over the
+ * vendored sheets on specificity. No color values here.
+ */
+
+/*
+ * Contents pill. Below the rail threshold (review-toc.tsx, 1360px shell)
+ * upstream floats the pill over the first heading. In bb's thread panel that
+ * is always, so dock it in the topbar row, left of the tabs, and grow the card
+ * from there. The pill rules key on `--rail`, which mirrors the JS threshold.
+ */
+.review-canvas-root[data-review-theme] .review-toc:not(.review-toc--rail) {
+  top: calc((var(--review-header-height) - 28px) / 2);
+  left: 6px;
+  width: 28px;
+  height: 28px;
+  /* The topbar's layer: later in the shell, the pill paints over the topbar,
+     and a diagram tour (same layer, portaled after the shell) covers both. */
+  z-index: var(--review-debug-layer);
+}
+
+.review-canvas-root[data-review-theme] .review-toc-toggle {
+  width: 28px;
+  height: 28px;
+}
+
+.review-canvas-root[data-review-theme] .review-toc:not(.review-toc--rail) .review-toc-head {
+  height: 28px;
+  line-height: 28px;
+}
+
+.review-canvas-root[data-review-theme] .review-toc--open:not(.review-toc--rail) {
+  width: min(248px, calc(100cqi - 12px));
+  height: auto;
+}
+
+/* Reserve the pill's slot by shell width, not by whether the pill is mounted
+   (it is absent off the Whiteboard view and below two headings), so the tabs
+   never shift. The shell is the review-content container. */
+@container review-content (max-width: 1359.98px) {
+  .review-canvas-root[data-review-theme] .review-topbar {
+    padding-inline-start: 40px;
+  }
+}
+
+/*
+ * The closed list leaves the Tab order and the accessibility tree once its
+ * fade ends. Opening shows it at once (visibility is not delayed there).
+ * heading-scroll.ts moves focus to the chosen heading before the delay ends.
+ */
+.review-canvas-root[data-review-theme] .review-toc:not(.review-toc--open) .review-toc-body {
+  visibility: hidden;
+  transition:
+    opacity 80ms ease,
+    visibility 0s linear 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-canvas-root[data-review-theme] .review-toc:not(.review-toc--open) .review-toc-body {
+    transition:
+      opacity 140ms ease,
+      visibility 0s linear 140ms;
+  }
+}
+
+/*
+ * Topbar. bb has no source-tree navigation (verbs.ts answers with an error
+ * toast) and dev.fast's Discord is not bb's, so both buttons are hidden. The
+ * context divider stays only while something else (the authoring badge) shows.
+ */
+.review-canvas-root[data-review-theme] .review-open-source-tree,
+.review-canvas-root[data-review-theme] .review-topbar-icon-button:has(> .ui-icon--discord) {
+  display: none;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-topbar-context:not(:has(> :not(.review-open-source-tree)))::before {
+  display: none;
+}
+
+/* Phone widths: tighter tabs and an icon-only Dismiss, so every action fits
+   without the strip scrolling. The label stays as the button's name. */
+@container review-content (max-width: 520px) {
+  .review-canvas-root[data-review-theme] .review-topbar-left .review-segmented {
+    gap: 12px;
+  }
+
+  .review-canvas-root[data-review-theme] .review-corner-dismiss {
+    width: var(--chrome-control-height);
+    justify-content: center;
+    padding: 0;
+  }
+
+  .review-canvas-root[data-review-theme] .review-corner-dismiss > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* A peek still loading, or one that cannot resolve (CodePeek.tsx), is one
+   muted row in the peek's frame, as upstream styles an inline editor error. */
+.review-canvas-root[data-review-theme] .code-peek[role="status"] {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-faint);
+  font: 11px/1.4 var(--wb-font-mono);
+}
+
+/*
+ * Prose. Markdown runs sit in a `.bb-markdown-prose` wrapper, so the vendored
+ * direct-child measure (api-document.css) misses their paragraphs and tables.
+ * Give the wrapper the same measure so text lines up with headings and peeks.
+ */
+.review-canvas-root[data-review-theme] .review-document .api-document-node > .bb-markdown-prose {
+  width: min(100%, var(--review-prose-max-width));
+  max-width: calc(100cqi - 2 * var(--review-document-padding-inline));
+  margin-inline: auto;
+}
+
+/*
+ * Document type and rhythm. The prose wrapper also matches bb's light chat
+ * sheet (13px) and, while bb is dark, Monokai's agent-message rules (14px,
+ * weight 430, chat margins), so these pin one scale whatever bb's appearance.
+ * Sizes step 28 / 20 / 17 / 16 / 15 / 14. Running text keeps a 38em measure,
+ * about 75 characters; headings, tables, code and diagrams use the full
+ * column. bb's Inter has no optical size axis, so headings take Inter's own
+ * tracking for their size.
+ */
+.review-canvas-root[data-review-theme] .review-document {
+  --wb-measure: 38em;
+  --wb-block-gap: 16px;
+  --wb-node-gap: 24px;
+}
+
+.review-canvas-root[data-review-theme] .review-document h1:not(.bb-markdown-prose *) {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 34px;
+  letter-spacing: -0.021em;
+  text-wrap: balance;
+}
+
+.review-canvas-root[data-review-theme] .review-section-header {
+  margin-block: 48px 12px;
+}
+
+/* Restates upstream's headroom under the title (whiteboard.css), which the
+   rule above would otherwise replace. */
+.review-canvas-root[data-review-theme]
+  .review-document-header
+  + .api-document-node
+  .review-section-header {
+  margin-block-start: 40px;
+}
+
+.review-canvas-root[data-review-theme] .review-section-heading h2 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: -0.017em;
+  text-wrap: balance;
+}
+
+/* Blocks are separate nodes, and the nodes own the space between them: a
+   gap above each node that follows another, none on the block inside. So
+   prose, peeks and diagrams sit the same distance apart, and a section's
+   heading stays closer to its first block than any gap. */
+.review-canvas-root[data-review-theme] .review-document .api-document-node > * {
+  margin-block: 0;
+}
+
+.review-canvas-root[data-review-theme] .review-document .api-document-node + .api-document-node {
+  margin-block-start: var(--wb-node-gap);
+}
+
+/* Erasing. Upstream's collapse (whiteboard.css `wb-collapse`) zeroes the
+   margins from the start of its delay, which would drop the gap above an
+   erased block at once; these keep the timing and close the gap with the
+   block. A leading block has no gap above it, so it pulls its follower's
+   gap shut with a negative margin instead: the follower is about to lead. */
+.review-canvas-root[data-review-theme] .review-document .api-document-node[data-motion="erasing"] {
+  animation-name: wb-node-collapse;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .api-document-node[data-motion="erasing"]:not(.api-document-node + *):has(+ .api-document-node) {
+  animation-name: wb-node-collapse-leading;
+}
+
+@keyframes wb-node-collapse {
+  from {
+    height: auto;
+  }
+  to {
+    height: 0;
+    margin-block: 0;
+  }
+}
+
+@keyframes wb-node-collapse-leading {
+  from {
+    height: auto;
+  }
+  to {
+    height: 0;
+    margin-block: 0 calc(-1 * var(--wb-node-gap));
+  }
+}
+
+/* Reduced motion hides an erased block at once (whiteboard.css). */
+@media (prefers-reduced-motion: reduce) {
+  .review-canvas-root[data-review-theme]
+    .review-document
+    .api-document-node[data-motion="erasing"]:not(.api-document-node + *)
+    + .api-document-node {
+    margin-block-start: 0;
+  }
+}
+
+.review-canvas-root[data-review-theme] .review-document .bb-markdown-prose:not(.agent-markdown) {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(p, li) {
+  font-size: inherit;
+  line-height: inherit;
+  text-wrap: pretty;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  > * {
+  margin-block: 0;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  > :is(p, ul, ol, blockquote) {
+  max-inline-size: var(--wb-measure);
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  > *
+  + * {
+  margin-block-start: var(--wb-block-gap);
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  text-wrap: balance;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  > *
+  + :is(h1, h2, h3, h4, h5, h6) {
+  margin-block-start: 28px;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  > :is(h1, h2, h3, h4, h5, h6)
+  + * {
+  margin-block-start: 8px;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(h1, h2) {
+  font-size: 17px;
+  line-height: 24px;
+  letter-spacing: -0.013em;
+}
+
+.review-canvas-root[data-review-theme] .review-document .bb-markdown-prose:not(.agent-markdown) h3 {
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: -0.011em;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(h4, h5, h6) {
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(strong, b) {
+  font-weight: 600;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(ul, ol) {
+  padding-inline-start: 1.5em;
+}
+
+.review-canvas-root[data-review-theme] .review-document .bb-markdown-prose:not(.agent-markdown) li {
+  margin: 0;
+  padding-inline-start: 0.25em;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(li + li, li > :is(ul, ol)) {
+  margin-block-start: 6px;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :not(pre)
+  > code {
+  font-size: 0.875em;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  table {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+}
+
+.review-canvas-root[data-review-theme]
+  .review-document
+  .bb-markdown-prose:not(.agent-markdown)
+  :is(th, td) {
+  line-height: inherit;
+}
+
+.review-canvas-root[data-review-theme] .review-document .bb-markdown-prose:not(.agent-markdown) th {
+  font-weight: 600;
+}
+
+/* bb prose lays tables out automatically, where upstream's `anywhere` lets a
+   column shrink to one character. Keep words whole; code may still break. A
+   table wider than its column scrolls in its wrapper (render.tsx). */
+.review-canvas-root[data-review-theme] .review-document .bb-markdown-prose :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.review-canvas-root[data-review-theme] .bb-markdown-prose .wb-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.review-canvas-root[data-review-theme] .review-document .bb-markdown-prose :is(th, td) code {
+  overflow-wrap: anywhere;
+}
+
+/* bb's Button inside the canvas (Home's empty state, the dismissed panel).
+   Upstream's unlayered `button { font: inherit }` outranks the layered text
+   utilities, and the canvas would pass down its mono face. */
+.review-canvas-root[data-review-theme] [data-slot="button"] {
+  font: revert-layer;
+  font-family: var(--font-sans);
+}

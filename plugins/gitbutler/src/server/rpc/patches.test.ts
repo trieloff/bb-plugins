@@ -10,6 +10,7 @@ test("forwards the patch source to the host entry", async () => {
       {
         path: "README.md",
         kind: "modified" as const,
+        previousPath: null,
         patch:
           "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
         truncated: false,
@@ -32,4 +33,13 @@ test("fails loudly when the thread has no environment", async () => {
   expect(patches.execute(ctx, uncommitted)).rejects.toThrow(
     "This thread has no project environment.",
   );
+});
+
+test("names the machine when bb has lost the thread's host", async () => {
+  const { ctx } = harness({
+    error: new Error("Host is not connected"),
+    host: { name: "Personal Mac", status: "disconnected" },
+  });
+
+  await expect(patches.execute(ctx, uncommitted)).rejects.toThrow("Personal Mac is not connected.");
 });

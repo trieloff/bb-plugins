@@ -1,4 +1,5 @@
 import { useCellValues, usePublisher } from "@mdxeditor/gurx";
+import "@bb-plugins/markdown-prose/prose.css";
 import { EditorView } from "@codemirror/view";
 import {
   createContext,
@@ -11,12 +12,14 @@ import {
 } from "react";
 import {
   MDXEditor,
+  lexicalTheme,
   addSyntaxExtension$,
   realmPlugin,
   markdownProcessingError$,
   viewMode$,
   BoldItalicUnderlineToggles,
   BlockTypeSelect,
+  CodeMirrorEditor,
   CreateLink,
   DiffSourceToggleWrapper,
   GenericDirectiveEditor,
@@ -41,6 +44,8 @@ import {
   tablePlugin,
   thematicBreakPlugin,
   toolbarPlugin,
+  normalizeCodeBlockLanguages,
+  type CodeBlockEditorDescriptor,
   type DirectiveDescriptor,
   type MDXEditorMethods,
 } from "@mdxeditor/editor";
@@ -52,10 +57,57 @@ import {
   canvasDescriptors,
   usesCanvasWidgets,
 } from "./editor.tsx";
+import { HtmlEmbed } from "./html-embed.tsx";
 import { parseMarkdownDocument } from "./markdown-document.ts";
 import { preserveEsmPlugin } from "./mdx-esm.tsx";
+import { softBreakPlugin } from "./soft-break.ts";
 import "./app.css";
 import "./markdown-editor.css";
+
+const codeBlockLanguages = {
+  text: "Plain text",
+  js: "JavaScript",
+  ts: "TypeScript",
+  tsx: "TSX",
+  jsx: "JSX",
+  json: "JSON",
+  bash: "Shell",
+  css: "CSS",
+  html: "HTML",
+  python: "Python",
+  go: "Go",
+  csharp: "C#",
+  yaml: "YAML",
+  sql: "SQL",
+  markdown: "Markdown",
+};
+const codeBlockKeys = normalizeCodeBlockLanguages(codeBlockLanguages).keyMap;
+
+// Lexical wraps a nested list in a separate item. Keep the preceding item's
+// gap out of that wrapper so the rendered list follows BB's stream rhythm.
+const editorTheme = {
+  ...lexicalTheme,
+  list: {
+    ...lexicalTheme.list,
+    nested: {
+      ...lexicalTheme.list?.nested,
+      listitem: `${lexicalTheme.list?.nested?.listitem ?? ""} canvas-mdx-nested-list-item`,
+    },
+  },
+};
+
+// Wrap MDXEditor's CodeMirror block in a class so markdown-editor.css can style
+// it without matching the delete button. Priority 2 outranks codeMirrorPlugin's
+// own descriptor, and the match mirrors it.
+const codeBlockDescriptor: CodeBlockEditorDescriptor = {
+  priority: 2,
+  match: (language, meta) => !meta || Object.hasOwn(codeBlockKeys, language ?? ""),
+  Editor: (props) => (
+    <div className="canvas-mdx-code">
+      <CodeMirrorEditor {...props} />
+    </div>
+  ),
+};
 
 export function previewUrl(baseUrl: string, notePath: string, source: string): string {
   if (/^(https?:|data:|blob:|#)/i.test(source)) return source;
@@ -165,11 +217,11 @@ function EditorSession(
         return (
           <section className="canvas-html-embed" contentEditable={false}>
             <div className="canvas-html-embed-header">{source}</div>
-            <iframe
+            <HtmlEmbed
               title={`Embedded HTML: ${source}`}
-              sandbox="allow-scripts"
-              style={{ height }}
               src={previewUrl(previewBaseUrl, notePath, source)}
+              rootUrl={previewBaseUrl}
+              height={height}
             />
           </section>
         );
@@ -180,6 +232,7 @@ function EditorSession(
       listsPlugin(),
       quotePlugin(),
       thematicBreakPlugin(),
+      softBreakPlugin(),
       linkPlugin(),
       linkDialogPlugin(),
       tablePlugin(),
@@ -192,26 +245,11 @@ function EditorSession(
             }
           : {}),
       }),
-      codeBlockPlugin({ defaultCodeBlockLanguage: "text" }),
-      codeMirrorPlugin({
-        codeBlockLanguages: {
-          text: "Plain text",
-          js: "JavaScript",
-          ts: "TypeScript",
-          tsx: "TSX",
-          jsx: "JSX",
-          json: "JSON",
-          bash: "Shell",
-          css: "CSS",
-          html: "HTML",
-          python: "Python",
-          go: "Go",
-          csharp: "C#",
-          yaml: "YAML",
-          sql: "SQL",
-          markdown: "Markdown",
-        },
+      codeBlockPlugin({
+        defaultCodeBlockLanguage: "text",
+        codeBlockEditorDescriptors: [codeBlockDescriptor],
       }),
+      codeMirrorPlugin({ codeBlockLanguages }),
       ...(/\.(mdx)$/i.test(notePath)
         ? [
             jsxPlugin({
@@ -265,10 +303,11 @@ function EditorSession(
     <SourceRequestContext.Provider value={sourceRequest}>
       <MDXEditor
         ref={editorRef}
+        lexicalTheme={editorTheme}
         readOnly={applying}
         markdown={document.body}
         suppressHtmlProcessing={!/\.mdx$/i.test(notePath)}
-        contentEditableClassName="canvas-prose canvas-mdx-prose"
+        contentEditableClassName="canvas-prose canvas-mdx-prose bb-markdown-prose"
         className="canvas-mdx-editor"
         plugins={plugins}
         placeholder="Start writing…"

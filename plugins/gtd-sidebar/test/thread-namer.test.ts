@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { createThreadNamer, subscribeToThreadNaming } from "../thread-namer.ts";
+import { readTitleReply } from "../thread-title-inference.ts";
 
 const THREAD_ID = "thr_target";
 
@@ -199,6 +200,44 @@ describe("thread naming progress", () => {
   }
 });
 
+describe("composer context naming", () => {
+  for (const kind of ["automatic", "forced"] as const) {
+    test(`${kind} naming receives resolved composer chip context`, async () => {
+      const event = requested(1, "Fix it @Browser");
+      const { namer, inferenceCalls, updates } = createHost({
+        events: [
+          {
+            ...event,
+            data: {
+              ...event.data,
+              input: [
+                ...event.data.input,
+                {
+                  type: "text",
+                  text: 'Context for @Browser (resolved by plugin "browser"):\n\nThe checkout page shows a broken payment button.',
+                  mentions: [],
+                  visibility: "agent-only",
+                },
+              ],
+            },
+          },
+        ],
+        inferenceOutput: "Fix checkout payment button",
+      });
+
+      assert.deepEqual(await namer.nameThread(THREAD_ID, { kind }), {
+        ok: true,
+        title: "Fix checkout payment button",
+      });
+      assert.match(
+        (inferenceCalls[0] as { prompt: string }).prompt,
+        /The checkout page shows a broken payment button\./u,
+      );
+      assert.deepEqual(updates, [{ threadId: THREAD_ID, title: "Fix checkout payment button" }]);
+    });
+  }
+});
+
 describe("createThreadNamer", () => {
   test("names an untitled thread when its first prompt arrives", async () => {
     const { namer, updates } = createHost({ events: [requested()] });
@@ -300,6 +339,20 @@ describe("createThreadNamer", () => {
       title: "[Accounts] Pool affinity",
       inferenceOutput: null,
       events: [requested(), requested(3, "add test", "new-turn")],
+    });
+    assert.deepEqual(await namer.nameThread(THREAD_ID, { kind: "automatic" }), {
+      ok: true,
+      title: "[Accounts] Pool affinity",
+    });
+    assert.deepEqual(updates, []);
+  });
+
+  test("preserves the existing title when the model replies with a prose keep decision", async () => {
+    const { namer, updates } = createHost({
+      title: "[Accounts] Pool affinity",
+      events: [requested(), requested(3, "add test", "new-turn")],
+      inferenceComplete: async (input) =>
+        readTitleReply("keep the current title.", (input as { allowKeep: boolean }).allowKeep),
     });
     assert.deepEqual(await namer.nameThread(THREAD_ID, { kind: "automatic" }), {
       ok: true,

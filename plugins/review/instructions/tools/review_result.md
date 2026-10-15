@@ -1,0 +1,1 @@
+Validate a completed run's result, including cached runs returned by review_start. For running reviews, wait for BB's completion notification. Use waitSeconds:0; do not poll. Failed, incomplete, or stale results do not clear publication. Large reports are available through review_context section=report.

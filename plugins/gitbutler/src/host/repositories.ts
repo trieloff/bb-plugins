@@ -2,6 +2,7 @@ import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { Repository } from "../shared/schema.ts";
 import { runGit } from "./cli.ts";
+import { readOrigin } from "./origin.ts";
 
 /**
  * Repository discovery is deliberately shallow: the environment root when it
@@ -31,12 +32,12 @@ async function gitTopLevel(candidate: string, signal: AbortSignal): Promise<stri
   }
 }
 
-type Discovery = { root: string; repositories: Array<Repository & { path: string }> };
+type Discovery = Array<Repository & { path: string }>;
 
 async function discover(environmentPath: string, signal: AbortSignal): Promise<Discovery> {
   const root = await realpath(environmentPath);
   if ((await gitTopLevel(root, signal)) === root) {
-    return { root, repositories: [{ key: ".", name: basename(root), path: root }] };
+    return [{ key: ".", name: basename(root), path: root }];
   }
 
   let reposDirectory: string;
@@ -45,30 +46,32 @@ async function discover(environmentPath: string, signal: AbortSignal): Promise<D
     reposDirectory = await realpath(resolve(root, REPOS_DIRECTORY));
     entries = await readdir(reposDirectory);
   } catch {
-    return { root, repositories: [] };
+    return [];
   }
 
-  const found: Array<Repository & { path: string }> = [];
-  for (const entry of entries.sort()) {
-    let candidate: string;
-    try {
-      candidate = await realpath(resolve(reposDirectory, entry));
-    } catch {
-      continue;
-    }
-    if (!isInside(root, candidate)) continue;
-    if (dirname(candidate) !== reposDirectory) continue;
-    if ((await gitTopLevel(candidate, signal)) !== candidate) continue;
-    found.push({ key: `${REPOS_DIRECTORY}/${entry}`, name: entry, path: candidate });
-  }
-  return { root, repositories: found };
+  // Every call rescans, so the entries are checked at once rather than one
+  // git spawn after another. Promise.all keeps the sorted order.
+  const checked = await Promise.all(
+    entries.sort().map(async (entry) => {
+      let candidate: string;
+      try {
+        candidate = await realpath(resolve(reposDirectory, entry));
+      } catch {
+        return undefined;
+      }
+      if (!isInside(root, candidate) || dirname(candidate) !== reposDirectory) return undefined;
+      if ((await gitTopLevel(candidate, signal)) !== candidate) return undefined;
+      return { key: `${REPOS_DIRECTORY}/${entry}`, name: entry, path: candidate };
+    }),
+  );
+  return checked.filter((repository) => repository !== undefined);
 }
 
 export async function listRepositories(
   environmentPath: string,
   signal: AbortSignal,
 ): Promise<Repository[]> {
-  const { repositories } = await discover(environmentPath, signal);
+  const repositories = await discover(environmentPath, signal);
   return repositories.map(({ key, name }) => ({ key, name }));
 }
 
@@ -82,7 +85,7 @@ export async function resolveRepository(
   repositoryKey: string | undefined,
   signal: AbortSignal,
 ): Promise<{ key: string; name: string; path: string }> {
-  const { repositories } = await discover(environmentPath, signal);
+  const repositories = await discover(environmentPath, signal);
   if (repositories.length === 0) {
     throw new NoRepositoryError(
       "No Git repository was found at the environment root or under its repos/ directory.",
@@ -94,4 +97,82 @@ export async function resolveRepository(
   const selected = repositories.find((repository) => repository.key === repositoryKey);
   if (!selected) throw new NoRepositoryError("That repository is no longer available.");
   return selected;
+}
+
+/**
+ * How many paths are checked at once. A machine can hold hundreds of
+ * environments, and each check spawns git.
+ */
+const CHECKS_AT_ONCE = 16;
+
+/** `map` over `items`, at most `CHECKS_AT_ONCE` at a time, in order. */
+async function inBatches<T, R>(items: readonly T[], map: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let start = 0; start < items.length; start += CHECKS_AT_ONCE) {
+    results.push(...(await Promise.all(items.slice(start, start + CHECKS_AT_ONCE).map(map))));
+  }
+  return results;
+}
+
+/** GitButler keeps a workspace's HEAD on its own branch, and nothing else does. */
+const WORKSPACE_HEAD = "refs/heads/gitbutler/workspace";
+
+/**
+ * The GitButler workspaces among `paths` whose origin is `origin`, or any
+ * origin when it is null, each path searched the way an environment is. A
+ * path that is gone or holds another repository drops out, and a repository
+ * reached by two paths is listed once. A linked worktree is on a branch of
+ * its own, so it drops out too.
+ */
+export async function findCheckouts(
+  paths: readonly string[],
+  origin: string | null,
+  signal: AbortSignal,
+): Promise<Array<Discovery[number] & { origin: string | null }>> {
+  const found = await inBatches(paths, (path) =>
+    discover(path, signal).catch((error: unknown) => {
+      if (signal.aborted) throw error;
+      return [];
+    }),
+  );
+  const unique = new Map(found.flat().map((repository) => [repository.path, repository]));
+  const matched = await inBatches([...unique.values()], async (repository) => {
+    const [head, own] = await Promise.all([
+      runGit(repository.path, ["symbolic-ref", "-q", "HEAD"], signal).catch((error: unknown) => {
+        if (signal.aborted) throw error;
+        return "";
+      }),
+      readOrigin(repository.path, signal),
+    ]);
+    const wanted = origin === null || own === origin;
+    return head.trim() === WORKSPACE_HEAD && wanted ? { ...repository, origin: own } : undefined;
+  });
+  return matched
+    .filter((repository) => repository !== undefined)
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Whether the repository at real path `path` is a GitButler workspace found
+ * under one of `paths`, searched the way {@link findCheckouts} searches them.
+ */
+export async function isKnownWorkspace(
+  paths: readonly string[],
+  path: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const found = await inBatches(paths, (known) =>
+    discover(known, signal).catch((error: unknown) => {
+      if (signal.aborted) throw error;
+      return [];
+    }),
+  );
+  if (!found.flat().some((repository) => repository.path === path)) return false;
+  const head = await runGit(path, ["symbolic-ref", "-q", "HEAD"], signal).catch(
+    (error: unknown) => {
+      if (signal.aborted) throw error;
+      return "";
+    },
+  );
+  return head.trim() === WORKSPACE_HEAD;
 }

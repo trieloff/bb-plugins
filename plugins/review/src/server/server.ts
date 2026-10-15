@@ -1,0 +1,50 @@
+import { definePlugin } from "@bb-kit/core/plugin";
+import { start } from "./command/start.ts";
+import { result } from "./command/result.ts";
+import { context } from "./command/context.ts";
+import { start as startTool } from "./tools/start.ts";
+import { result as resultTool } from "./tools/result.ts";
+import { context as contextTool } from "./tools/context.ts";
+import { authorInstructions, files, MANUAL_SKILLS } from "./lib/review.ts";
+import { ReviewService } from "./lib/service.ts";
+
+export default definePlugin({
+  pluginId: "review",
+  rpc: {},
+  command: { start, result, context },
+  services(bb) {
+    const settings = bb.settings.define({
+      claudeModel: {
+        type: "string",
+        label: "Claude reviewer model",
+        description: "Reviews OpenAI authors at the selected mode's effort.",
+        default: "claude-opus-5-5[1m]",
+      },
+      codexModel: {
+        type: "string",
+        label: "Codex reviewer model",
+        description: "Reviews other authors at the selected mode's effort.",
+        default: "gpt-6-astra",
+      },
+    });
+    return { reviews: new ReviewService(bb, () => settings.get()) };
+  },
+  // No tool enabled or agents.skills: bb-kit registers tools, and setup owns the one configure.
+  agents: { files, tools: { start: startTool, result: resultTool, context: contextTool } },
+  setup(ctx) {
+    const { bb } = ctx;
+    bb.agents.configure((session) => {
+      const reviewer = session.origin.pluginId === bb.pluginId;
+      const sideChat = session.origin.pluginId === "side-chat";
+      return {
+        tools: reviewer
+          ? ["review_context"]
+          : sideChat
+            ? []
+            : ["review_start", "review_result", "review_context"],
+        skills: reviewer || sideChat ? [] : ["review-workflow", ...MANUAL_SKILLS],
+        ...(reviewer || sideChat ? {} : { instructions: authorInstructions() }),
+      };
+    });
+  },
+});

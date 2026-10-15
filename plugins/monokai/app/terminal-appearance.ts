@@ -3,6 +3,9 @@ import type { PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
 const ACTIVE_MOUNT = Symbol.for("bb.monokai.terminal-appearance.active-mount");
 const MAX_FIBER_DEPTH = 40;
 const MAX_HOOKS = 128;
+// Tags bb's padded sidebar surface around each terminal for the theme's
+// padding rule, which would otherwise need a :has() on bb's sidebars.
+const SURFACE = "data-monokai-terminal-surface";
 
 type RecordValue = Record<string, unknown>;
 type TerminalTheme = Record<string, unknown>;
@@ -179,6 +182,24 @@ function sameAppearance(left: TerminalAppearance, right: TerminalAppearance): bo
   );
 }
 
+function tagSurfaces(terminals: Element[], previous: Set<Element>): Set<Element> {
+  const next = new Set<Element>();
+  for (const terminal of terminals) {
+    const surface = terminal.parentElement?.parentElement;
+    if (surface?.matches(".bg-sidebar.p-2")) next.add(surface);
+  }
+  for (const surface of previous) if (!next.has(surface)) surface.removeAttribute(SURFACE);
+  for (const surface of next) surface.toggleAttribute(SURFACE, true);
+  return next;
+}
+
+// FitAddon resizes only xterm. bb 0.45 sends the PTY its rows and cols only
+// from its own fit, and its document.fonts "loadingdone" listener remeasures
+// and refits every mounted terminal through that path.
+function resyncHostTerminals(): void {
+  document.fonts?.dispatchEvent(new Event("loadingdone"));
+}
+
 function relevantNode(node: Node): boolean {
   if (!(node instanceof Element)) return node.parentElement?.tagName === "STYLE";
   return (
@@ -192,6 +213,7 @@ export function mountTerminalAppearance({ signal }: PluginContentScriptContext):
   registry[ACTIVE_MOUNT]?.();
   const applied = new Map<Element, AppliedTerminal>();
   const hostOwned = new WeakSet<Element>();
+  let surfaces = new Set<Element>();
   let frame: number | null = null;
   let disposed = false;
   const restore = (entry: AppliedTerminal) => {
@@ -205,15 +227,18 @@ export function mountTerminalAppearance({ signal }: PluginContentScriptContext):
     frame = null;
     if (disposed) return;
     const appearance = readAppearance();
+    let resized = false;
     for (const [element, entry] of applied) {
       if (element.isConnected && appearance && sameAppearance(entry.appearance, appearance))
         continue;
       restore(entry);
       applied.delete(element);
+      resized = true;
     }
-    if (!appearance) return;
-    for (const element of document.querySelectorAll(".xterm")) {
-      if (applied.has(element) || hostOwned.has(element)) continue;
+    const terminals = appearance ? [...document.querySelectorAll(".xterm")] : [];
+    surfaces = tagSurfaces(terminals, surfaces);
+    for (const element of terminals) {
+      if (!appearance || applied.has(element) || hostOwned.has(element)) continue;
       const binding = findElementBinding(element);
       if (!binding) continue;
       try {
@@ -223,10 +248,12 @@ export function mountTerminalAppearance({ signal }: PluginContentScriptContext):
           continue;
         }
         applied.set(element, { appearance, restore: restoreAppearance });
+        resized = true;
       } catch {
         /* Skip an unavailable or concurrently disposed terminal. */
       }
     }
+    if (resized) resyncHostTerminals();
   };
   const schedule = () => {
     if (!disposed && frame === null) frame = requestAnimationFrame(reconcile);
@@ -260,7 +287,9 @@ export function mountTerminalAppearance({ signal }: PluginContentScriptContext):
     document.removeEventListener("load", onLoad, true);
     if (frame !== null) cancelAnimationFrame(frame);
     for (const entry of applied.values()) restore(entry);
+    if (applied.size > 0) resyncHostTerminals();
     applied.clear();
+    surfaces = tagSurfaces([], surfaces);
     if (registry[ACTIVE_MOUNT] === dispose) delete registry[ACTIVE_MOUNT];
   };
   registry[ACTIVE_MOUNT] = dispose;

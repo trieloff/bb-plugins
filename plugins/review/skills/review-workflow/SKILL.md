@@ -1,0 +1,19 @@
+---
+name: review-workflow
+description: Start independent reviews with pinned targets and retrieve their results.
+user-invocable: false
+---
+
+Use `review_start` with a short summary. `kind` is implementation (default) or design. Modes select reasoning effort: quick (medium), standard (high, default), deep (max). Optional `brief` and `evidence: [{label, path}]` supply context; evidence is captured from the calling host. Identify the revision or workspace state behind test results.
+
+Implementation targets are `{branch}` for a checkpointed GitButler branch or `{base, head, upstream?}` for explicit revisions. Checkpoint only authorized changes. `HEAD` and `gitbutler/workspace` are combined state, not review targets. Design reviews can use just a summary and optional brief.
+
+For the publication candidate, use `kind: "implementation", mode: "deep", scope: "publication"`. Branch publication scope includes ancestors back to the merge base; segment scope reviews the branch's owned commits. Explicit publication comparisons must cover that full delta. Outside GitButler, supply `upstream` and use its merge base with head as `base`.
+
+`reuse:auto` preserves an eligible reviewer's context; `reuse:new` requests fresh judgment. Reuse the completed run at push, PR update, and merge when the candidate is unchanged; retrieve its result rather than starting another review. A changed candidate needs a new assessment. Descendant helpers in the same environment can inherit the assessment.
+
+BB sends completion and failure notifications to the parent. Continue other work or yield, then call `review_result({runId, waitSeconds:0})` after notification, or immediately for an already-completed run. Do not poll. The result validates execution, candidate freshness, and complete diff reads for Deep implementation reviews; notification text alone is not publication clearance.
+
+`review_context` exposes the brief, evidence, diff, tree, pinned files, and report. Its `nextOffset` continues paginated content.
+
+CLI equivalents: `bb review start --mode <mode> --branch <branch> --prompt <summary>`, `bb review result <run-id>`, and `bb review context <run-id> --section <section>`. Use `--scope publication` for publication and `--base`, `--head`, `--upstream` for explicit targets. Manual `/review-quick`, `/review-standard`, and `/review-deep` are user-only.

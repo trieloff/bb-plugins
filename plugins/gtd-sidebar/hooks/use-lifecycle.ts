@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { gtdSidebarRpcContract } from "../server";
 import {
   canPark,
+  formatWakeTime,
   isThreadWorking,
   nextWakeDelayMs,
   resolveShelf,
@@ -114,22 +115,36 @@ export function useLifecycle(): LifecycleApi {
         weekdayOnlyProject: weekdayOnlyProjectIds.has(thread.projectId),
       });
     };
+    const unsnooze = (threadId: string) => {
+      void rpc.call("unsnooze", { threadId }).catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : "Couldn’t wake the thread.");
+      });
+    };
+    const announceSnooze = (threadId: string, snoozedUntil: number) =>
+      toast(`Snoozed until ${formatWakeTime(snoozedUntil, new Date())}`, {
+        id: `snooze-${threadId}`,
+        action: { label: "Undo", onClick: () => unsnooze(threadId) },
+      });
     return {
       shelfFor: (thread) => resolveShelf(rows.get(thread.id), signalsFor(thread), now),
       shelvesReady,
       canPark: (thread) => canPark(signalsFor(thread)),
       wakeAtFor: (thread) => rows.get(thread.id)?.snoozedUntil ?? null,
       snoozedAtFor: (thread) => rows.get(thread.id)?.snoozedAt ?? null,
-      unsnooze: (threadId) => {
-        void rpc.call("unsnooze", { threadId }).catch((error: unknown) => {
-          toast.error(error instanceof Error ? error.message : "Couldn’t wake the thread.");
-        });
-      },
+      unsnooze,
+      // A snooze fires on pointerdown and folds the row into a closed shelf,
+      // so the toast is what tells the user where it went. One id per thread:
+      // a second snooze replaces the toast instead of stacking another.
       snooze: (threadId, snoozedUntil) => {
-        void rpc.call("snooze", { threadId, snoozedUntil }).catch((error: unknown) => {
-          toast.error(error instanceof Error ? error.message : "Couldn’t snooze the thread.");
-        });
+        void rpc.call("snooze", { threadId, snoozedUntil }).then(
+          () => announceSnooze(threadId, snoozedUntil),
+          (error: unknown) => {
+            toast.error(error instanceof Error ? error.message : "Couldn’t snooze the thread.");
+          },
+        );
       },
+      // The server picks the wake time from the backoff ladder, so the toast
+      // waits for its answer instead of guessing from the label.
       quickSnooze: (threadId, projectId, pullRequestUrl) => {
         void rpc
           .call("quickSnooze", {
@@ -137,9 +152,12 @@ export function useLifecycle(): LifecycleApi {
             projectId,
             ...(pullRequestUrl ? { pullRequestUrl } : {}),
           })
-          .catch((error: unknown) => {
-            toast.error(error instanceof Error ? error.message : "Couldn’t snooze the thread.");
-          });
+          .then(
+            ({ snoozedUntil }) => announceSnooze(threadId, snoozedUntil),
+            (error: unknown) => {
+              toast.error(error instanceof Error ? error.message : "Couldn’t snooze the thread.");
+            },
+          );
       },
       quickSnoozeLabel: (thread) => quickSnoozeLabel(planFor(thread), Date.now()),
     };

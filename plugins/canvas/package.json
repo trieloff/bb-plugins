@@ -39,6 +39,7 @@
     },
     "server": "./src/server/server.ts",
     "app": "./src/app/app.tsx",
+    "host": "./src/host/host.ts",
     "skills": [
       "skills"
     ]
@@ -49,17 +50,21 @@
     "dist/app.js",
     "dist/app.meta.json",
     "dist/app.css",
+    "dist/host.js",
+    "dist/host.meta.json",
     "assets/",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "src/server/",
     "src/app/",
+    "src/host/",
     "src/shared/",
     "skills/",
     "instructions/"
   ],
   "dependencies": {
+    "@bb-plugins/markdown-prose": "workspace:*",
     "@bb-kit/core": "0.2.0",
     "@codemirror/view": "^6.38.6",
     "@mdxeditor/editor": "^4.2.4",
@@ -118,7 +123,7 @@
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "bun test --timeout=30000",
-    "check": "node --import tsx ../../packages/bb-kit-core/src/bin/bin.ts check",
+    "check": "node --import tsx ../../packages/bb-kit-dev/src/bin.ts check",
     "reference": "bun scripts/reference.ts",
     "clean": "rm -rf dist"
   },

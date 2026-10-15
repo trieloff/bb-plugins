@@ -1,8 +1,10 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   createFakePluginHost,
+  makeMessageDispatchHookContext,
   makePluginAgentConfigurationContext,
+  type ExperimentalFakeHostRpcCall,
 } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.ts";
 
@@ -81,6 +83,7 @@ async function setup(
   rows: Row[] = [edit],
   timelinePages: Partial<Timeline>[] = [],
   detailsError: Error | null = null,
+  callHost: (call: ExperimentalFakeHostRpcCall) => unknown = () => ({ snapshot: null }),
 ) {
   const list = mock<Threads["events"]["list"]>(async (input) =>
     events
@@ -90,7 +93,7 @@ async function setup(
           (input.afterSeq === undefined || event.seq > Number(input.afterSeq)) &&
           (input.beforeSeq === undefined || event.seq < Number(input.beforeSeq)),
       )
-      .sort((a, b) => b.seq - a.seq)
+      .sort((a, b) => (input.order === "asc" ? a.seq - b.seq : b.seq - a.seq))
       .slice(0, Number(input.limit ?? 100)),
   );
   const details = mock<Threads["timelineTurnSummaryDetails"]>(async () => {
@@ -121,6 +124,8 @@ async function setup(
   }));
   const host = createFakePluginHost({
     pluginId: "last-turn-diff",
+    experimental_hostEntry: true,
+    experimental_callHostRpc: callHost,
     sdk: {
       threads: {
         events: { list },
@@ -181,6 +186,128 @@ test("retains the last recorded changes through no-edit and active turns", async
     turn: { turnId: "turn-2", anchorId: "final-2", patch },
   });
   await harness.lifecycle.dispose();
+});
+
+test("temporary-only turns retain the previous project preview", async () => {
+  const later = laterTurn(0);
+  for (const aggregate of [false, true]) {
+    const temporaryPatch = patch.replaceAll("example.ts", "/tmp/review.txt");
+    const { harness } = await setup(
+      [
+        started,
+        updated,
+        completed,
+        ...later,
+        ...(aggregate
+          ? [
+              {
+                ...updated,
+                id: "temporary-diff",
+                seq: 35,
+                scope: later[0]!.scope,
+                data: { providerThreadId: "provider-1", diff: temporaryPatch },
+              },
+            ]
+          : []),
+      ],
+      [
+        edit,
+        {
+          ...edit,
+          id: "temporary-edit",
+          turnId: "later-0",
+          change: {
+            ...edit.change,
+            path: "/tmp/review.txt",
+            diff: temporaryPatch,
+          },
+        },
+      ],
+    );
+    expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+      turn: { turnId: "turn-2", anchorId: "final-2", patch },
+    });
+    await harness.lifecycle.dispose();
+  }
+});
+
+test("a temporary-only thread has no preview", async () => {
+  const { harness } = await setup(
+    [started, completed],
+    [
+      {
+        ...edit,
+        change: { ...edit.change, path: "/private/tmp/review.txt" },
+      },
+    ],
+  );
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toEqual({ turn: null });
+  await harness.lifecycle.dispose();
+});
+
+test("temporary edits never consume the file or text preview budget", async () => {
+  const temporary = {
+    ...edit,
+    change: { ...edit.change, path: "/tmp/review.txt", diff: "x".repeat(1_000_001) },
+  };
+  for (const rows of [
+    [temporary],
+    Array.from({ length: 201 }, (_, n) => ({ ...temporary, id: `tmp-${n}` })),
+  ]) {
+    const { harness } = await setup([started, completed], [...rows, edit]);
+    expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+      turn: { limited: false, changes: [{ path: "example.ts", patch }] },
+    });
+    await harness.lifecycle.dispose();
+  }
+  const temporaryPatch =
+    patch.replaceAll("example.ts", "/private/tmp/review.txt") + "+" + "x".repeat(1_000_001) + "\n";
+  for (const aggregate of [temporaryPatch, temporaryPatch + patch]) {
+    const { harness } = await setup(
+      [{ ...started }, { ...updated, data: { ...updated.data, diff: aggregate } }, completed],
+      [temporary],
+    );
+    const result = await harness.callRpc("latestTurn", { threadId: "thread-1" });
+    expect(result).toEqual(
+      aggregate === temporaryPatch
+        ? { turn: null }
+        : {
+            turn: { turnId: "turn-2", anchorId: "final-2", changes: [], patch, limited: false },
+          },
+    );
+    await harness.lifecycle.dispose();
+  }
+});
+
+test("known project edits under tmp remain visible and moves across tmp stay visible", async () => {
+  const { harness } = await setup(
+    [started, completed],
+    [absoluteEdit("/private/tmp/project/src/a.ts", "project")],
+  );
+  stubWorkspaces(harness);
+  harness.sdk.stub("environments.get", async () => ({
+    id: "env-1",
+    hostId: "h",
+    path: "/private/tmp/project",
+    name: null,
+  }));
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { changes: [{ path: "/private/tmp/project/src/a.ts", relPath: "src/a.ts" }] },
+  });
+  await harness.lifecycle.dispose();
+  for (const [path, movePath, expected] of [
+    ["/tmp/gen.ts", "src/gen.ts", "src/gen.ts"],
+    ["src/a.ts", "/tmp/a.ts", "src/a.ts"],
+  ]) {
+    const { harness } = await setup(
+      [started, completed],
+      [{ ...edit, change: { ...edit.change, path: path!, movePath: movePath! } }],
+    );
+    expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+      turn: { changes: [{ path: expected }] },
+    });
+    await harness.lifecycle.dispose();
+  }
 });
 
 test("paginates completed turns and locates the retained answer in older timeline pages", async () => {
@@ -309,12 +436,11 @@ test("returns no preview before a turn completes or when boundaries disagree", a
   }
 });
 
-test("adds no model instructions, tools, or dispatch hooks", async () => {
+test("adds no model instructions or tools", async () => {
   const { harness } = await setup();
   expect(harness.registrations.instructionProvider).toBeNull();
   expect(harness.registrations.agentTools).toEqual([]);
   expect(harness.registrations.agentConfigurationProvider).toBeNull();
-  expect(harness.registrations.hooks["message.dispatch"]).toBeNull();
   const config = await harness.behavior.resolveAgentConfiguration(
     makePluginAgentConfigurationContext(),
   );
@@ -443,7 +569,7 @@ test("an aggregate patch still surfaces foreign row changes the patch cannot cov
 test("foreign changes outside every known project are labeled by parent directory", async () => {
   const { harness } = await setup(
     [started, completed],
-    [absoluteEdit("/tmp/scratch/x.ts", "stray"), message],
+    [absoluteEdit("/scratch/x.ts", "stray"), message],
   );
   stubWorkspaces(harness);
   const result = (await harness.callRpc("latestTurn", {
@@ -485,5 +611,708 @@ test("unresolvable environments leave changes unattributed", async () => {
   expect(result).toMatchObject({ turn: { changes: [{ id: "local" }] } });
   expect(result.turn).not.toHaveProperty("workspace");
   expect(result.turn?.changes[0]).not.toHaveProperty("relPath");
+  await harness.lifecycle.dispose();
+});
+
+const snapshotPatchText =
+  "diff --git a/fmt.ts b/fmt.ts\n--- a/fmt.ts\n+++ b/fmt.ts\n@@ -1 +1 @@\n-a\n+b\n";
+const otherPatchText = "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1 @@\n-c\n+d\n";
+function snapshot(overrides: Record<string, unknown> = {}) {
+  return {
+    snapshot: {
+      root: "/ws/dotfiles",
+      path: "/ws/dotfiles",
+      patch: snapshotPatchText,
+      otherPatch: null,
+      limited: false,
+      uncovered: [],
+      attribution: { start: "s", end: "e", contested: [], owned: [] },
+      ...overrides,
+    },
+  };
+}
+
+test("temporary rows cannot consume snapshot or foreign-project preview budgets", async () => {
+  const temporary = {
+    ...absoluteEdit("/tmp/review.txt", "temporary"),
+    change: { ...edit.change, path: "/tmp/review.txt", diff: "x".repeat(1_000_001) },
+  };
+  const foreign = absoluteEdit("/ws/bb-plugins/src/a.ts", "foreign");
+  const { harness } = await setup(
+    [started, completed],
+    [temporary, foreign, message],
+    [],
+    null,
+    () => snapshot(),
+  );
+  stubWorkspaces(harness);
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { patch: snapshotPatchText, limited: false, changes: [{ id: "foreign", patch }] },
+  });
+  await harness.lifecycle.dispose();
+});
+
+test("a workspace snapshot outranks the provider patch and covers unrecorded edits", async () => {
+  const calls: ExperimentalFakeHostRpcCall[] = [];
+  const previous = {
+    ...completed,
+    id: "end-1",
+    seq: 4,
+    createdAt: 500,
+    scope: { kind: "turn" as const, turnId: "turn-1" },
+  };
+  const next = {
+    ...started,
+    id: "start-3",
+    seq: 30,
+    createdAt: 12_000,
+    scope: { kind: "turn" as const, turnId: "turn-3" },
+  };
+  const { harness } = await setup(
+    [previous, { ...started, createdAt: 1_000 }, updated, { ...completed, createdAt: 9_000 }, next],
+    [absoluteEdit("/ws/dotfiles/src/b.ts", "local"), message],
+    [],
+    null,
+    (call) => {
+      calls.push(call);
+      return snapshot({ otherPatch: otherPatchText });
+    },
+  );
+  stubWorkspaces(harness);
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { turnId: "turn-2", patch: snapshotPatchText, otherPatch: otherPatchText },
+  });
+  expect(calls).toEqual([
+    {
+      method: "turnPatch",
+      hostId: "h",
+      input: {
+        environmentPath: "/ws/dotfiles",
+        threadId: "thread-1",
+        window: {
+          prevCompletedAt: 500,
+          startedAt: 1_000,
+          completedAt: 9_000,
+          nextStartedAt: 12_000,
+        },
+        recordedPaths: ["/ws/dotfiles/src/b.ts"],
+      },
+    },
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("a turn whose only edits came from shell commands still shows them", async () => {
+  const { harness } = await setup([started, completed], [message], [], null, () => snapshot());
+  stubWorkspaces(harness);
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { turnId: "turn-2", patch: snapshotPatchText, changes: [] },
+  });
+  await harness.lifecycle.dispose();
+});
+
+test("a failing host falls back to the provider's patch", async () => {
+  const { harness } = await setup(undefined, undefined, [], null, () => {
+    throw new Error("host offline");
+  });
+  stubWorkspaces(harness);
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { patch },
+  });
+  await harness.lifecycle.dispose();
+});
+
+const command = {
+  ...message,
+  id: "command-2",
+  kind: "work",
+  workKind: "command",
+} as unknown as Row;
+
+test("others' changes alone keep a turn that ran commands, not a chat-only reply", async () => {
+  const onlyOthers = () => snapshot({ patch: "", otherPatch: otherPatchText });
+  const ran = await setup([started, completed], [command, message], [], null, onlyOthers);
+  stubWorkspaces(ran.harness);
+  expect(await ran.harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { turnId: "turn-2", patch: "", otherPatch: otherPatchText, changes: [] },
+  });
+  await ran.harness.lifecycle.dispose();
+
+  const chat = await setup([started, completed], [message], [], null, onlyOthers);
+  stubWorkspaces(chat.harness);
+  expect(await chat.harness.callRpc("latestTurn", { threadId: "thread-1" })).toEqual({
+    turn: null,
+  });
+  await chat.harness.lifecycle.dispose();
+});
+
+test("edits reported under the resolved environment path stay in this workspace", async () => {
+  const { harness } = await setup(
+    [started, completed],
+    [absoluteEdit("/private/ws/dotfiles/src/b.ts", "resolved"), message],
+    [],
+    null,
+    () => snapshot({ root: "/private/ws/dotfiles" }),
+  );
+  stubWorkspaces(harness);
+  const result = (await harness.callRpc("latestTurn", {
+    threadId: "thread-1",
+  })) as LatestTurnResult;
+  // Nothing is appended as a foreign workspace: the snapshot already covers it.
+  expect(result.turn?.changes).toEqual([]);
+  await harness.lifecycle.dispose();
+});
+
+const readyEnvironment = { status: "ready", hostId: "h", path: "/ws/dotfiles" };
+
+const commitOf = (n: number) => n.toString(16).padStart(40, "0");
+/** A fake host that logs each snapshot by number and each pin as kind@snapshot. */
+function recordingHost(fail: (n: number) => "late" | "throw" | null = () => null) {
+  const log: string[] = [];
+  let count = 0;
+  const call = async (call: ExperimentalFakeHostRpcCall) => {
+    if (call.method === "snapshot") {
+      const n = ++count;
+      const failure = fail(n);
+      if (failure === "throw") throw new Error("snapshot failed");
+      if (failure === "late") await new Promise((resolve) => setTimeout(resolve, 1_600));
+      log.push(`snapshot:${n}`);
+      return { commit: commitOf(n) };
+    }
+    if (call.method === "pin") {
+      const { captures } = call.input as { captures: { kind: string; commit: string | null }[] };
+      const pins = captures.map((c) => `${c.kind}@${c.commit ? parseInt(c.commit, 16) : "-"}`);
+      log.push(`pin:${pins.join(",")}`);
+      return {};
+    }
+    log.push(call.method);
+    return call.method === "turnPatch" ? { snapshot: null } : {};
+  };
+  return { log, call };
+}
+const lifecycleThread = { id: "thread-1", status: "idle", environmentId: "env-1" };
+async function lifecycle(fail?: (n: number) => "late" | "throw" | null) {
+  const host = recordingHost(fail);
+  const { harness } = await setup(undefined, undefined, [], null, host.call);
+  stubWorkspaces(harness);
+  const hook = harness.registrations.hooks["message.dispatch"]!;
+  const dispatch = (attempt: "start-turn" | "join-turn" = "start-turn", status = "idle") =>
+    hook(
+      makeMessageDispatchHookContext({
+        attempt,
+        environment: readyEnvironment as never,
+        thread: { ...lifecycleThread, status } as never,
+        input: { blocks: [], text: "go" },
+      }),
+    );
+  const thread = lifecycleThread as never;
+  const emit = (event: "thread.active" | "thread.idle" | "thread.failed" | "thread.deleted") =>
+    harness.behavior.emitThreadEvent(event, { thread, lastAssistantText: null, error: null });
+  return { harness, log: host.log, dispatch, emit };
+}
+
+test("a turn's baseline is the snapshot its dispatch waited for", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  expect(await dispatch()).toEqual({ action: "proceed" });
+  expect(await dispatch("join-turn")).toEqual({ action: "proceed" });
+  await emit("thread.active");
+  expect(await dispatch("start-turn", "active")).toEqual({ action: "proceed" }); // Queues as busy.
+  await emit("thread.idle");
+  await emit("thread.deleted");
+  expect(log).toEqual([
+    "snapshot:1",
+    "snapshot:2",
+    "pin:start@1,open@2",
+    "snapshot:3",
+    "pin:end@3",
+    "turnPatch", // Attributed as soon as it ends, while overlapping captures exist.
+    "forget",
+  ]);
+  expect(harness.realtimeSignals).toHaveLength(3);
+  await harness.lifecycle.dispose();
+});
+
+test("a baseline that missed the dispatch budget is never pinned", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle((n) => (n === 1 ? "late" : null));
+  const began = Date.now();
+  expect(await dispatch()).toEqual({ action: "proceed" });
+  expect(Date.now() - began).toBeLessThan(1_600);
+  await emit("thread.active");
+  expect(log).toEqual(["snapshot:1", "snapshot:2", "pin:open@2"]);
+  await harness.lifecycle.dispose();
+});
+
+const row = (id: string, text: string) =>
+  ({ id, threadId: "thread-1", content: [{ type: "text", text }] }) as never;
+
+test("a baseline whose message was queued instead is never pinned", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  await dispatch();
+  await harness.behavior.emitThreadEvent("message.queued", { entry: row("row-1", "go") });
+  await emit("thread.active");
+  expect(log).toEqual(["snapshot:1", "snapshot:2", "pin:open@2"]);
+  await harness.lifecycle.dispose();
+});
+
+test("an unrelated follow-up queued before the turn opens keeps its baseline", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  await dispatch();
+  await harness.behavior.emitThreadEvent("message.queued", { entry: row("row-2", "later") });
+  await emit("thread.active");
+  expect(log).toEqual(["snapshot:1", "snapshot:2", "pin:start@1,open@2"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a Send-now that skipped the hook never claims another attempt's baseline", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  await dispatch(); // Then rejected by a later plugin: no event says so.
+  await harness.behavior.emitThreadEvent("message.dispatched", { entry: row("row-3", "now") });
+  await emit("thread.active");
+  expect(log).toEqual(["snapshot:1", "snapshot:2", "pin:open@2"]);
+  await harness.lifecycle.dispose();
+});
+
+test("overlapping passes before a warm turn opens drop both baselines", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  await dispatch();
+  await dispatch(); // bb released the lock; the first turn has not opened yet.
+  await emit("thread.active");
+  expect(log).toEqual(["snapshot:1", "snapshot:2", "snapshot:3", "pin:open@3"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a pass beginning the same millisecond its thread opens never ends that turn", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  const now = spyOn(Date, "now").mockReturnValue(1_000);
+  await dispatch();
+  const opening = emit("thread.active"); // Queued ahead of the second pass's snapshot.
+  await dispatch();
+  await opening;
+  now.mockRestore();
+  await emit("thread.idle");
+  expect(log.filter((entry) => entry.startsWith("pin"))).toEqual([
+    "pin:start@1,open@2",
+    "pin:end@4",
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("a failed open snapshot still marks the thread as running", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle((n) => (n === 2 ? "throw" : null));
+  await dispatch();
+  await emit("thread.active");
+  expect(log).toEqual(["snapshot:1", "pin:start@1,run@-"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a dispatch that beats thread.idle pins its baseline as the previous turn's end", async () => {
+  const { harness, log, dispatch, emit } = await lifecycle();
+  await emit("thread.active");
+  await new Promise((resolve) => setTimeout(resolve, 5)); // The turn runs.
+  await dispatch();
+  await emit("thread.idle");
+  await emit("thread.active");
+  expect(log).toEqual([
+    "snapshot:1",
+    "pin:open@1",
+    "snapshot:2",
+    "pin:end@2",
+    "turnPatch",
+    "snapshot:3",
+    "pin:start@2,open@3",
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("a failed end snapshot still marks the thread as finished", async () => {
+  const { harness, log, emit } = await lifecycle((n) => (n === 2 ? "throw" : null));
+  await emit("thread.active");
+  await emit("thread.failed");
+  expect(log).toEqual(["snapshot:1", "pin:open@1", "pin:stop@-", "turnPatch"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a thread's snapshot operations run in arrival order, environment lookups included", async () => {
+  const { harness, log, emit } = await lifecycle();
+  let slow = true;
+  harness.sdk.stub("environments.get", async () => {
+    if (slow) await new Promise((resolve) => setTimeout(resolve, 20));
+    slow = false;
+    return { id: "env-1", hostId: "h", path: "/ws/dotfiles", name: null };
+  });
+  await Promise.all([emit("thread.active"), emit("thread.deleted")]);
+  expect(log).toEqual(["snapshot:1", "pin:open@1", "forget"]);
+  await harness.lifecycle.dispose();
+});
+
+/**
+ * A host that can go offline, logging each call it takes as `host method
+ * thread kinds`. It refuses calls logged as a `refused` line. While `timeout`
+ * is set the host is asleep: bb still lists it as connected, and each call
+ * fails once `timeout` moves the test's clock past bb's host-call timeout.
+ */
+async function sleepyHost() {
+  const state = {
+    offline: false,
+    timeout: null as (() => void) | null,
+    refused: new Set<string>(),
+  };
+  const gates = new Map<string, Promise<void>>();
+  const log: string[] = [];
+  const { harness, bb } = await setup(undefined, undefined, [], null, async (call) => {
+    if (state.offline) throw new Error("Host is not connected");
+    const input = call.input as { threadId?: string; captures?: { kind: string }[] };
+    const kinds = input.captures?.map((capture) => capture.kind).join(",");
+    const line = [call.hostId, call.method, input.threadId, kinds].filter(Boolean).join(" ");
+    log.push(line);
+    await gates.get(line);
+    if (state.timeout) {
+      state.timeout();
+      throw new Error("Host plugin call timed out");
+    }
+    if (state.refused.has(line)) throw new Error("git update-ref failed");
+    if (call.method === "snapshot") return { commit: commitOf(log.length) };
+    return call.method === "turnPatch" ? { snapshot: null } : {};
+  });
+  stubWorkspaces(harness);
+  harness.sdk.stub("hosts.get", async () => ({
+    id: "h",
+    status: state.offline ? "disconnected" : "connected",
+  }));
+  const emit = (event: "thread.active" | "thread.failed" | "thread.deleted", id: string) =>
+    harness.behavior.emitThreadEvent(event, {
+      thread: { ...lifecycleThread, id },
+      lastAssistantText: null,
+      error: null,
+    } as never);
+  /** Hold the calls logged as `line` until the returned function runs. */
+  const hold = (line: string) => {
+    let open = () => {};
+    gates.set(line, new Promise<void>((resolve) => (open = resolve)));
+    return open;
+  };
+  return { harness, bb, state, log, emit, hold };
+}
+
+test("a turn end its offline host missed lands before that host's next pin", async () => {
+  const { harness, state, log, emit } = await sleepyHost();
+  await emit("thread.active", "thread-1");
+  state.offline = true; // The machine sleeps mid-turn, and the turn fails.
+  await emit("thread.failed", "thread-1");
+  state.offline = false;
+  await emit("thread.active", "thread-2");
+  expect(log).toEqual([
+    "h snapshot",
+    "h pin thread-1 open",
+    "h snapshot",
+    // thread-1 no longer reads as mid-turn to thread-2's checkout.
+    "h pin thread-1 stop",
+    "h pin thread-2 open",
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("forgetting a thread on an offline host clears its records now and the host's later", async () => {
+  const { harness, bb, state, log, emit } = await sleepyHost();
+  await bb.storage.kv.set("attribution:thread-1:000000000000001", {
+    start: "s",
+    end: "e",
+    contested: [],
+    owned: [],
+  });
+  state.offline = true;
+  await emit("thread.deleted", "thread-1");
+  expect(await bb.storage.kv.list("attribution:thread-1:")).toEqual([]);
+  expect(log).toEqual([]);
+
+  state.offline = false;
+  await harness.behavior.runSchedule("settle-owed");
+  await harness.behavior.runSchedule("settle-owed");
+  expect(log).toEqual(["h forget thread-1"]);
+  await harness.lifecycle.dispose();
+});
+
+/** Whether `condition` holds within `ms`. Polls, so a test never waits past it. */
+async function until(condition: () => boolean, ms = 1_000): Promise<boolean> {
+  for (const end = Date.now() + ms; !condition() && Date.now() < end;) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return condition();
+}
+
+/** Date.now, moved on by `pass(ms)` the way a call that waits out its timeout moves it. */
+function lateClock() {
+  const realNow = Date.now;
+  let late = 0;
+  const now = spyOn(Date, "now").mockImplementation(() => realNow() + late);
+  return { pass: (ms: number) => void (late += ms), restore: () => now.mockRestore() };
+}
+/** bb's host-call timeout plus its transport grace. */
+const HOST_CALL_TIMEOUT_MS = 36_000;
+
+test("a host that times out costs one attempt and never holds up a healthy host", async () => {
+  const connected = new Set<string>();
+  // Asleep, the mac is still listed as connected, so each call waits out its timeout.
+  let asleep = false;
+  let wake = () => {};
+  const awake = new Promise<void>((resolve) => (wake = resolve));
+  const clock = lateClock();
+  const log: string[] = [];
+  const { harness } = await setup(undefined, undefined, [], null, async (call) => {
+    log.push(`${call.hostId} ${call.method} ${(call.input as { threadId: string }).threadId}`);
+    if (!connected.has(call.hostId)) throw new Error("Host is not connected");
+    if (asleep && call.hostId === "mac") {
+      await awake;
+      clock.pass(HOST_CALL_TIMEOUT_MS);
+      throw new Error("Host plugin call timed out");
+    }
+    return {};
+  });
+  harness.sdk.stub("environments.get", async ({ environmentId }) => ({
+    id: environmentId,
+    hostId: environmentId === "env-server" ? "server" : "mac",
+    path: "/ws/dotfiles",
+    name: null,
+  }));
+  harness.sdk.stub("hosts.get", async ({ hostId }) => ({
+    id: hostId,
+    status: connected.has(hostId) ? "connected" : "disconnected",
+  }));
+  const forget = (id: string, environmentId: string) =>
+    harness.behavior.emitThreadEvent("thread.deleted", {
+      thread: { ...lifecycleThread, id, environmentId },
+      lastAssistantText: null,
+      error: null,
+    } as never);
+  for (const id of ["m1", "m2", "m3", "m4"]) await forget(id, "env-mac");
+  await forget("s1", "env-server");
+
+  connected.add("server").add("mac");
+  asleep = true;
+  log.length = 0;
+  const settling = harness.behavior.runSchedule("settle-owed");
+  const reached = await until(() => log.includes("server forget s1"));
+  expect({ reached, log: [...log].sort() }).toEqual({
+    reached: true,
+    log: ["mac forget m1", "server forget s1"],
+  });
+  const later = forget("m5", "env-mac"); // Arrives while the replay waits on the mac.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  wake();
+  await Promise.all([settling, later]);
+  clock.restore();
+  // The mac's other debts were never tried, and m5 was not sent either: all five wait for it.
+  expect(log.sort()).toEqual(["mac forget m1", "server forget s1"]);
+
+  asleep = false;
+  log.length = 0;
+  await harness.behavior.runSchedule("settle-owed");
+  expect(log).toEqual([
+    "mac forget m1",
+    "mac forget m2",
+    "mac forget m3",
+    "mac forget m4",
+    "mac forget m5",
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("a pin and a turn read behind a replay that timed out wait out no second timeout", async () => {
+  const { harness, state, log, emit } = await sleepyHost();
+  state.offline = true;
+  await emit("thread.deleted", "thread-1"); // Its forget is owed.
+  state.offline = false;
+  const clock = lateClock();
+  state.timeout = () => clock.pass(HOST_CALL_TIMEOUT_MS);
+  await emit("thread.failed", "thread-2");
+  clock.restore();
+  // Each replay tried the owed forget once. thread-2's stop and turn read never went out.
+  expect(log).toEqual(["h snapshot", "h forget thread-1", "h forget thread-1"]);
+
+  state.timeout = null;
+  log.length = 0;
+  await harness.behavior.runSchedule("settle-owed");
+  expect(log).toEqual(["h forget thread-1", "h pin thread-2 stop"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a delivery while its host replays what it is owed waits for that replay, not another", async () => {
+  const { harness, state, log, emit, hold } = await sleepyHost();
+  await emit("thread.active", "thread-1");
+  state.offline = true;
+  await emit("thread.failed", "thread-1"); // Its stop is owed.
+  state.offline = false;
+  const finish = hold("h pin thread-1 stop");
+  const second = emit("thread.active", "thread-2");
+  expect(await until(() => log.includes("h pin thread-1 stop"))).toBe(true);
+  const third = emit("thread.active", "thread-3");
+  // Long enough for a second replay to start, if one would.
+  await until(() => log.filter((line) => line === "h pin thread-1 stop").length > 1, 100);
+  finish();
+  await Promise.all([second, third]);
+  expect(log).toEqual([
+    "h snapshot",
+    "h pin thread-1 open",
+    "h snapshot",
+    "h pin thread-1 stop",
+    "h snapshot",
+    "h pin thread-2 open",
+    "h pin thread-3 open",
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("a delivery that arrives mid-replay lands after every debt owed when it arrived", async () => {
+  const { harness, state, log, emit, hold } = await sleepyHost();
+  // thread-a's forget is on its way, and the host refuses it once a replay is under way.
+  const refuseA = hold("h forget thread-a");
+  state.refused.add("h forget thread-a");
+  const a = emit("thread.deleted", "thread-a");
+  expect(await until(() => log.includes("h forget thread-a"))).toBe(true);
+  state.offline = true;
+  await emit("thread.deleted", "thread-old"); // Its forget is owed.
+  state.offline = false;
+  const finishOld = hold("h forget thread-old");
+  const settling = harness.behavior.runSchedule("settle-owed");
+  expect(await until(() => log.includes("h forget thread-old"))).toBe(true);
+  refuseA();
+  await a; // thread-a's forget is owed too, after the replay listed what it would send.
+  state.refused.clear();
+  const b = emit("thread.deleted", "thread-b");
+  await new Promise((resolve) => setTimeout(resolve, 50)); // thread-b waits on the replay.
+  finishOld();
+  await Promise.all([b, settling]);
+  expect(log).toEqual([
+    "h forget thread-a",
+    "h forget thread-old",
+    "h forget thread-a",
+    "h forget thread-b",
+  ]);
+  await harness.lifecycle.dispose();
+});
+
+test("a debt its connected host refuses stays owed without holding up later ones", async () => {
+  const { harness, state, log, emit } = await sleepyHost();
+  state.offline = true;
+  await emit("thread.deleted", "thread-1");
+  await emit("thread.deleted", "thread-2");
+  state.offline = false;
+  state.refused.add("h forget thread-1");
+  await harness.behavior.runSchedule("settle-owed");
+  expect(log).toEqual(["h forget thread-1", "h forget thread-2"]);
+  state.refused.clear();
+  await harness.behavior.runSchedule("settle-owed");
+  expect(log).toEqual(["h forget thread-1", "h forget thread-2", "h forget thread-1"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a host away for long is owed only its newest hundred debts", async () => {
+  const { harness, state, log, emit } = await sleepyHost();
+  const id = (n: number) => `t-${String(n).padStart(3, "0")}`;
+  state.offline = true;
+  for (let n = 1; n <= 101; n++) await emit("thread.deleted", id(n));
+  state.offline = false;
+  await harness.behavior.runSchedule("settle-owed");
+  expect(log).toEqual(Array.from({ length: 100 }, (_, n) => `h forget ${id(n + 2)}`));
+  await harness.lifecycle.dispose();
+});
+
+test("an empty snapshot hides reverted edits but keeps edits it cannot see", async () => {
+  const { harness } = await setup(
+    [started, completed],
+    [
+      absoluteEdit("/ws/dotfiles/src/b.ts", "reverted"),
+      absoluteEdit("/ws/dotfiles/vendor/lib/x.ts", "submodule"),
+      absoluteEdit("/ws/bb-plugins/src/a.ts", "foreign"),
+      message,
+    ],
+    [],
+    null,
+    () => snapshot({ patch: "", uncovered: ["vendor/lib"] }),
+  );
+  stubWorkspaces(harness);
+  const result = (await harness.callRpc("latestTurn", {
+    threadId: "thread-1",
+  })) as LatestTurnResult;
+  expect(result.turn?.changes.map((change) => change.id)).toEqual(["submodule", "foreign"]);
+  await harness.lifecycle.dispose();
+});
+
+test("a remembered attribution, even an empty one, is sent back so a card never reshuffles", async () => {
+  const inputs: unknown[] = [];
+  const attribution = { start: "s", end: "e", contested: [], owned: [] };
+  const { harness } = await setup([started, completed], [message], [], null, (call) => {
+    inputs.push((call.input as { known?: unknown }).known);
+    return snapshot({ otherPatch: otherPatchText, attribution });
+  });
+  stubWorkspaces(harness);
+  await harness.callRpc("latestTurn", { threadId: "thread-1" });
+  await harness.callRpc("latestTurn", { threadId: "thread-1" });
+  expect(inputs).toEqual([undefined, attribution]);
+  await harness.lifecycle.dispose();
+});
+
+test("a remembered attribution in an older shape is converted, keeping its evidence", async () => {
+  const inputs: unknown[] = [];
+  const { harness, bb } = await setup([started, completed], [message], [], null, (call) => {
+    inputs.push((call.input as { known?: unknown }).known);
+    return snapshot({ otherPatch: otherPatchText });
+  });
+  await bb.storage.kv.set("attribution:thread-1:000000000000001", {
+    start: "s",
+    end: "e",
+    foreign: ["vendor.txt"],
+  });
+  stubWorkspaces(harness);
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { otherPatch: otherPatchText },
+  });
+  expect(inputs).toEqual([{ start: "s", end: "e", contested: ["vendor.txt"], owned: [] }]);
+  await harness.lifecycle.dispose();
+});
+
+test("an empty snapshot hides reverted edits even when the environment is unavailable", async () => {
+  const { harness } = await setup(
+    [started, completed],
+    [absoluteEdit("/ws/dotfiles/src/b.ts", "reverted"), command, message],
+    [],
+    null,
+    () => snapshot({ patch: "" }),
+  );
+  stubWorkspaces(harness);
+  let lookups = 0;
+  harness.sdk.stub("threads.get", async () => {
+    // The snapshot target resolves; the attribution context does not.
+    if (lookups++ > 0) throw new Error("thread unavailable");
+    return { environmentId: "env-1", projectId: "proj_dot" } as never;
+  });
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toEqual({ turn: null });
+  await harness.lifecycle.dispose();
+});
+
+test("a turn whose edits were all reverted keeps the previous turn's preview", async () => {
+  const scope = { kind: "turn" as const, turnId: "turn-1" };
+  const earlier: Event[] = [
+    { ...started, id: "start-1", seq: 2, createdAt: 100, scope },
+    { ...completed, id: "end-1", seq: 8, createdAt: 200, scope },
+  ];
+  const reverted = [
+    absoluteEdit("/ws/dotfiles/src/b.ts", "edit"),
+    absoluteEdit("/ws/dotfiles/src/b.ts", "undo"),
+  ];
+  const { harness } = await setup(
+    [...earlier, { ...started, createdAt: 300 }, { ...completed, createdAt: 400 }],
+    [...reverted, message],
+    [],
+    null,
+    (call) => {
+      const { window } = call.input as { window: { startedAt: number } };
+      return snapshot(window.startedAt === 300 ? { patch: "" } : {});
+    },
+  );
+  stubWorkspaces(harness);
+  expect(await harness.callRpc("latestTurn", { threadId: "thread-1" })).toMatchObject({
+    turn: { turnId: "turn-1", patch: snapshotPatchText },
+  });
   await harness.lifecycle.dispose();
 });

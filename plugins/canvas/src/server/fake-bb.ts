@@ -1,5 +1,6 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { stubHostContext } from "@bb-kit/core/testing";
+import type { BbPluginApi, PluginCliContext, PluginCliExecutionResult } from "@get-bb/plugin-sdk";
+import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import plugin from "./server.ts";
 
 export interface FakeFile {
   readonly content: string;
@@ -24,6 +25,12 @@ export interface FakeBbOptions {
   >;
   readonly threads?: Readonly<Record<string, { hostId: string; storageRootPath: string }>>;
   readonly files?: Readonly<Record<string, FakeFile | Error>>;
+  /**
+   * What the canvas host entry reports for `stamp`, by host and path
+   * (`fileKeyOf(hostId, undefined, path)`). Mutable, so a test can play a
+   * write on the host. Omitted: no host entry, and every stamp call fails.
+   */
+  readonly stamps?: Map<string, string | null>;
   /** Runs before each write lands, so a test can play a concurrent writer. */
   readonly beforeWrite?: (args: FakeWriteArgs, store: FakeStore) => void;
 }
@@ -33,6 +40,7 @@ export interface FakeCalls {
   readonly storageLocation: { threadId: string }[];
   readonly filesRead: { hostId?: string; path: string; rootPath?: string }[];
   readonly filesWrite: FakeWriteArgs[];
+  readonly hostCalls: { hostId: string; method: string; input: unknown }[];
   readonly published: { channel: string; payload: unknown }[];
 }
 
@@ -62,6 +70,7 @@ export function fakeBb(options: FakeBbOptions): FakeBb {
     storageLocation: [],
     filesRead: [],
     filesWrite: [],
+    hostCalls: [],
     published: [],
   };
   const store: FakeStore = new Map(Object.entries(options.files ?? {}));
@@ -116,8 +125,27 @@ export function fakeBb(options: FakeBbOptions): FakeBb {
       },
     },
   };
+  const kv = new Map<string, unknown>();
+  const hosts = {
+    experimental_client: () => ({
+      async call(method: string, input: { path: string }, { hostId }: { hostId: string }) {
+        calls.hostCalls.push({ hostId, method, input });
+        if (options.stamps === undefined) throw new Error("plugin host entry is not running");
+        return { stamp: options.stamps.get(fileKey({ hostId, path: input.path })) ?? null };
+      },
+    }),
+  };
   const bb = {
     sdk,
+    hosts,
+    storage: {
+      kv: {
+        get: async (key: string) => kv.get(key),
+        set: async (key: string, value: unknown) => void kv.set(key, value),
+        delete: async (key: string) => void kv.delete(key),
+        list: async (prefix = "") => [...kv.keys()].filter((key) => key.startsWith(prefix)),
+      },
+    },
     realtime: {
       publish(channel: string, payload: unknown) {
         calls.published.push({ channel, payload });
@@ -125,6 +153,24 @@ export function fakeBb(options: FakeBbOptions): FakeBb {
     },
     log: { info() {}, warn() {}, error() {}, debug() {} },
   } as unknown as BbPluginApi;
-  const ctx = stubHostContext({ bb });
-  return Object.assign(ctx.bb, { calls, store }) as FakeBb;
+  return Object.assign(bb, { calls, store }) as FakeBb;
+}
+
+/**
+ * Run `bb canvas <argv>` through the real plugin in the SDK's fake host,
+ * backed by `bb`'s files, threads, and environments, so the SDK parses
+ * argv, renders help, and reports usage errors.
+ */
+export async function runCanvasCli(
+  bb: FakeBb,
+  argv: string[],
+  ctx?: PluginCliContext,
+): Promise<PluginCliExecutionResult> {
+  const { files, threads, environments } = bb.sdk;
+  const host = createFakePluginHost({
+    pluginId: "canvas",
+    sdk: { files, threads, environments },
+  });
+  await plugin(host.bb);
+  return host.harness.runCli(argv, ctx);
 }

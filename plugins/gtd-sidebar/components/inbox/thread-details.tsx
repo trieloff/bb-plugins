@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactElement } from "react";
+import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { ProviderGlyph, type ProviderGlyphInfo } from "./provider-glyph";
@@ -7,18 +7,32 @@ import { cn } from "../../lib/utils";
 import { MachineGlobe } from "./machine-globe";
 import { useRemoteMachine } from "./machine-appearance";
 
+// One observer for every label. It runs after layout, reads each label once,
+// then writes only the flags that changed, so a list mounting a thousand rows
+// never forces a layout per row.
+let overflowObserver: ResizeObserver | null = null;
+function observeOverflow(element: HTMLElement) {
+  overflowObserver ??= new ResizeObserver((entries) => {
+    const measured = entries.map(({ target }) => ({
+      target: target as HTMLElement,
+      overflowing: String(target.scrollWidth > target.clientWidth + 1),
+    }));
+    for (const { target, overflowing } of measured) {
+      if (target.dataset.overflowing !== overflowing) target.dataset.overflowing = overflowing;
+    }
+  });
+  overflowObserver.observe(element);
+  return () => overflowObserver?.unobserve(element);
+}
+
 export function FadingText({ text, className }: { text: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
+  // Re-observing on a text change queues a fresh measurement: a longer title
+  // can overflow without changing the label's box.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const update = () => {
-      element.dataset.overflowing = String(element.scrollWidth > element.clientWidth + 1);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
+    return observeOverflow(element);
   }, [text]);
   return (
     <span ref={ref} className={cn("gtd-fading-text", className)}>
@@ -50,6 +64,7 @@ export function ThreadDetails({
   provider,
   relation,
   enabled,
+  when = "always",
   children,
 }: {
   thread: PluginSidebarThread;
@@ -58,14 +73,50 @@ export function ThreadDetails({
   provider?: ProviderGlyphInfo;
   relation?: string;
   enabled: boolean;
+  /**
+   * "overflow" opens only while the row's title is clipped: a two-line card
+   * already shows everything else, so a short title gets no tooltip at all.
+   */
+  when?: "always" | "overflow";
   children: ReactElement;
 }) {
   const portalScope = usePortalScopeProps();
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   if (!enabled) return children;
+  const titleClipped = () => {
+    const title = triggerRef.current
+      ?.closest(".gtd-thread-row")
+      ?.querySelector<HTMLElement>(".gtd-thread-title .gtd-fading-text");
+    return title != null && title.scrollWidth > title.clientWidth + 1;
+  };
   return (
-    <Tooltip.Provider delayDuration={550}>
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+    // No skip-delay: a provider per row only ever skipped for this same row,
+    // and an open refused below never reports a close, so the provider would
+    // open every later hover instantly, even after the title starts to clip.
+    <Tooltip.Provider delayDuration={550} skipDelayDuration={0}>
+      <Tooltip.Root
+        open={open}
+        // Measured at open time, so no row subscribes to its own overflow.
+        // Not read from FadingText's flag: keyboard focus shows Snooze and
+        // Settle, which narrows the title before the observer reports.
+        onOpenChange={(next) => setOpen(next && (when === "always" || titleClipped()))}
+      >
+        {/* asChild keeps the anchor a direct child of the row, which the
+            row's focus-visible selectors in app.css depend on. Radix types
+            the ref as a button; it lands on that anchor. */}
+        <Tooltip.Trigger
+          asChild
+          ref={triggerRef}
+          // Focus opens the details only where it draws the focus ring. A menu
+          // handing focus back after a mouse pick would otherwise pin them open
+          // beside the row until the next click.
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(":focus-visible")) event.preventDefault();
+          }}
+        >
+          {children}
+        </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content
             {...portalScope}

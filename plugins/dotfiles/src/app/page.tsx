@@ -2,14 +2,14 @@ import type { ReactElement } from "react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { FileView } from "./file-view.tsx";
-import { DotfilesBoundary } from "./query-client.ts";
-import { rpc } from "./rpc.ts";
+import { PluginQueryBoundary } from "@bb-kit/core/rpc/query";
+import { usePanelOverview } from "./host-picker.tsx";
 import { useDotfilesRoute } from "./route.ts";
 import { errorMessage } from "./tasks.ts";
 
 function DotfilesPageBody(props: PluginNavPanelProps): ReactElement {
   const nav = useDotfilesRoute(props.subPath);
-  const overview = rpc.overview.useQuery();
+  const overview = usePanelOverview();
 
   if (overview.isPending) {
     return <div className="h-full" aria-busy="true" aria-label="Loading dotfiles" />;
@@ -26,14 +26,21 @@ function DotfilesPageBody(props: PluginNavPanelProps): ReactElement {
       </div>
     );
   }
+  if (overview.data.state === "offline") {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+        {overview.data.host.name} is not connected.
+      </div>
+    );
+  }
   if (!overview.data.repoExists) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <p className="text-sm text-foreground">
-          No dotfiles repository at {overview.data.repoPath}.
+          No dotfiles repository at {overview.data.repoPath} on {overview.data.host.name}.
         </p>
         <p className="text-sm text-muted-foreground">
-          Configure repoPath in the Dotfiles plugin settings.
+          Pick another machine in the Files tab, or set repoPath in the Dotfiles plugin settings.
         </p>
       </div>
     );
@@ -45,34 +52,43 @@ function DotfilesPageBody(props: PluginNavPanelProps): ReactElement {
       </div>
     );
   }
-  return <FileView key={nav.path} path={nav.path} />;
+  const { host: machine } = overview.data;
+  return <FileView key={`${machine.id}:${nav.path}`} host={machine} path={nav.path} />;
 }
 
 export function DotfilesPage(props: PluginNavPanelProps): ReactElement {
   return (
-    <DotfilesBoundary>
+    <PluginQueryBoundary>
       <div className="flex h-full min-h-0 flex-col">
         <DotfilesPageBody {...props} />
       </div>
-    </DotfilesBoundary>
+    </PluginQueryBoundary>
   );
 }
 
 function RepoStatusBadgeBody(): ReactElement | null {
-  const overview = rpc.overview.useQuery();
+  const overview = usePanelOverview();
   if (overview.data === undefined) return null;
+  if (overview.data.state === "offline") {
+    return (
+      <span className="truncate text-xs text-muted-foreground">
+        {overview.data.host.name} · offline
+      </span>
+    );
+  }
   const dirtyCount = overview.data.gitEntries.length;
   return (
     <span className="truncate text-xs text-muted-foreground">
-      {overview.data.branch} · {dirtyCount === 0 ? "clean" : `${dirtyCount} dirty`}
+      {overview.data.host.name} · {overview.data.branch} ·{" "}
+      {dirtyCount === 0 ? "clean" : `${dirtyCount} dirty`}
     </span>
   );
 }
 
 export function RepoStatusBadge(_props: PluginNavPanelProps): ReactElement {
   return (
-    <DotfilesBoundary>
+    <PluginQueryBoundary>
       <RepoStatusBadgeBody />
-    </DotfilesBoundary>
+    </PluginQueryBoundary>
   );
 }

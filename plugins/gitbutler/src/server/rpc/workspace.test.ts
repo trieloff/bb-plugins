@@ -5,19 +5,20 @@ import { workspace } from "./workspace.ts";
 const ready = {
   state: "ready" as const,
   reason: null,
+  repositoryKey: ".",
   repoName: "bb-plugins",
   unassignedChanges: [],
   stacks: [],
   base: null,
   upstream: null,
-  revision: "r1",
+  conflictedFiles: [],
 };
 
-test("forwards the environment path and host to the host entry", async () => {
+test("forwards the environment path and host to the host entry, and names the environment", async () => {
   const { ctx, calls } = harness({ result: ready });
   const result = await workspace.execute(ctx, { threadId: "t1" });
 
-  expect(result).toEqual(ready);
+  expect(result).toEqual({ ...ready, environmentId: "env-1" });
   expect(calls).toEqual([
     { method: "workspace", input: { environmentPath: "/work" }, options: { hostId: "host-1" } },
   ]);
@@ -33,7 +34,8 @@ test("forwards a chosen repository and omits the key when there is none", async 
 
   const unchosen = harness({ result: ready });
   await workspace.execute(unchosen.ctx, { threadId: "t1" });
-  // The host input is `.strict()`, so an explicit undefined would be rejected.
+  // bb's test host rejects an undefined value and the real one drops it, so
+  // the key is left out rather than sent as undefined.
   expect(Object.keys(unchosen.calls[0]?.input as object)).toEqual(["environmentPath"]);
 });
 
@@ -43,6 +45,8 @@ test("explains a thread with no environment instead of calling the host", async 
 
   expect(result.state).toBe("noEnvironment");
   expect(result.reason).toBe("This thread has no project environment.");
+  expect(result.environmentId).toBeNull();
+  expect(result.repositoryKey).toBeNull();
   expect(calls).toEqual([]);
 });
 
@@ -54,4 +58,36 @@ test("explains an environment that is not ready yet", async () => {
 
   expect(result.reason).toBe("This thread's environment is starting.");
   expect(calls).toEqual([]);
+});
+
+test("names a disconnected host as an error answer instead of throwing", async () => {
+  const { ctx } = harness({
+    error: new Error("Host is not connected"),
+    host: { name: "Personal Mac", status: "disconnected" },
+  });
+  const result = await workspace.execute(ctx, { threadId: "t1" });
+
+  expect(result).toEqual({
+    state: "error",
+    reason: "Personal Mac is not connected. The workspace loads when it reconnects.",
+    environmentId: "env-1",
+    repositoryKey: null,
+    repoName: "",
+    unassignedChanges: [],
+    stacks: [],
+    base: null,
+    upstream: null,
+    conflictedFiles: [],
+  });
+});
+
+test("rethrows a failure on a host that is still connected", async () => {
+  const { ctx } = harness({
+    error: new Error("but exited with code 1"),
+    host: { name: "Personal Mac", status: "connected" },
+  });
+
+  await expect(workspace.execute(ctx, { threadId: "t1" })).rejects.toThrow(
+    "but exited with code 1",
+  );
 });

@@ -1,9 +1,8 @@
-import { argv, CommandError, defineCommand } from "@bb-kit/core/command";
-import { isAbsolute, resolve } from "node:path";
-import { z } from "zod";
+import { defineCommand, PluginCliError } from "@bb-kit/core/command";
 import { collectDiagnostics, type Diagnostic } from "../../shared/document.ts";
 import { defaultStyle } from "../../shared/styles.ts";
 import { documentStats, type DocumentStats } from "../../shared/parse.ts";
+import { cliSource, hostOption } from "../lib/cli-source.ts";
 import { render } from "../rpc/render.ts";
 
 interface CheckReport {
@@ -52,25 +51,23 @@ function textOf(path: string, report: CheckReport): string {
 
 export const check = defineCommand({
   summary: "Parse a .canvas.mdx file and report every diagnostic",
-  input: z.object({
-    path: argv.argument(z.string().min(1), {
-      description: "Canvas file, absolute or relative to the cwd",
-    }),
-    json: argv.flag(z.boolean().optional(), {
-      description: "Print {ok, diagnostics, stats} as JSON",
-    }),
-  }),
-  async execute(ctx, { path, json }) {
-    const absolute = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+  positionals: [
+    { name: "path", description: "Canvas file, absolute or relative to the cwd", required: true },
+  ],
+  options: {
+    json: { type: "boolean", description: "Print {ok, diagnostics, stats} as JSON" },
+    host: hostOption,
+  },
+  async execute(ctx, { positionals: { path }, options: { json, host } }) {
     const rendered = await render.execute(ctx, {
-      source: { kind: "host", hostId: null, path: absolute },
+      source: await cliSource(ctx, path, host),
       knownSha256: null,
     });
     if (rendered.status === "unreadable") {
-      throw new CommandError(`${path}: ${rendered.reason}: ${rendered.detail}`, { exitCode: 2 });
+      throw new PluginCliError(`${path}: ${rendered.reason}: ${rendered.detail}`, { exitCode: 2 });
     }
     if (rendered.status === "unchanged") {
-      throw new CommandError(`${path}: unexpected unchanged result`, { exitCode: 2 });
+      throw new PluginCliError(`${path}: unexpected unchanged result`, { exitCode: 2 });
     }
     const report =
       rendered.status === "unparseable"
@@ -81,7 +78,7 @@ export const check = defineCommand({
             stateIds: [],
           })
         : reportOf(collectDiagnostics(rendered.document), documentStats(rendered.document));
-    const stdout = json === true ? `${JSON.stringify(report)}\n` : textOf(path, report);
+    const stdout = json ? `${JSON.stringify(report)}\n` : textOf(path, report);
     return { exitCode: report.ok ? 0 : 1, stdout };
   },
 });

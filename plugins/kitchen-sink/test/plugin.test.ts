@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
-import plugin, { INLINE_VIS_INSTRUCTIONS, SMART_EMBED_INSTRUCTIONS } from "../src/server/server.ts";
+import plugin from "../src/server/server.ts";
+import { files } from "../src/server/lib/instructions.ts";
+
+const SMART_EMBED_INSTRUCTIONS = files.read("smart-embeds");
 import { mentionProviders } from "../src/server/mentions.ts";
 import { WORKSPACE_CHANGED_CHANNEL } from "../src/shared/contract.ts";
 
@@ -34,18 +37,6 @@ test("the plugin loads against the fake host and registers every mention provide
   );
 });
 
-test("a fresh install disables bb's built-in inline-vis, which claims the same directive", async () => {
-  const { bb, harness } = createFakePluginHost({
-    pluginId: "kitchen-sink",
-    sdk: { plugins: { disable: () => ({ ok: true }) } },
-  });
-  await plugin(bb);
-  expect(harness.sdk.callsTo("plugins.disable")).toEqual([]);
-
-  await harness.lifecycle.install();
-  expect(harness.sdk.callsTo("plugins.disable")).toEqual([[{ pluginId: "inline-vis" }]]);
-});
-
 test("mention provider ids are unique and free of the wire separator", () => {
   const ids = mentionProviders.map((provider) => provider.id);
   expect(new Set(ids).size).toBe(ids.length);
@@ -60,15 +51,7 @@ test("the manifest declares the skills root that holds every composer command", 
 
 test("each skill directory carries a SKILL.md whose frontmatter name matches the directory", async () => {
   const directories = (await readdir(skillsRoot)).sort();
-  expect(directories).toEqual([
-    "inline-vis",
-    "ship-it",
-    "smart-embeds",
-    "subthread",
-    "sync",
-    "test-remotely",
-    "whiteboard",
-  ]);
+  expect(directories).toEqual(["ship-it", "smart-embeds", "subthread", "sync", "test-remotely"]);
   for (const directory of directories) {
     const path = join(skillsRoot, directory, "SKILL.md");
     expect((await stat(path)).isFile()).toBe(true);
@@ -102,7 +85,7 @@ test("the measured baseline prompt is the shipped Smart Embed text", async () =>
   expect(baseline).toBe(`${SMART_EMBED_INSTRUCTIONS}\n`);
 });
 
-test("injects preview skill routing within the host's per-plugin character limit", async () => {
+test("injects Smart Embed skill routing within the host's per-plugin character limit", async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "kitchen-sink" });
   await plugin(bb);
 
@@ -110,13 +93,13 @@ test("injects preview skill routing within the host's per-plugin character limit
     threadId: "thread-1",
     projectId: "project-1",
   });
-  expect(instructions).toBe(`${INLINE_VIS_INSTRUCTIONS}\n\n${SMART_EMBED_INSTRUCTIONS}`);
+  expect(instructions).toBe(SMART_EMBED_INSTRUCTIONS);
   // BB truncates contributeInstructions output after 4096 characters.
   expect(instructions?.length).toBeLessThanOrEqual(4096);
   const routedSkills = [...(instructions?.matchAll(/read the `([^`]+)` skill/g) ?? [])].map(
     (match) => match[1],
   );
-  expect(routedSkills).toEqual(["inline-vis", "smart-embeds"]);
+  expect(routedSkills).toEqual(["smart-embeds"]);
   for (const name of routedSkills) {
     expect((await stat(join(skillsRoot, name!, "SKILL.md"))).isFile()).toBe(true);
   }

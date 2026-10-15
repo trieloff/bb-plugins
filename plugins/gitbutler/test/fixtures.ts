@@ -1,13 +1,15 @@
 /**
  * A `but status -u --json` payload, shaped from real CLI output and trimmed
- * to the cases the parser has to get right: an untracked file, a two-branch
- * stack, assigned changes, an upstream commit, a conflicted commit, and a
- * `branchStatus` the plugin does not know.
+ * to the cases the parser has to get right: an untracked file, a deleted
+ * file, a two-branch stack, assigned changes, an upstream commit, a review
+ * with a failing check, a conflicted commit, and a `branchStatus` the plugin
+ * does not know.
  */
 export const statusPayload = {
   uncommittedChanges: [
     { cliId: "uz", filePath: "bun.lock", changeType: "modified" },
     { cliId: "ot", filePath: "plugins/gitbutler/LICENSE", changeType: "added" },
+    { cliId: "gn", filePath: "gone.ts", changeType: "removed" },
   ],
   stacks: [
     {
@@ -46,8 +48,14 @@ export const statusPayload = {
             },
           ],
           branchStatus: "nothingToPush",
-          reviewId: "42",
-          ci: { status: "success" },
+          reviewId: "(#42)",
+          ci: {
+            pendingCheckTitles: [],
+            passingCheckTitles: ["test"],
+            failingCheckTitles: ["lint"],
+            status: "complete",
+            conclusion: "failure",
+          },
         },
         {
           cliId: "cb",
@@ -141,16 +149,97 @@ export const diffPayload = {
   ],
 };
 
-/** `but show <commit> --json`. */
-export const showPayload = {
-  commit: "8f4598a1eaca7d3d7080a6756164040f0707d0d5",
-  author: { name: "Scott Sunarto", email: "github@smsunarto.com" },
-  committer: { name: "Scott Sunarto", email: "github@smsunarto.com" },
-  date: "2026-09-22 14:43:26 -0700",
-  message: "feat(top): add the thing\n\nWith a body.",
-  files: [
-    { path: "src/app/app.tsx", status: "modified" },
-    { path: "src/app/new.tsx", status: "added" },
+const author = { name: "Scott Sunarto", email: "github@smsunarto.com" };
+
+/**
+ * `but branch list --local --review --no-check --no-ahead --json` from
+ * `but` 0.22.3, trimmed: a two-branch applied stack whose top has a review,
+ * a parked branch with a review, and one without. A review record carries
+ * only its number and address.
+ */
+export const branchListPayload = {
+  appliedStacks: [
+    {
+      id: "3fd190a5-35ea-4eae-a830-1e23a7c1554c",
+      heads: [
+        {
+          name: "feat/header-polish",
+          reviews: [{ number: 140, url: "https://github.com/smsunarto/bb-plugins/pull/140" }],
+          lastCommitAt: 1791501300000,
+          commitsAhead: null,
+          lastAuthor: author,
+          mergesCleanly: null,
+        },
+        {
+          name: "feat/stacked-tabs",
+          reviews: [],
+          lastCommitAt: 1791501300000,
+          commitsAhead: null,
+          lastAuthor: author,
+          mergesCleanly: null,
+        },
+      ],
+    },
   ],
-  changeId: "syvmzmsvwkuzpwuuxyvnmywkktuzxqul",
+  branches: [
+    {
+      name: "scott/monokai-codex-stream",
+      reviews: [],
+      hasLocal: true,
+      lastCommitAt: 1790748226000,
+      commitsAhead: null,
+      lastAuthor: author,
+      mergesCleanly: null,
+    },
+    {
+      name: "release-please--branches--main--components--gh-stack",
+      reviews: [{ number: 135, url: "https://github.com/smsunarto/bb-plugins/pull/135" }],
+      hasLocal: true,
+      lastCommitAt: 1789433431000,
+      commitsAhead: null,
+      lastAuthor: {
+        name: "github-actions[bot]",
+        email: "41898282+github-actions[bot]@users.noreply.github.com",
+      },
+      mergesCleanly: null,
+    },
+  ],
+  hasMoreBranches: false,
 };
+
+/** `but oplog list --json` from `but` 0.22.3, trimmed to three entries, newest first. */
+export const oplogPayload = [
+  {
+    id: "22c2d57fb4e93d0fbb45aad16aea1b513b6596d5",
+    createdAt: 1791501579000,
+    details: {
+      version: 3,
+      operation: "SquashCommit",
+      title: "SquashCommit",
+      body: null,
+      trailers: [],
+    },
+  },
+  {
+    id: "95ff0df18673fdc3ef01df172daa35de0c719031",
+    createdAt: 1791501301000,
+    details: {
+      version: 3,
+      operation: "CreateCommit",
+      title: "CreateCommit",
+      body: null,
+      trailers: [],
+    },
+  },
+  {
+    id: "d208d31c7e523857c33880daea4241514e0acc3c",
+    createdAt: 1791333694000,
+    details: {
+      version: 3,
+      operation: "MergeUpstream",
+      title: "MergeUpstream",
+      body: null,
+      trailers: [],
+    },
+  },
+];
