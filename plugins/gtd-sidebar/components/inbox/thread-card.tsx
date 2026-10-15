@@ -953,8 +953,10 @@ function PullRequestNumber({
   interactive: boolean;
   className?: string;
 }) {
+  // Sized like the time and activity labels beside it. Inherited, it takes
+  // the sidebar's body size on a compact row's title line and dwarfs the title.
   const classes = cn(
-    "relative shrink-0 font-mono",
+    "relative shrink-0 font-mono text-2xs",
     className,
     pullRequest.state === "merged"
       ? "text-[color:var(--pr-merged)]"
