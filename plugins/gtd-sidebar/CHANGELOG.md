@@ -62,6 +62,12 @@
 
 ### Patch Changes
 
+- A thread whose only live work is background commands leaves Waiting once
+  every one of them has run for 30 minutes. A dev server, a watcher, or a
+  poll no longer holds its thread in Waiting until it exits; the thread moves
+  to Next Action and can be snoozed, and its row still shows the command
+  running. A newer command, a turn, a workflow, a background agent, a plan,
+  or a goal keeps it in Waiting as before.
 - Folding a family works again on bb 0.46, which retired the
   `sidebar.collapsedThreads` preference: every fold and unfold failed. Folds
   now live in the plugin's own storage, still survive a reload, and reach

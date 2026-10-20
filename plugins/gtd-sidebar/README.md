@@ -78,7 +78,7 @@ plugin.
 
 - **Pinned** — the user's explicit priority, kept in its own shelf above active work.
 - **Next Action** — the agent turn is done, an interaction needs input, or the thread is otherwise quiet.
-- **Waiting** — foreground or background agent work is live, in the thread or in any of its subthreads. A family moves back to Next Action only when one of its threads asks you something.
+- **Waiting** — foreground or background agent work is live, in the thread or in any of its subthreads. A family moves back to Next Action only when one of its threads asks you something. Background commands count for 30 minutes: once every command a quiet thread is running started longer ago than that, such as a dev server or a watcher, the thread moves to Next Action and can be snoozed, while its row still shows the command running.
 - **Snoozed** — hidden until the wake time you chose. A snoozed thread comes back early if it starts working or asks you something.
 
 Pinned follows bb's own pinned order — the same order the built-in sidebar

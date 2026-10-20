@@ -61,6 +61,7 @@ import { ProjectGroup, SortableProjectGroup } from "./project-group";
 import { isShelvedThread } from "../../lib/settled-threads";
 import { retainUnchangedThreads } from "../../lib/stable-threads";
 import { useMinuteClock } from "../../hooks/use-minute-clock";
+import { useBackgroundCommandAges } from "../../hooks/use-background-command-ages";
 import { gitButlerLabelsMatch, resolveSidebarBranchLabel } from "../../lib/gitbutler";
 import { filterByMachine, sidebarMachines } from "../../lib/machines";
 import { MachineScopePicker, ScopeTrigger, scopeItemClassName } from "./machine-scope-picker";
@@ -115,7 +116,7 @@ function InboxList({
 }: PluginThreadListProps & { threadActions: PluginSidebarThreadActions }) {
   const sidebar = useSidebarThreads({ experimental_lifecycles: SIDEBAR_LIFECYCLES });
   const { status, projects } = sidebar;
-  const sidebarThreads = useStableThreads(sidebar.threads);
+  const sidebarThreads = useStableThreads(useBackgroundCommandAges(sidebar.threads));
   const now = useMinuteClock();
   const lifecycle = useLifecycle();
   const namingThreads = useNamingThreads();
