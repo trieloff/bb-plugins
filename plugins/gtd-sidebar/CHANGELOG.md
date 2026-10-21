@@ -62,6 +62,10 @@
 
 ### Patch Changes
 
+- Every active row, a working one in Waiting included, now shows a **Pin**
+  (or **Unpin**) button on hover beside Snooze and Settle. It is bb's own pin,
+  the same as the menu's. With the Thread limit plugin, pinning is also how a
+  thread's turns skip the concurrency limit.
 - A thread whose only live work is background commands leaves Waiting once
   every one of them has run for 30 minutes. A dev server, a watcher, or a
   poll no longer holds its thread in Waiting until it exits; the thread moves

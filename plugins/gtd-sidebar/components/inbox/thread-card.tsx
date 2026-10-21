@@ -296,7 +296,8 @@ const ThreadCardBody = memo(function ThreadCardBody({
           data-sidebar-thread-active={isActive ? "true" : undefined}
           data-sidebar-thread-focused={isFocusedInSplit}
           {...handlers}
-          data-action-count={!isCompactViewport && showActions ? 2 : 0}
+          // Pin on every active row; Snooze and Settle where they apply.
+          data-hover-actions={isCompactViewport ? undefined : showActions ? 3 : 1}
           data-dragging={nestIsDragging ? "true" : undefined}
           data-drop-target={nestIsOver ? "true" : undefined}
           {...presentation}
@@ -804,6 +805,7 @@ function DesktopThreadSummary({
   /** The slot's id, which the row's link names as its description. */
   statusId: string;
 }) {
+  const pinAction = findThreadAction(plan, "toggle-pin");
   const snoozeAction = findThreadAction(plan, "quick-snooze");
   const settleAction = findThreadAction(plan, "settle");
   return (
@@ -818,23 +820,34 @@ function DesktopThreadSummary({
           <StatusOrTime thread={thread} isUnread={isUnread} shortcut={shortcut} />
         </span>
       </span>
-      {showActions ? (
-        <span className="gtd-trailing-actions">
+      <span className="gtd-trailing-actions">
+        {/* A pinned thread is never held by the Thread limit plugin, so pinning
+           is also how a turn jumps the line. */}
+        {pinAction ? (
           <ParkButton
-            label={snoozeAction?.label ?? SNOOZE_TOMORROW_LABEL}
-            icon="Clock"
-            disabled={!canPark}
-            onActivate={() => snoozeAction?.execute()}
+            label={pinAction.label}
+            icon={pinAction.icon}
+            onActivate={pinAction.execute}
           />
-          {settleAction ? (
+        ) : null}
+        {showActions ? (
+          <>
             <ParkButton
-              label={settleAction.label}
-              icon={settleAction.icon}
-              onActivate={settleAction.execute}
+              label={snoozeAction?.label ?? SNOOZE_TOMORROW_LABEL}
+              icon="Clock"
+              disabled={!canPark}
+              onActivate={() => snoozeAction?.execute()}
             />
-          ) : null}
-        </span>
-      ) : null}
+            {settleAction ? (
+              <ParkButton
+                label={settleAction.label}
+                icon={settleAction.icon}
+                onActivate={settleAction.execute}
+              />
+            ) : null}
+          </>
+        ) : null}
+      </span>
     </>
   );
 }

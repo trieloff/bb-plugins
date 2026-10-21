@@ -2231,6 +2231,32 @@ if (process.env.GTD_ROW_NAVIGATION_TEST_CHILD !== "1") {
       assert.deepEqual(currentActions.rename.mock.calls, [["a", "Half typed, then done"]]);
     });
 
+    it("pins from the row's hover button, a working row in Waiting included", async () => {
+      const currentActions = actions();
+      const working = thread("b", { indicator: "runtime", status: "active" });
+      const view = mount({ ...hostState([thread("a"), working]), actions: currentActions });
+      assert.ok(screen.getByRole("region", { name: "Waiting" }).contains(row(view.slot, "b")));
+      fireEvent.pointerDown(rowButton(view.slot, "b", "Pin"));
+      fireEvent.pointerDown(rowButton(view.slot, "a", "Pin"));
+      await act(async () => {});
+      assert.deepEqual(currentActions.setPinned.mock.calls, [
+        ["b", true],
+        ["a", true],
+      ]);
+    });
+
+    it("unpins a pinned row from its hover button", async () => {
+      const currentActions = actions();
+      const view = mount({
+        ...hostState([thread("a", { isPinned: true, pinnedAt: 1, pinSortKey: "a" })]),
+        actions: currentActions,
+      });
+      assert.ok(screen.getByRole("region", { name: "Pinned" }).contains(row(view.slot, "a")));
+      fireEvent.pointerDown(rowButton(view.slot, "a", "Unpin"));
+      await act(async () => {});
+      assert.deepEqual(currentActions.setPinned.mock.calls, [["a", false]]);
+    });
+
     it("routes snooze, pin and delete through the current dispatcher", async () => {
       const oldLifecycle = lifecycle();
       const oldActions = actions();

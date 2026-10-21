@@ -76,7 +76,7 @@ plugin.
 
 ### Active and parked sections
 
-- **Pinned** — the user's explicit priority, kept in its own shelf above active work.
+- **Pinned** — the user's explicit priority, kept in its own shelf above active work. Hover any active row, a working one included, and click its pin, or use **Pin** in its menu. With the [Thread limit](../thread-limit/README.md) plugin installed, a pinned thread's turns are never held by the concurrency limit, though they still count toward it.
 - **Next Action** — the agent turn is done, an interaction needs input, or the thread is otherwise quiet.
 - **Waiting** — foreground or background agent work is live, in the thread or in any of its subthreads. A family moves back to Next Action only when one of its threads asks you something. Background commands count for 30 minutes: once every command a quiet thread is running started longer ago than that, such as a dev server or a watcher, the thread moves to Next Action and can be snoozed, while its row still shows the command running.
 - **Snoozed** — hidden until the wake time you chose. A snoozed thread comes back early if it starts working or asks you something.

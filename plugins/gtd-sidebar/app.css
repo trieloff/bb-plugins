@@ -361,43 +361,51 @@
   opacity: 0;
   pointer-events: none;
 }
+/* Room the hover actions take: 24px per button, 2px between, 1px spare. */
+.gtd-thread-row[data-hover-actions="1"] {
+  --gtd-hover-actions-width: 25px;
+}
+.gtd-thread-row[data-hover-actions="3"] {
+  --gtd-hover-actions-width: 77px;
+}
 /* Hover, or keyboard focus on the row's link or its park buttons, trades the
-   title line's status for Snooze and Settle. A click leaves the link focused
+   title line's status for Pin, and for Snooze and Settle where a row
+   offers them. A click leaves the link focused
    without :focus-visible, so the status comes back once the pointer leaves.
    Touch has no hover, and a tap's sticky :hover would hide the status, so a
    tablet reaches Snooze and Settle through the context menu instead.
    The second line keeps its signals. These rules rely on the link being a
    direct child of the row, ahead of .gtd-summary. */
 @media (hover: hover) {
-  .gtd-thread-row[data-action-count="2"]:hover .gtd-trailing-actions {
+  .gtd-thread-row[data-hover-actions]:hover .gtd-trailing-actions {
     opacity: 1;
     pointer-events: auto;
   }
-  .gtd-thread-row[data-action-count="2"]:hover .gtd-summary > .gtd-rest-signals {
+  .gtd-thread-row[data-hover-actions]:hover .gtd-summary > .gtd-rest-signals {
     display: none;
   }
-  .gtd-thread-row[data-action-count="2"]:hover .gtd-summary {
-    padding-right: 51px;
+  .gtd-thread-row[data-hover-actions]:hover .gtd-summary {
+    padding-right: var(--gtd-hover-actions-width);
   }
 }
-.gtd-thread-row[data-action-count="2"]
+.gtd-thread-row[data-hover-actions]
   > a[data-sidebar-thread-id]:focus-visible
   ~ .gtd-summary
   .gtd-trailing-actions,
-.gtd-thread-row[data-action-count="2"] > .gtd-summary:focus-within .gtd-trailing-actions {
+.gtd-thread-row[data-hover-actions] > .gtd-summary:focus-within .gtd-trailing-actions {
   opacity: 1;
   pointer-events: auto;
 }
-.gtd-thread-row[data-action-count="2"]
+.gtd-thread-row[data-hover-actions]
   > a[data-sidebar-thread-id]:focus-visible
   ~ .gtd-summary
   > .gtd-rest-signals,
-.gtd-thread-row[data-action-count="2"] > .gtd-summary:focus-within > .gtd-rest-signals {
+.gtd-thread-row[data-hover-actions] > .gtd-summary:focus-within > .gtd-rest-signals {
   display: none;
 }
-.gtd-thread-row[data-action-count="2"] > a[data-sidebar-thread-id]:focus-visible ~ .gtd-summary,
-.gtd-thread-row[data-action-count="2"] > .gtd-summary:focus-within {
-  padding-right: 51px;
+.gtd-thread-row[data-hover-actions] > a[data-sidebar-thread-id]:focus-visible ~ .gtd-summary,
+.gtd-thread-row[data-hover-actions] > .gtd-summary:focus-within {
+  padding-right: var(--gtd-hover-actions-width);
 }
 .gtd-tree-guides {
   position: absolute;
