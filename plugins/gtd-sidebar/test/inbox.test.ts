@@ -321,7 +321,7 @@ describe("inbox families", () => {
     assert.equal(tree[0]?.children.find((node) => node.thread.id === "idle")?.shelf, "nextAction");
   });
 
-  it("brings a working family back when any member raises a hand", () => {
+  it("brings a working family to Pinned while any member asks the user", () => {
     const tree = buildInboxTree(
       [
         thread({ id: "root" }),
@@ -330,7 +330,34 @@ describe("inbox families", () => {
       ],
       active,
     );
-    assert.equal(tree[0]?.shelf, "nextAction");
+    assert.equal(tree[0]?.shelf, "pinned");
+  });
+
+  it("puts a thread asking the user at the top of Pinned, and lets it go once answered", () => {
+    const threads = [
+      thread({ id: "pinned", isPinned: true, pinSortKey: "a" }),
+      thread({ id: "asking", hasPendingInteraction: true, indicator: "waiting-for-input" }),
+      thread({ id: "quiet" }),
+    ];
+    const asked = buildInboxTree(threads, active);
+    assert.deepEqual(
+      asked.map((node) => `${node.thread.id}:${node.shelf}`),
+      ["asking:pinned", "pinned:pinned", "quiet:nextAction"],
+    );
+    const answered = buildInboxTree(
+      threads.map((entry) =>
+        entry.id === "asking"
+          ? Object.assign({}, entry, { hasPendingInteraction: false, indicator: "none" as const })
+          : entry,
+      ),
+      active,
+    );
+    assert.equal(answered.find((node) => node.thread.id === "asking")?.shelf, "nextAction");
+  });
+
+  it("counts the question glyph alone as asking", () => {
+    const tree = buildInboxTree([thread({ id: "asking", indicator: "waiting-for-input" })], active);
+    assert.equal(tree[0]?.shelf, "pinned");
   });
 
   it("keeps a family pinned when a descendant is pinned", () => {

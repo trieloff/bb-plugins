@@ -47,9 +47,17 @@ function statusPriority(thread: PluginSidebarThread): number {
   return 0;
 }
 
+/**
+ * A thread asking the user something: a question card or an approval. It
+ * waits on the user alone, so it sits in Pinned for as long as it asks.
+ */
+export function asksUser(thread: PluginSidebarThread): boolean {
+  return thread.hasPendingInteraction || thread.indicator === "waiting-for-input";
+}
+
 function ownShelf(thread: PluginSidebarThread, lifecycle: InboxLifecycle): InboxShelf {
   if (lifecycle !== "active") return lifecycle;
-  if (thread.isPinned) return "pinned";
+  if (thread.isPinned || asksUser(thread)) return "pinned";
   return activeSectionFor(thread) === "next-action" ? "nextAction" : "waiting";
 }
 
@@ -255,12 +263,15 @@ function familyComparator() {
     settled: 4,
   };
   // One comparator for every shelf: the family's shelf, then its place on
-  // it — Pinned follows bb's own pin order, the rest take most recent
-  // arrival first — then creation time and id.
+  // it — Pinned leads with families asking a question, then follows bb's own
+  // pin order, the rest take most recent arrival first — then creation time
+  // and id.
   return (a: InboxThreadNode, b: InboxThreadNode) => {
     const shelfDelta = shelfOrder[a.shelf] - shelfOrder[b.shelf];
     if (shelfDelta !== 0) return shelfDelta;
     if (a.shelf === "pinned") {
+      const askDelta = Number(asksUser(b.statusThread)) - Number(asksUser(a.statusThread));
+      if (askDelta !== 0) return askDelta;
       const pinDelta = comparePinOrderKeys(a.pinOrderKey, b.pinOrderKey);
       if (pinDelta !== 0) return pinDelta;
     }

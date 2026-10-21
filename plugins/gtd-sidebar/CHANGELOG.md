@@ -62,6 +62,10 @@
 
 ### Patch Changes
 
+- A thread asking you something, such as an Ask User Question card or a
+  permission approval, now sits at the top of Pinned for as long as it asks,
+  ahead of the threads you pinned. Once you answer it goes back to its usual
+  shelf. A subthread that asks brings its family along.
 - Every active row, a working one in Waiting included, now shows a **Pin**
   (or **Unpin**) button on hover beside Snooze and Settle. It is bb's own pin,
   the same as the menu's. With the Thread limit plugin, pinning is also how a

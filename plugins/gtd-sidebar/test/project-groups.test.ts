@@ -137,14 +137,14 @@ describe("project groups", () => {
   });
 
   it("counts families that need the user, by the family's loudest status", () => {
-    const groups = groupRowsByProject(
-      rows([
-        thread("quiet"),
-        thread("unread", { isUnread: true, latestAttentionAt: 90 }),
-        thread("parent", { latestAttentionAt: 80 }),
-        thread("asking", { parentThreadId: "parent", hasPendingInteraction: true }),
-      ]),
-    );
+    const threads = [
+      thread("quiet"),
+      thread("unread", { isUnread: true, latestAttentionAt: 90 }),
+      thread("parent", { latestAttentionAt: 80 }),
+      thread("asking", { parentThreadId: "parent", hasPendingInteraction: true }),
+    ];
+    // The asking family sits in Pinned while it asks; count it from there.
+    const groups = groupRowsByProject([...rows(threads), ...rows(threads, "pinned")]);
     assert.equal(groups.length, 1);
     assert.equal(groups[0]!.families, 3);
     assert.equal(groups[0]!.attention, 2);
