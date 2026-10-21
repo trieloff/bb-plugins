@@ -17,6 +17,7 @@ import {
   GitBranchIcon,
   GitPullRequestIcon,
   KitchenUtensilsIcon,
+  LimitationIcon,
   Layers01Icon,
   ListSettingIcon,
   PanelLeftIcon,
@@ -188,6 +189,11 @@ const customIcons = {
   gitbutler: {
     name: "GitBranch",
     nodes: GitBranchIcon,
+  },
+  // bb's own concurrency-limit plugin draws this glyph by name; the copy keeps it.
+  "thread-limit": {
+    name: "Limitation",
+    nodes: LimitationIcon,
   },
   "usage-bar": {
     name: "DashboardSpeed",

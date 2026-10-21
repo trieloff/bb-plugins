@@ -792,6 +792,31 @@
         "vitest": "^4.1.1",
       },
     },
+    "plugins/thread-limit": {
+      "name": "@smsunarto/bb-plugin-thread-limit",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bb-kit/core": "0.2.0",
+        "@tanstack/react-query": "^5.101.4",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@get-bb/plugin-sdk": "0.5.29",
+        "@testing-library/react": "16.3.2",
+        "@types/node": "^22.0.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "bun-types": "^1.4.0",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "^2.1.1",
+        "jsdom": "25.0.1",
+        "react": "19.2.8",
+        "react-dom": "19.2.8",
+        "tailwind-merge": "^3.4.0",
+        "tsx": "4.23.12",
+        "typescript": "^6.0.0",
+      },
+    },
     "plugins/traces": {
       "name": "@smsunarto/bb-plugin-traces",
       "version": "0.1.0",
@@ -1766,6 +1791,8 @@
     "@smsunarto/bb-plugin-scott-inline-vis": ["@smsunarto/bb-plugin-scott-inline-vis@workspace:plugins/scott-inline-vis"],
 
     "@smsunarto/bb-plugin-scott-tasks": ["@smsunarto/bb-plugin-scott-tasks@workspace:plugins/scott-tasks"],
+
+    "@smsunarto/bb-plugin-thread-limit": ["@smsunarto/bb-plugin-thread-limit@workspace:plugins/thread-limit"],
 
     "@smsunarto/bb-plugin-traces": ["@smsunarto/bb-plugin-traces@workspace:plugins/traces"],
 
