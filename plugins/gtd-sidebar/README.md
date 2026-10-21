@@ -144,6 +144,17 @@ nested under the parent on the Snoozed shelf. Waking the parent wakes the
 family together. A family with live work or a pending interaction cannot be
 snoozed.
 
+With **Let threads snooze themselves** on, agents get a `snooze_this_thread`
+tool for when their work waits on something outside the thread, such as CI, a
+review, or another person. An agent can snooze until a time, for some minutes,
+or until the same adaptive time as the hover button, and can name a pull
+request whose changes bring the thread back sooner. The snooze starts when the
+agent's turn ends and covers the thread's subthreads, like a snooze you make.
+The same snooze is `bb gtd-sidebar snooze [--minutes <n> | --until <time>] [--pr <url>]`,
+which snoozes the thread it runs from, so a session that started before the
+setting was on can snooze itself too. The tool's description and its note to
+agents live in `instructions/tools/`, where the Prompt Editor plugin can change them.
+
 ### Settling
 
 The check button, the card menu, and the **GTD Sidebar: settle thread** row in bb's

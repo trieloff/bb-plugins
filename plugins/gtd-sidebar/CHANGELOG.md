@@ -66,6 +66,13 @@
   permission approval, now sits at the top of Pinned for as long as it asks,
   ahead of the threads you pinned. Once you answer it goes back to its usual
   shelf. A subthread that asks brings its family along.
+- A new **Let threads snooze themselves** setting gives agents a
+  `snooze_this_thread` tool. An agent waiting on CI, a review, or another
+  person can snooze its own thread until a time, for some minutes, or until the
+  one-click snooze's adaptive wake time, and can watch a pull request to come
+  back sooner. The snooze starts when the agent's turn ends, so the turn's own
+  last message does not wake it. Off by default; it applies from each thread's
+  next session.
 - Every active row, a working one in Waiting included, now shows a **Pin**
   (or **Unpin**) button on hover beside Snooze and Settle. It is bb's own pin,
   the same as the menu's. With the Thread limit plugin, pinning is also how a

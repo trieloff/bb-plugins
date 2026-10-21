@@ -17,7 +17,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 // Relative, not the `@/` alias the frontend uses: bb loads this file directly
 // as a path source, so nothing rewrites tsconfig paths for it.
-import { parseArchivedThreadIds } from "./lib/lifecycle.ts";
+import { formatWakeTime, parseArchivedThreadIds } from "./lib/lifecycle.ts";
 import { gtdSidebarHostContract } from "./lib/host-contract.ts";
 import { createCollapsedThreadsStore } from "./lib/collapsed-threads.ts";
 import { createThreadNester } from "./lib/nest-thread.ts";
@@ -40,6 +40,14 @@ import {
   type RestBudgetState,
 } from "./lib/rest-budget.ts";
 import { planQuickSnooze } from "./lib/snooze-plan.ts";
+import {
+  SELF_SNOOZE_TOOL,
+  selfSnoozeInputSchema,
+  selfSnoozeStartsAt,
+  selfSnoozeWake,
+  type SelfSnoozeInput,
+} from "./lib/self-snooze.ts";
+import { instructionFiles } from "@bb-kit/core/instructions";
 import {
   createGhRunner,
   githubGraphql,
@@ -254,6 +262,8 @@ interface LifecycleDbRow {
 }
 
 const threadIdSchema = z.object({ threadId: z.string().trim().min(1) });
+/** The skill this plugin ships; a `configure` result must keep listing it. */
+const GTD_SKILL = "configure-gtd-naming";
 /** The host's 5 s limit on `but status`, plus the trip to and from the machine. */
 const BRANCH_SUMMARY_TIMEOUT_MS = 8_000;
 
@@ -618,6 +628,13 @@ export default async function plugin(bb: BbPluginApi) {
         "Opt in to periodic host GitButler CLI reads for primary checkouts. Otherwise use BB's native branch labels.",
       default: false,
     },
+    agentSelfSnooze: {
+      type: "boolean",
+      label: "Let threads snooze themselves",
+      description:
+        "Give agents a tool to snooze their own thread while they wait on something outside it, such as CI or a review. The snooze starts when the agent's turn ends. Applies from each thread's next session.",
+      default: false,
+    },
   });
   const threadNamer = createThreadNamer(bb, {
     automaticallyNameThreads: async () => (await pluginSettings.get()).automaticallyNameThreads,
@@ -627,6 +644,8 @@ export default async function plugin(bb: BbPluginApi) {
   const db = bb.storage.database();
   bb.storage.migrate(db, migrationsForDatabase(db));
   const collapsedThreads = createCollapsedThreadsStore(bb.storage.kv);
+  /** Agent snoozes made mid-turn, by thread, with the family ids they cover. */
+  const pendingSelfSnoozes = new Map<string, readonly string[]>();
 
   const shutdown = new AbortController();
   bb.onDispose(() => shutdown.abort());
@@ -1130,7 +1149,7 @@ export default async function plugin(bb: BbPluginApi) {
     snoozedAt: number;
     snoozedUntil: number;
     ladderStep: number;
-    kind: "quick" | "preset";
+    kind: "quick" | "preset" | "agent";
   }): void => {
     db.prepare(
       `INSERT INTO snooze_history (thread_id, snoozed_at, snoozed_until, ladder_step, kind)
@@ -1524,6 +1543,30 @@ export default async function plugin(bb: BbPluginApi) {
     { auth: "none" },
   );
   const threadNester = createThreadNester(bb.sdk.threads);
+
+  /** The one-click snooze's wake time: this thread's ladder, its project's rhythm. */
+  const planAdaptiveSnooze = async (threadId: string, projectId: string, now: number) => {
+    const previous = readBackoff(threadId);
+    // Read the thread rather than trust the caller: the ladder turns on
+    // whether anything happened while the thread was away, and a frontend
+    // that has been open since before the last wake would answer with a
+    // timestamp older than the one bb holds.
+    let latestAttentionAt = 0;
+    try {
+      latestAttentionAt = (await bb.sdk.threads.get({ threadId })).latestAttentionAt;
+    } catch (error) {
+      // A thread bb cannot describe still deserves a snooze; it just gets
+      // the conservative one, at the bottom of the ladder.
+      bb.log.warn(`quick snooze attention lookup ${threadId} failed: ${String(error)}`);
+    }
+    return planQuickSnooze({
+      now,
+      previousStep: previous?.ladderStep ?? null,
+      lastSnoozedAt: previous?.snoozedAt ?? null,
+      latestAttentionAt,
+      weekdayOnlyProject: isWeekdayOnlyProject(projectId),
+    });
+  };
 
   bb.rpc.register(gtdSidebarRpcContract, {
     listNamingThreads: threadNamer.listNamingThreads,
@@ -1927,27 +1970,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
     async quickSnooze({ threadId, projectId, pullRequestUrl }) {
       const now = Date.now();
-      const previous = readBackoff(threadId);
-      // Read the thread rather than trust the caller: the ladder turns on
-      // whether anything happened while the thread was away, and a frontend
-      // that has been open since before the last wake would answer with a
-      // timestamp older than the one bb holds.
-      let latestAttentionAt = 0;
-      try {
-        latestAttentionAt = (await bb.sdk.threads.get({ threadId })).latestAttentionAt;
-      } catch (error) {
-        // A thread bb cannot describe still deserves a snooze; it just gets
-        // the conservative one, at the bottom of the ladder.
-        bb.log.warn(`quick snooze attention lookup ${threadId} failed: ${String(error)}`);
-      }
-
-      const plan = planQuickSnooze({
-        now,
-        previousStep: previous?.ladderStep ?? null,
-        lastSnoozedAt: previous?.snoozedAt ?? null,
-        latestAttentionAt,
-        weekdayOnlyProject: isWeekdayOnlyProject(projectId),
-      });
+      const plan = await planAdaptiveSnooze(threadId, projectId, now);
 
       await unarchiveThreads(archivedIdsFor(threadId));
       const ids = await familyIds(threadId);
@@ -2055,6 +2078,96 @@ export default async function plugin(bb: BbPluginApi) {
     void collapsedThreads
       .forget(thread.id)
       .catch((error: unknown) => bb.log.warn(`forget fold ${thread.id} failed: ${String(error)}`));
+    pendingSelfSnoozes.delete(thread.id);
+  });
+
+  // Agents snooze their own thread. The tool is offered only while the
+  // setting is on; `configure` is synchronous, so the setting is mirrored.
+  let selfSnoozeEnabled = false;
+  void pluginSettings.get().then(
+    (values) => (selfSnoozeEnabled = values.agentSelfSnooze),
+    () => undefined,
+  );
+  pluginSettings.onChange((next) => (selfSnoozeEnabled = next.agentSelfSnooze));
+  const agentText = instructionFiles(import.meta.url);
+  /**
+   * A thread snoozing itself, from the agent tool or `bb gtd-sidebar snooze`.
+   * The thread is usually mid-turn: its snooze restarts when it goes idle.
+   */
+  const snoozeOwnThread = async (
+    threadId: string,
+    projectId: string,
+    input: SelfSnoozeInput,
+  ): Promise<{ ok: true; text: string } | { ok: false; error: string }> => {
+    if (!selfSnoozeEnabled) {
+      return { ok: false, error: "Snoozing is turned off in GTD Sidebar's settings." };
+    }
+    const now = Date.now();
+    const wake = selfSnoozeWake(input, now);
+    if (wake.kind === "invalid") return { ok: false, error: wake.error };
+    const plan =
+      wake.kind === "adaptive" ? await planAdaptiveSnooze(threadId, projectId, now) : null;
+    const snoozedUntil = plan?.snoozedUntil ?? (wake.kind === "at" ? wake.snoozedUntil : now);
+    const ids = await familyIds(threadId);
+    writeFamilySnooze(threadId, ids, snoozedUntil, now);
+    rememberPullRequestUrl(threadId, input.pullRequestUrl);
+    for (const id of ids) {
+      if (plan !== null) writeBackoff(id, plan.step, now);
+      recordSnoozeHistory({
+        threadId: id,
+        snoozedAt: now,
+        snoozedUntil,
+        ladderStep: plan?.step ?? -1,
+        kind: "agent",
+      });
+    }
+    // The turn is still running: its end is activity that would wake the
+    // snooze at once. The snooze restarts once the thread goes idle.
+    pendingSelfSnoozes.set(threadId, ids);
+    bb.log.info(`agent snooze ${threadId} until ${new Date(snoozedUntil).toISOString()}`);
+    const watching = input.pullRequestUrl ? `, or when ${input.pullRequestUrl} changes` : "";
+    return {
+      ok: true,
+      text: `Snoozed until ${formatWakeTime(snoozedUntil, new Date(now))} (${new Date(snoozedUntil).toISOString()}). The thread leaves the user's inbox when this turn ends and comes back then, or sooner when the user writes${watching}.`,
+    };
+  };
+  bb.agents.registerTool({
+    name: SELF_SNOOZE_TOOL,
+    description: agentText.tool(SELF_SNOOZE_TOOL).description,
+    presentation: {
+      label: { pending: "Snoozing this thread", completed: "Snoozed this thread" },
+      icon: { glyph: "Clock" },
+    },
+    parameters: selfSnoozeInputSchema,
+    async execute(input, ctx) {
+      const result = await snoozeOwnThread(ctx.threadId, ctx.projectId, input);
+      return result.ok
+        ? result.text
+        : { content: [{ type: "text", text: result.error }], isError: true };
+    },
+  });
+  bb.agents.configure(() =>
+    selfSnoozeEnabled
+      ? {
+          tools: [SELF_SNOOZE_TOOL],
+          skills: [GTD_SKILL],
+          instructions: agentText.tool(SELF_SNOOZE_TOOL).instructions,
+        }
+      : { tools: [], skills: [GTD_SKILL] },
+  );
+  bb.events.on("thread.idle", ({ thread }) => {
+    const ids = pendingSelfSnoozes.get(thread.id);
+    if (ids === undefined) return;
+    pendingSelfSnoozes.delete(thread.id);
+    const startsAt = selfSnoozeStartsAt(Date.now(), thread.latestAttentionAt);
+    // Only rows the snooze still owns: a wake in the meantime cleared them.
+    const restart = db.prepare(
+      `UPDATE thread_lifecycle SET snoozed_at = ? WHERE thread_id = ? AND snoozed_until IS NOT NULL`,
+    );
+    db.transaction(() => {
+      for (const id of ids) restart.run(startsAt, id);
+    })();
+    bb.realtime.publish(LIFECYCLE_CHANNEL, { kind: "lifecycle", threadId: thread.id });
   });
 
   // One native feed routes pin and archive changes to only the client list
@@ -2274,6 +2387,55 @@ export default async function plugin(bb: BbPluginApi) {
             const result = await threadNamer.nameThread(threadId, { kind: "forced" });
             if (!result.ok) throw new PluginCliError(result.error, { code: "rename_failed" });
             return { exitCode: 0, stdout: `${result.title}\n` };
+          },
+        }),
+        snooze: cliCommand({
+          summary:
+            "Snooze a thread, by default the one this runs from, while it waits on something outside it.",
+          positionals: [
+            {
+              name: "threadId",
+              description: "Thread to snooze; defaults to the thread this command runs from.",
+            },
+          ],
+          options: {
+            minutes: { type: "string", description: "Wake after this many minutes." },
+            until: {
+              type: "string",
+              description: "Wake at this time, ISO 8601 with an offset.",
+            },
+            pr: {
+              type: "string",
+              description: "A pull request URL whose changes wake the thread sooner.",
+            },
+          },
+          async run({ positionals, options }, context) {
+            const threadId = positionals.threadId ?? context.threadId;
+            if (threadId === undefined) {
+              throw new PluginCliError("Pass a thread id or run this command from a thread.", {
+                code: "missing_thread",
+                exitCode: 2,
+              });
+            }
+            const minutes = options.minutes === undefined ? undefined : Number(options.minutes);
+            const parsed = selfSnoozeInputSchema.safeParse({
+              ...(minutes === undefined ? {} : { minutes }),
+              ...(options.until === undefined ? {} : { until: options.until }),
+              ...(options.pr === undefined ? {} : { pullRequestUrl: options.pr }),
+            });
+            if (!parsed.success) {
+              throw new PluginCliError(
+                "--minutes takes a whole number from 1 to 43200, and --pr a pull request URL.",
+                { code: "invalid_snooze", exitCode: 2 },
+              );
+            }
+            const projectId =
+              threadId === context.threadId && context.projectId !== undefined
+                ? context.projectId
+                : (await bb.sdk.threads.get({ threadId })).projectId;
+            const result = await snoozeOwnThread(threadId, projectId, parsed.data);
+            if (!result.ok) throw new PluginCliError(result.error, { code: "snooze_refused" });
+            return { exitCode: 0, stdout: `${result.text}\n` };
           },
         }),
       },

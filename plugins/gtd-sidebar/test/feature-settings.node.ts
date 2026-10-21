@@ -54,7 +54,11 @@ describe("public feature opt-ins", () => {
         for (const key of ["projectsEnabled", "subscriptionsEnabled", "slackBotToken"]) {
           assert.equal(registrations.settingsDescriptors[key], undefined);
         }
-        assert.deepEqual(registrations.agentTools, []);
+        // The self-snooze tool is the only one; none of the Projects tools.
+        assert.deepEqual(
+          registrations.agentTools.map((tool) => tool.name),
+          ["snooze_this_thread"],
+        );
         assert.equal(registrations.rpcMethods.includes("listInitiatives"), false);
         assert.equal(registrations.rpcMethods.includes("createInitiative"), false);
         assert.equal(registrations.rpcMethods.includes("runSubscriptionNow"), false);

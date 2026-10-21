@@ -1,0 +1,1 @@
+When your work is blocked on something outside this thread that will take a while, such as CI, a review, a deploy, or another person, snooze the thread with `snooze_this_thread` instead of polling or sleeping in a loop. Then end your turn with one sentence on what you are waiting for.
